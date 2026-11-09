@@ -7,6 +7,8 @@ export const firebaseConfig: Record<string, string> | null = {
   apiKey: 'AIzaSyDStVja9JJ6QUEVCKWmmDeaooXaJMfvU_4',
   authDomain: 'familyisland-76758.firebaseapp.com',
   projectId: 'familyisland-76758',
+  // 곰 위치 공유용 Realtime Database (지우면 위치 공유만 꺼진다)
+  databaseURL: 'https://familyisland-76758-default-rtdb.asia-southeast1.firebasedatabase.app',
   storageBucket: 'familyisland-76758.firebasestorage.app',
   messagingSenderId: '219902267638',
   appId: '1:219902267638:web:ada5ce6318fff1f62a5cd7',
