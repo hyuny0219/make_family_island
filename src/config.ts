@@ -2,18 +2,18 @@
 export const GAME_WIDTH = 360;
 export const GAME_HEIGHT = 640;
 
-/** 타일 한 칸 크기(px). 도트 아트 기준 16×16 */
-export const TILE = 16;
+/** 타일 한 칸 크기(px) — 곰 캐릭터(약 36px)와 비율을 맞춘 24×24 */
+export const TILE = 24;
 
-/** 월드 카메라 배율. 16px 타일이 화면에서 32px로 보인다. */
-export const WORLD_ZOOM = 2;
+/** 월드 카메라 배율. 24px 타일이 화면에서 36px로 보인다. */
+export const WORLD_ZOOM = 1.5;
 
 /** 섬 맵 크기 (타일 수) */
-export const MAP_W = 34;
-export const MAP_H = 34;
+export const MAP_W = 30;
+export const MAP_H = 30;
 
 /** 캐릭터 이동 속도 (px/초, 월드 좌표) */
-export const PLAYER_SPEED = 70;
+export const PLAYER_SPEED = 90;
 
 export const COLORS = {
   sea: 0x7ec8e3,

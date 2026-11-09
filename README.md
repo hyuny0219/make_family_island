@@ -24,10 +24,13 @@ src/
   sfx.ts               # 임시 효과음(WebAudio) + 진동
   data/islandMap.ts    # 섬 맵 생성 (M1에서 수작업 맵으로 교체 예정)
   scenes/
-    BootScene.ts       # 임시 도트 텍스처 생성 (정식 아트로 교체 예정)
-    IslandScene.ts     # 탐험 화면: 탭 이동, 나무/바위 건드리기
-    HudScene.ts        # 상단 바, 하단 탭, 시작 화면, 안내/토스트
+    BootScene.ts       # 스프라이트 로드 + 파티클 텍스처 생성
+    IslandScene.ts     # 탐험 화면: 탭 이동, 오브젝트·가족 곰 상호작용
+  objects/Bear.ts      # 곰 캐릭터 (플레이어/가족 NPC 공용)
+  data/assets.ts       # 스프라이트 목록
+    HudScene.ts        # 상단 바, 하단 탭, 시작 화면(곰 고르기), 안내/토스트
 scripts/make_icons.py  # PWA 임시 아이콘 생성
+scripts/process_art.py # AI 생성 시트(art/source) → 게임 스프라이트(public/assets)
 ```
 
 ## 처음 한 번만: GitHub Pages 켜기

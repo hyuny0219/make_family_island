@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { COLORS } from '../config';
 import { sfx, unlockAudio, buzz } from '../sfx';
+import { BEARS } from '../data/assets';
 
 export const HUD_TOP_H = 56;
 export const HUD_BOTTOM_H = 76;
@@ -118,52 +119,66 @@ export class HudScene extends Phaser.Scene {
     });
   }
 
-  /** 시작 화면 — 첫 터치로 오디오 잠금 해제 */
+  /** 시작 화면 — 가족 중 누구로 놀지 고르기. 첫 터치로 오디오 잠금 해제 */
   private makeTitle(W: number, H: number) {
-    this.registry.set('started', false);
-    const dim = this.add.rectangle(0, 0, W, H, 0x1b4965, 0.45).setOrigin(0).setDepth(200).setInteractive();
-
-    const box = this.add.container(W / 2, H * 0.42).setDepth(201);
+    const dim = this.add.rectangle(0, 0, W, H, 0x1b4965, 0.4).setOrigin(0).setDepth(200).setInteractive();
+    const PW = 300;
+    const PH = 210;
+    const box = this.add.container(W / 2, H * 0.44).setDepth(201);
     const g = this.add.graphics();
-    g.fillStyle(0x000000, 0.2).fillRoundedRect(-130, -66, 260, 140, 26);
-    g.fillStyle(COLORS.uiBg).fillRoundedRect(-130, -70, 260, 140, 26);
-    g.lineStyle(3, 0xe8d5a9).strokeRoundedRect(-130, -70, 260, 140, 26);
+    g.fillStyle(0x000000, 0.2).fillRoundedRect(-PW / 2, -PH / 2 + 4, PW, PH, 26);
+    g.fillStyle(COLORS.uiBg).fillRoundedRect(-PW / 2, -PH / 2, PW, PH, 26);
+    g.lineStyle(3, 0xe8d5a9).strokeRoundedRect(-PW / 2, -PH / 2, PW, PH, 26);
     const title = this.add
-      .text(0, -26, '가족 섬 만들기', { fontFamily: FONT, fontSize: '28px', color: COLORS.uiText, fontStyle: 'bold' })
+      .text(0, -PH / 2 + 36, '가족 섬 만들기', { fontFamily: FONT, fontSize: '28px', color: COLORS.uiText, fontStyle: 'bold' })
       .setOrigin(0.5);
     const sub = this.add
-      .text(0, 12, '🌴 우리 가족만의 섬 🌴', { fontFamily: FONT, fontSize: '14px', color: '#8a6d4b' })
+      .text(0, -PH / 2 + 72, '누구로 놀까요?', { fontFamily: FONT, fontSize: '15px', color: '#e07a5f', fontStyle: 'bold' })
       .setOrigin(0.5);
-    const tap = this.add
-      .text(0, 44, '화면을 톡 눌러 시작', { fontFamily: FONT, fontSize: '14px', color: '#e07a5f', fontStyle: 'bold' })
-      .setOrigin(0.5);
-    box.add([g, title, sub, tap]);
+    box.add([g, title, sub]);
+
+    const slot = 66;
+    BEARS.forEach((b, i) => {
+      const x = (i - 1.5) * slot;
+      const y = 27;
+      const card = this.add.container(x, y);
+      const bg = this.add.graphics();
+      bg.fillStyle(0xfde8b0).fillRoundedRect(-29, -42, 58, 92, 14);
+      const img = this.add.image(0, 14, `${b.id}_front`).setOrigin(0.5, 1).setScale(2);
+      const name = this.add
+        .text(0, 32, b.name, { fontFamily: FONT, fontSize: '11px', color: COLORS.uiText, fontStyle: 'bold' })
+        .setOrigin(0.5);
+      card.add([bg, img, name]);
+      card.setSize(58, 92).setInteractive({ useHandCursor: true });
+      // 대기 중 살짝 들썩이기
+      this.tweens.add({ targets: img, scaleY: 2.08, scaleX: 1.94, duration: 500 + i * 70, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+      card.on('pointerup', () => {
+        if (!dim.active) return;
+        unlockAudio();
+        sfx.pop();
+        buzz(20);
+        this.tweens.add({ targets: card, scale: 1.2, duration: 120, yoyo: true });
+        this.game.events.emit('choose-bear', b.id);
+        this.time.delayedCall(180, () => this.closeTitle(box, dim));
+      });
+      box.add(card);
+    });
 
     box.setScale(0);
     this.tweens.add({ targets: box, scale: 1, duration: 600, ease: 'Back.easeOut', delay: 150 });
-    this.tweens.add({ targets: tap, alpha: 0.35, duration: 650, yoyo: true, repeat: -1 });
+  }
 
-    dim.once('pointerup', () => {
-      unlockAudio();
-      sfx.pop();
-      buzz(20);
-      this.tweens.add({
-        targets: box,
-        scale: 0,
-        duration: 280,
-        ease: 'Back.easeIn',
-        onComplete: () => box.destroy(),
-      });
-      this.tweens.add({
-        targets: dim,
-        alpha: 0,
-        duration: 300,
-        onComplete: () => {
-          dim.destroy();
-          this.registry.set('started', true);
-          if (this.hint) this.tweens.add({ targets: this.hint, alpha: 1, duration: 400 });
-        },
-      });
+  private closeTitle(box: Phaser.GameObjects.Container, dim: Phaser.GameObjects.Rectangle) {
+    dim.disableInteractive();
+    this.tweens.add({ targets: box, scale: 0, duration: 280, ease: 'Back.easeIn', onComplete: () => box.destroy() });
+    this.tweens.add({
+      targets: dim,
+      alpha: 0,
+      duration: 300,
+      onComplete: () => {
+        dim.destroy();
+        if (this.hint) this.tweens.add({ targets: this.hint, alpha: 1, duration: 400 });
+      },
     });
   }
 }
