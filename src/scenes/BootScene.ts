@@ -1,0 +1,54 @@
+import Phaser from 'phaser';
+import { COLORS } from '../config';
+import { BEARS, FACINGS, OBJECTS } from '../data/assets';
+
+/**
+ * 스프라이트 로드 + 작은 파티클 텍스처 생성.
+ * 스프라이트 원본: art/source/*.png → scripts/process_art.py → public/assets/*.png
+ */
+export class BootScene extends Phaser.Scene {
+  constructor() {
+    super('Boot');
+  }
+
+  preload() {
+    const W = this.scale.width;
+    const H = this.scale.height;
+    const bar = this.add.rectangle(W / 2 - 80, H / 2, 0, 10, 0xffffff).setOrigin(0, 0.5);
+    this.add.rectangle(W / 2, H / 2, 164, 14).setStrokeStyle(2, 0xffffff);
+    this.load.on('progress', (p: number) => (bar.width = 160 * p));
+
+    this.load.setPath('assets/');
+    this.load.spritesheet('tiles', 'tiles.png', { frameWidth: 24, frameHeight: 24, margin: 1, spacing: 2 });
+    for (const b of BEARS) for (const f of FACINGS) this.load.image(`${b.id}_${f}`, `${b.id}_${f}.png`);
+    for (const o of OBJECTS) this.load.image(o, `${o}.png`);
+  }
+
+  create() {
+    this.makeParticles();
+    this.scene.start('Island');
+    this.scene.launch('Hud');
+  }
+
+  private makeParticles() {
+    const g = this.add.graphics();
+    g.fillStyle(0x6cc35f).fillRect(0, 0, 3, 2);
+    g.fillStyle(0x4fa64a).fillRect(1, 1, 2, 1);
+    g.generateTexture('leaf', 3, 2);
+    g.clear();
+    g.fillStyle(COLORS.rock).fillRect(0, 0, 2, 2);
+    g.generateTexture('pebble', 2, 2);
+    g.clear();
+    g.fillStyle(COLORS.white).fillRect(1, 0, 1, 3).fillRect(0, 1, 3, 1);
+    g.generateTexture('sparkle', 3, 3);
+    g.clear();
+    g.fillStyle(0xffb347).fillRect(0, 0, 2, 2);
+    g.generateTexture('ember', 2, 2);
+    g.clear();
+    // 하트 7×6
+    g.fillStyle(0xff6b8a);
+    g.fillRect(1, 0, 2, 1).fillRect(4, 0, 2, 1).fillRect(0, 1, 7, 2).fillRect(1, 3, 5, 1).fillRect(2, 4, 3, 1).fillRect(3, 5, 1, 1);
+    g.generateTexture('heart', 7, 6);
+    g.destroy();
+  }
+}
