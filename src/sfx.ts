@@ -3,6 +3,8 @@
  * 정식 효과음 파일이 생기기 전까지 손맛 피드백을 담당한다.
  * 모바일 브라우저는 첫 터치 이후에만 소리를 낼 수 있으므로 unlock()을 첫 입력에서 호출한다.
  */
+import { settings } from './state/settings';
+
 let ctx: AudioContext | null = null;
 
 export function unlockAudio() {
@@ -15,7 +17,7 @@ export function unlockAudio() {
 }
 
 function tone(freq: number, dur: number, type: OscillatorType, vol: number, slideTo?: number) {
-  if (!ctx || ctx.state !== 'running') return;
+  if (!settings.sound || !ctx || ctx.state !== 'running') return;
   const t = ctx.currentTime;
   const osc = ctx.createOscillator();
   const gain = ctx.createGain();
@@ -38,11 +40,19 @@ export const sfx = {
   knock: () => tone(140, 0.1, 'square', 0.08, 90),
   pop: () => tone(520, 0.12, 'sine', 0.1, 1040),
   step: () => tone(200, 0.03, 'triangle', 0.025),
+  merge: () => {
+    tone(523, 0.1, 'sine', 0.1);
+    setTimeout(() => tone(659, 0.1, 'sine', 0.1), 80);
+    setTimeout(() => tone(784, 0.16, 'sine', 0.1), 160);
+  },
+  fanfare: () => {
+    [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => tone(f, 0.18, 'triangle', 0.09), i * 110));
+  },
 };
 
 /** 안드로이드에서만 동작 (iOS 사파리는 미지원 → 조용히 무시) */
 export function buzz(ms = 12) {
-  if ('vibrate' in navigator) {
+  if (settings.vibrate && 'vibrate' in navigator) {
     try {
       navigator.vibrate(ms);
     } catch {

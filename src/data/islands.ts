@@ -15,11 +15,13 @@ export interface IslandTheme {
   boat: Partial<Record<ItemId, number>>;
 }
 
+/** 배 재료 — 머지로 만든 판자가 꼭 들어간다 (i = 섬 번호) */
 const boat = (i: number): Partial<Record<ItemId, number>> => ({
-  twig: 12 + i * 4,
-  stone: 6 + i * 3,
-  pinecone: 4 + i * 2,
-  shell: 3 + i * 2,
+  plank: 3 + i,
+  stone: 10 + i * 4,
+  pinecone: 6 + i * 3,
+  shell: 5 + i * 2,
+  fish: 3 + i,
 });
 
 /** 10개의 섬. 뒤로 갈수록 지역이 많아지고 퀘스트가 어려워진다. */
