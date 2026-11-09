@@ -13,13 +13,18 @@ import { village, type Placed } from '../state/village';
 import { family, type Presence } from '../sync/family';
 import { DECOR_BLOCKING, DECOR_POINTS, RESIDENTS } from '../data/village';
 import { Bear } from '../objects/Bear';
+import { Slime } from '../objects/Slime';
 import { sfx, buzz } from '../sfx';
 import { withJosa } from '../util/korean';
 import { HUD_BOTTOM_H, HUD_TOP_H } from './HudScene';
 
 type DecorObj = Phaser.GameObjects.Image & { decor: Decor; hitsLeft: number; resting: boolean; gone: boolean; region: number };
 type SpotObj = Phaser.GameObjects.Container & { spot: FishingSpot; active: boolean };
-type Hit = { bear?: Bear; decor?: DecorObj; sign?: number; spot?: SpotObj; dock?: boolean };
+type Hit = { bear?: Bear; decor?: DecorObj; sign?: number; spot?: SpotObj; dock?: boolean; slime?: Slime };
+
+/** 지역 분위기별 슬라임 색 (초록이 기본) */
+const SLIME_KIND: Record<string, '' | '_pink' | '_blue'> = { orchard: '', forest: '', rocky: '_blue', meadow: '_pink', beach: '_blue' };
+const SLIME_MAX = 6;
 
 const CLOUD_PX = 6; // 구름은 타일당 6px 저해상도로 그려 4배 확대 (도트 느낌 + 메모리 절약)
 
@@ -49,6 +54,9 @@ export class IslandScene extends Phaser.Scene {
   /** 다른 가족이 조종하는 곰 (기기 id → 곰) */
   private remotes = new Map<string, Bear>();
   private presenceTimer = 0;
+  private slimes: Slime[] = [];
+  private slimeTimer = 3;
+  private slimeTip = false;
   private myEmote: { e: string; et: number } | null = null;
   private fishing: null | { spot: SpotObj; phase: 'wait' | 'bite'; t: number; bobber: Phaser.GameObjects.Image; mark?: Phaser.GameObjects.Text } = null;
   private fx!: Record<'leaf' | 'pebble' | 'sparkle' | 'ember' | 'heart' | 'dust' | 'splash' | 'puff', Phaser.GameObjects.Particles.ParticleEmitter>;
@@ -65,6 +73,8 @@ export class IslandScene extends Phaser.Scene {
     const W = this.world;
     this.blocked.clear();
     this.bears = [];
+    this.slimes = [];
+    this.slimeTimer = 3;
     this.player = null;
     this.decorObjs = [];
     this.signs.clear();
@@ -429,7 +439,7 @@ export class IslandScene extends Phaser.Scene {
     if (this.registry.get('view') === 'build') return this.onBuildTap(p, over);
 
     const pl = this.player;
-    type Tagged = { bear?: Bear; decor?: Decor; signRegion?: number; spot?: FishingSpot; isDock?: boolean };
+    type Tagged = { slime?: Slime; bear?: Bear; decor?: Decor; signRegion?: number; spot?: FishingSpot; isDock?: boolean };
     const tagged = over as unknown as (Phaser.GameObjects.GameObject & Tagged)[];
 
     const sign = tagged.find((o) => o.signRegion !== undefined);
@@ -456,7 +466,11 @@ export class IslandScene extends Phaser.Scene {
     const spotHit = tagged.find((o) => o.spot && (o as unknown as SpotObj).active) as unknown as SpotObj | undefined;
     const decorHit = tagged.find((o) => o.decor && !(o as unknown as DecorObj).gone && (o as unknown as DecorObj).visible) as unknown as DecorObj | undefined;
 
-    if (bearHit) {
+    const slimeHit = tagged.map((o) => o.slime).find((s) => s && !s.dead);
+    if (slimeHit) {
+      const side = pl.x <= slimeHit.x ? -1 : 1;
+      this.walkTo(slimeHit.x + side * 18, slimeHit.y, { slime: slimeHit });
+    } else if (bearHit) {
       const side = pl.x <= bearHit.x ? -1 : 1;
       this.walkTo(bearHit.x + side * 22, bearHit.y, { bear: bearHit });
     } else if (spotHit) {
@@ -536,6 +550,7 @@ export class IslandScene extends Phaser.Scene {
       }
     }
     if (this.fishing) this.updateFishing(dt);
+    this.updateSlimes(dt);
     // 내 위치를 가끔 다시 알린다 (걷는 중엔 2초, 서 있을 땐 30초마다 — 접속 중이라는 신호)
     this.presenceTimer -= dt;
     if (this.presenceTimer <= 0 && this.player) this.sendPresence();
@@ -572,6 +587,7 @@ export class IslandScene extends Phaser.Scene {
     }
     if (hit.spot) return this.startFishing(hit.spot);
     buzz(15);
+    if (hit.slime) return this.bopSlime(hit.slime);
     if (hit.bear) {
       const other = hit.bear;
       other.target = null;
@@ -628,6 +644,76 @@ export class IslandScene extends Phaser.Scene {
       this.deplete(obj, rule.deplete, rule.regrowSec);
     }
     drops.forEach((id, i) => this.time.delayedCall(i * 90, () => this.spawnDrop(id, obj.x, obj.y - Math.min(obj.height * 0.5, 18), obj.y)));
+  }
+
+  // ───────────────────────── 사냥 (슬라임) ─────────────────────────
+
+  /** 슬라임은 내 곰 근처의 열린 지역(캠프 제외)에 조금씩 나타난다. 기기마다 따로 보인다 */
+  private updateSlimes(dt: number) {
+    const pl = this.player;
+    for (const s of this.slimes) s.update(dt, this.walkable);
+    if (!pl) return;
+    // 너무 멀어진 슬라임은 조용히 치운다
+    this.slimes = this.slimes.filter((s) => {
+      if (s.dead) return false;
+      if (Math.hypot(s.x - pl.x, s.y - pl.y) > 620) {
+        s.destroy();
+        return false;
+      }
+      return true;
+    });
+    this.slimeTimer -= dt;
+    if (this.slimeTimer > 0) return;
+    this.slimeTimer = 5 + Math.random() * 4;
+    if (this.slimes.length >= SLIME_MAX) return;
+    for (let i = 0; i < 10; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const d = 130 + Math.random() * 220;
+      const x = pl.x + Math.cos(a) * d;
+      const y = pl.y + Math.sin(a) * d;
+      const r = this.regionAt(x, y);
+      if (r <= 0 || !this.walkable(x, y)) continue;
+      if (Math.hypot(x - this.campPx.x, y - this.campPx.y) < 150) continue;
+      const king = Math.random() < 0.06;
+      this.slimes.push(new Slime(this, x, y, king, SLIME_KIND[this.world.regions[r].biome] ?? ''));
+      this.fx.puff.explode(3, x, y - 6);
+      return;
+    }
+  }
+
+  private bopSlime(s: Slime) {
+    const pl = this.player!;
+    if (s.dead) return;
+    // 슬라임이 그새 뛰어갔으면 다시 따라간다
+    if (Math.hypot(s.x - pl.x, s.y - pl.y) > 34) {
+      const side = pl.x <= s.x ? -1 : 1;
+      return this.walkTo(s.x + side * 18, s.y, { slime: s });
+    }
+    const now = this.time.now;
+    if (now - this.lastHit < 220) return;
+    this.lastHit = now;
+    pl.face('side', s.x < pl.x);
+    pl.jump(70);
+    sfx.boing();
+    this.fx.splash.explode(6, s.x, s.y - 8);
+    s.bop(pl.x, pl.y, this.walkable);
+    if (s.hp > 0) {
+      if (!this.slimeTip) {
+        this.slimeTip = true;
+        this.toast('💚 한 번 더 톡!');
+      }
+      return;
+    }
+    const n = s.king ? Phaser.Math.Between(4, 5) : Phaser.Math.Between(1, 2);
+    for (let i = 0; i < n; i++) this.time.delayedCall(i * 90, () => this.spawnDrop('jelly', s.x, s.y - 10, s.y));
+    this.fx.sparkle.explode(s.king ? 14 : 6, s.x, s.y - 8);
+    sfx.pop();
+    buzz(s.king ? 40 : 20);
+    s.pop();
+    if (s.king) {
+      this.toast('👑 왕슬라임을 잡았어요!');
+      family.post('👑 왕슬라임을 잡았어요');
+    }
   }
 
   private pokeOnly(obj: DecorObj) {
