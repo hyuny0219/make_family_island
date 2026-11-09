@@ -1,0 +1,48 @@
+# 가족 동기화 (Firebase) 설정
+
+가족이 각자 폰으로 **같은 섬·창고·마을**을 쓰게 해 주는 기능이다. Firebase 설정이 없으면 꺼져 있고, 게임은 각 기기에만 저장된다.
+
+## 1. Firebase 콘솔에서 할 일 (한 번만)
+1. https://console.firebase.google.com 에서 프로젝트 만들기 (무료 Spark 요금제로 충분)
+2. **Firestore 데이터베이스** 만들기 — Standard 에디션, 위치 서울(asia-northeast3), 프로덕션 모드
+3. **Authentication → 로그인 방법 → 익명** 사용 설정
+4. **Authentication → 설정 → 승인된 도메인**에 `hyuny0219.github.io` 추가
+5. **프로젝트 설정 → 내 앱 → 웹 앱 추가** → 나오는 `firebaseConfig` 값을 `src/firebaseConfig.ts`에 넣기
+6. **Firestore → 규칙**에 아래를 붙여넣고 게시
+
+```
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /families/{code} {
+      allow get, create, update: if request.auth != null;
+    }
+  }
+}
+```
+
+- 익명 로그인한 앱만 접근할 수 있고, **가족 코드를 아는 사람만** 그 문서를 읽고 쓸 수 있다 (목록 조회·삭제는 막음)
+- `firebaseConfig`는 비밀 값이 아니다. 접근 제어는 위 규칙이 맡는다
+- 가족 코드는 숫자 6자리라, 모르는 사람이 맞히기는 어렵지만 불가능하지는 않다. 가족용 게임 수준의 보호다
+
+## 2. 게임에서 쓰는 법
+- ⚙️ 설정 → **가족과 함께하기**
+  - **새 가족 섬 만들기**: 지금 이 폰의 진행이 가족 섬이 되고, 6자리 가족 코드가 나온다
+  - **코드로 들어가기**: 다른 폰에서 그 코드를 넣는다. 그 폰의 진행은 가족 섬 것으로 바뀐다
+- 링크로 초대: `https://hyuny0219.github.io/make_family_island/?family=123456` 처럼 보내면 코드가 미리 채워진다
+- 📰 버튼: 가족 소식판 (지역 해금, 배 완성, 새 주민, 황금 물고기)
+
+## 3. 무엇이 공유되나
+| 공유 (가족 섬 문서) | 기기마다 따로 |
+|---|---|
+| 창고(재료 개수), 도감 | 지금 있는 섬, 고른 곰 |
+| 열린 지역, 만든 배 | 머지 보드 |
+| 놓인 장식, 주민·호감도·부탁 | 소리·진동 설정 |
+| 가족 소식 | |
+
+## 4. 구조
+- `src/sync/family.ts` — 연결, 코드 만들기/들어가기, 변경 보내기(`inc`/`union`/`remove`/`set`/`del`), 소식
+- `src/sync/bridge.ts` — 문서가 바뀌면 저장소(`inventory`/`progress`/`village`)의 `applyRemote` 호출
+- 저장소는 평소처럼 이 기기에 먼저 저장하고 같은 변경을 Firestore로 보낸다. 재료 개수는 `increment`라서 둘이 동시에 주워도 숫자가 맞는다
+- 재료 개수 변화는 0.4초 모아서 한 번에 보낸다 (쓰기 횟수 절약). 오프라인이면 기기에 쌓였다가 연결되면 올라간다
+- Firebase SDK는 가족 섬에 들어가 있을 때만 내려받는다

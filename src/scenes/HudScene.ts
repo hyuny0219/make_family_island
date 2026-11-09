@@ -11,6 +11,8 @@ import { BIOME_INFO } from '../data/biomes';
 import type { RegionInfo } from '../world/generate';
 import { settings, setSetting, resetAll } from '../state/settings';
 import { village } from '../state/village';
+import { family, type FeedItem, type SyncStatus } from '../sync/family';
+import { localDoc } from '../sync/bridge';
 import { DECOR_POINTS, ORDER_GIFTS, RESIDENTS, TROPHY_HEARTS, isPlaceable } from '../data/village';
 import type { IslandScene } from './IslandScene';
 
@@ -39,6 +41,7 @@ export class HudScene extends Phaser.Scene {
   private banner?: Phaser.GameObjects.Container;
   private view: View = 'explore';
   private buildTray?: Phaser.GameObjects.Container;
+  private feedBtn!: Phaser.GameObjects.Container;
   private tabNodes: { key: string; c: Phaser.GameObjects.Container; bg: Phaser.GameObjects.Graphics; enabled: boolean }[] = [];
   private sideBtns: Phaser.GameObjects.Container[] = [];
   private arrow!: Phaser.GameObjects.Container;
@@ -81,7 +84,11 @@ export class HudScene extends Phaser.Scene {
     on.forEach(([e, f]) => ge.on(e, f, this));
     inventory.on('changed', this.onInventoryChanged, this);
     village.on('changed', this.rebuildBuildTray, this);
+    family.on('feed', this.onFeed, this);
+    family.on('status', this.refreshFeedBtn, this);
     this.events.once('shutdown', () => {
+      family.off('feed', this.onFeed, this);
+      family.off('status', this.refreshFeedBtn, this);
       village.off('changed', this.rebuildBuildTray, this);
       on.forEach(([e, f]) => ge.off(e, f, this));
       this.game.events.off('player-moved', this.hideHint, this);
@@ -498,6 +505,7 @@ export class HudScene extends Phaser.Scene {
       this.scene.setVisible(true, 'Island');
     }
     this.sideBtns.forEach((b) => b.setVisible(v !== 'merge'));
+    this.refreshFeedBtn();
     this.arrow.setVisible(false);
     this.hideHint();
     this.refreshTabs();
@@ -650,6 +658,10 @@ export class HudScene extends Phaser.Scene {
       this.toast('🏕️ 캠프로 돌아왔어요');
     });
     this.roundButton(W - 30, HUD_TOP_H + 74, '⚙️', () => this.openSettings());
+    // 가족 소식판 (가족 섬에 들어가 있을 때만 보인다)
+    this.feedBtn = this.roundButton(W - 30, HUD_TOP_H + 118, '📰', () => this.openFeed());
+    this.sideBtns.pop();
+    this.refreshFeedBtn();
   }
 
   /** 다음에 갈 곳을 가리키는 화살표 (목표가 화면 밖일 때만) */
@@ -698,8 +710,8 @@ export class HudScene extends Phaser.Scene {
   private openSettings() {
     if (this.registry.get('modal')) return;
     const PW = 280;
-    const PH = 270;
-    const { box } = this.modal(PW, PH);
+    const PH = 326;
+    const { box, close } = this.modal(PW, PH);
     const top = -PH / 2;
     box.add(this.add.text(0, top + 30, '⚙️ 설정', { fontFamily: FONT, fontSize: '20px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0.5));
     const toggle = (y: number, name: string, key: 'sound' | 'vibrate') => {
@@ -711,8 +723,16 @@ export class HudScene extends Phaser.Scene {
       btn.setPosition(0, y);
       box.add(btn);
     };
-    toggle(top + 84, '🔊 소리', 'sound');
-    toggle(top + 134, '📳 진동', 'vibrate');
+    const fam = this.button('👨‍👩‍👧‍👦 가족과 함께하기', true, () => {
+      close();
+      this.time.delayedCall(260, () => this.openFamily());
+    }, 200);
+    fam.setPosition(0, top + 84);
+    (fam.list[0] as Phaser.GameObjects.Graphics).clear().fillStyle(0x7cc4e8).fillRoundedRect(-100, -20, 200, 40, 20);
+    (fam.list[1] as Phaser.GameObjects.Text).setStroke('#4a8fb3', 3);
+    box.add(fam);
+    toggle(top + 140, '🔊 소리', 'sound');
+    toggle(top + 190, '📳 진동', 'vibrate');
     let armed = false;
     const reset = this.button('처음부터 다시 하기', true, () => {
       if (!armed) {
@@ -722,12 +742,165 @@ export class HudScene extends Phaser.Scene {
       }
       resetAll();
     }, 200);
-    reset.setPosition(0, top + 196);
+    reset.setPosition(0, top + 252);
     (reset.list[0] as Phaser.GameObjects.Graphics).clear().fillStyle(0xe58f7b).fillRoundedRect(-100, -20, 200, 40, 20);
     box.add(reset);
     (reset.list[1] as Phaser.GameObjects.Text).setStroke('#b85c48', 3);
     box.add(this.add.text(0, PH / 2 - 26, '모은 재료와 열린 지역이 모두 지워져요', { fontFamily: FONT, fontSize: '10px', color: '#a08a6a' }).setOrigin(0.5));
-    box.add(this.add.text(0, PH / 2 - 12, `v0.7 · ${__BUILD_LABEL__.slice(0, 14)}`, { fontFamily: FONT, fontSize: '9px', color: '#c4b79c' }).setOrigin(0.5));
+    box.add(this.add.text(0, PH / 2 - 12, `v0.8 · ${__BUILD_LABEL__.slice(0, 14)}`, { fontFamily: FONT, fontSize: '9px', color: '#c4b79c' }).setOrigin(0.5));
+  }
+
+  // ───────────────────────── 가족 섬 (동기화) ─────────────────────────
+
+  private refreshFeedBtn() {
+    this.feedBtn?.setVisible(family.active && this.view !== 'merge');
+  }
+
+  private statusText(s: SyncStatus) {
+    return s === 'online' ? '🟢 연결됨' : s === 'connecting' ? '🟡 연결 중…' : s === 'error' ? '🔴 연결이 불안정해요 (다시 연결되면 이어져요)' : '';
+  }
+
+  private openFamily() {
+    if (this.registry.get('modal')) return;
+    const PW = Math.min(310, this.scale.width - 30);
+    const PH = 310;
+    const { box, close } = this.modal(PW, PH);
+    const top = -PH / 2;
+    const text = (y: number, msg: string, size = 13, color = '#8a6d4b') =>
+      box.add(this.add.text(0, y, msg, { fontFamily: FONT, fontSize: `${size}px`, color, align: 'center', fontStyle: size > 14 ? 'bold' : 'normal', wordWrap: { width: PW - 32 } }).setOrigin(0.5));
+    text(top + 32, '👨‍👩‍👧‍👦 가족과 함께하기', 19, COLORS.uiText);
+    if (!family.enabled) {
+      text(top + 130, '아직 준비 중이에요.\n가족 섬 연결 설정이 끝나면 열려요!');
+      return;
+    }
+    if (family.code) {
+      text(top + 76, '우리 가족 코드');
+      text(top + 116, `${family.code.slice(0, 3)} ${family.code.slice(3)}`, 38, '#e07a5f');
+      text(top + 152, this.statusText(family.status), 12);
+      text(top + 196, '다른 폰에서 ⚙️ 설정 → 가족과 함께하기 →\n코드로 들어가기에 이 숫자를 넣어요', 12);
+      let armed = false;
+      const leave = this.button('가족 섬에서 나가기', true, () => {
+        if (!armed) {
+          armed = true;
+          (leave.list[1] as Phaser.GameObjects.Text).setText('정말요? 한 번 더!');
+          return;
+        }
+        family.leave();
+        close();
+        this.toast('가족 섬에서 나왔어요');
+        this.refreshFeedBtn();
+      }, 200);
+      leave.setPosition(0, PH / 2 - 40);
+      (leave.list[0] as Phaser.GameObjects.Graphics).clear().fillStyle(0xd8d2c4).fillRoundedRect(-100, -20, 200, 40, 20);
+      (leave.list[1] as Phaser.GameObjects.Text).setStroke('#9a917f', 3);
+      box.add(leave);
+      return;
+    }
+    text(top + 82, '가족 코드 하나로\n섬과 창고를 함께 써요', 13);
+    const make = this.button('🏝️ 새 가족 섬 만들기', true, () => {
+      close();
+      this.toast('가족 섬을 만드는 중…');
+      family
+        .create(localDoc())
+        .then(() => {
+          this.refreshFeedBtn();
+          this.celebrate('🏝️ 가족 섬이 만들어졌어요!\n코드를 가족에게 알려 줘요');
+          this.time.delayedCall(2600, () => this.openFamily());
+        })
+        .catch(() => this.toast('연결에 실패했어요. 인터넷을 확인해 봐요'));
+    }, 220);
+    make.setPosition(0, top + 150);
+    box.add(make);
+    const join = this.button('🔑 코드로 들어가기', true, () => {
+      close();
+      this.time.delayedCall(260, () => this.openKeypad(''));
+    }, 220);
+    join.setPosition(0, top + 204);
+    box.add(join);
+    text(PH / 2 - 44, '새로 만들면 지금 이 폰의 섬이 가족 섬이 돼요.\n코드로 들어가면 이 폰의 섬은 가족 섬으로 바뀌어요.', 10, '#a08a6a');
+  }
+
+  /** 가족 코드 6자리 입력 */
+  private openKeypad(prefill: string) {
+    if (this.registry.get('modal')) return;
+    const PW = 280;
+    const PH = 400;
+    const { box, close } = this.modal(PW, PH);
+    const top = -PH / 2;
+    let code = prefill.replace(/\D/g, '').slice(0, 6);
+    box.add(this.add.text(0, top + 30, '🔑 가족 코드 넣기', { fontFamily: FONT, fontSize: '19px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0.5));
+    const show = this.add.text(0, top + 78, '', { fontFamily: FONT, fontSize: '34px', color: '#e07a5f', fontStyle: 'bold' }).setOrigin(0.5);
+    box.add(show);
+    const render = () => show.setText((code + '······'.slice(code.length)).replace(/(.{3})/, '$1 '));
+    render();
+    const keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '⌫', '0', '✓'];
+    keys.forEach((k, i) => {
+      const x = ((i % 3) - 1) * 76;
+      const y = top + 140 + Math.floor(i / 3) * 58;
+      const g = this.add.graphics();
+      g.fillStyle(0x000000, 0.12).fillRoundedRect(x - 32, y - 22 + 3, 64, 46, 14);
+      g.fillStyle(k === '✓' ? 0x8bd17c : k === '⌫' ? 0xf1ead8 : 0xfde8b0).fillRoundedRect(x - 32, y - 22, 64, 46, 14);
+      const t = this.add.text(x, y, k, { fontFamily: FONT, fontSize: '22px', color: k === '✓' ? '#ffffff' : COLORS.uiText, fontStyle: 'bold' }).setOrigin(0.5);
+      const hit = this.add.rectangle(x, y, 68, 50, 0, 0).setInteractive({ useHandCursor: true });
+      hit.on('pointerdown', (_p: Phaser.Input.Pointer, _x: number, _y: number, e: Phaser.Types.Input.EventData) => {
+        e.stopPropagation();
+        sfx.tap();
+        this.tweens.add({ targets: t, scale: { from: 1.3, to: 1 }, duration: 160 });
+        if (k === '⌫') code = code.slice(0, -1);
+        else if (k === '✓') {
+          if (code.length < 6) {
+            buzz(20);
+            this.tweens.add({ targets: show, x: '+=5', duration: 50, yoyo: true, repeat: 2 });
+            return;
+          }
+          close();
+          this.toast('가족 섬에 들어가는 중…');
+          family
+            .join(code)
+            .then((ok) => {
+              this.refreshFeedBtn();
+              if (ok) this.celebrate('👨‍👩‍👧‍👦 가족 섬에 들어왔어요!');
+              else this.time.delayedCall(300, () => this.toast('그런 가족 코드가 없어요. 숫자를 확인해 봐요'));
+            })
+            .catch(() => this.toast('연결에 실패했어요. 인터넷을 확인해 봐요'));
+          return;
+        } else if (code.length < 6) code += k;
+        render();
+      });
+      box.add([g, t, hit]);
+    });
+  }
+
+  /** 가족 소식판 */
+  private openFeed() {
+    if (this.registry.get('modal')) return;
+    const PW = Math.min(320, this.scale.width - 24);
+    const items = family.feed.slice(0, 8);
+    const PH = 96 + Math.max(1, items.length) * 46;
+    const { box } = this.modal(PW, PH);
+    const top = -PH / 2;
+    box.add(this.add.text(0, top + 28, '📰 가족 소식', { fontFamily: FONT, fontSize: '19px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0.5));
+    if (items.length === 0) {
+      box.add(this.add.text(0, top + 80, '아직 소식이 없어요.\n지역을 열거나 배를 만들면 올라와요!', { fontFamily: FONT, fontSize: '13px', color: '#8a6d4b', align: 'center' }).setOrigin(0.5));
+      return;
+    }
+    const ago = (t: number) => {
+      const m = Math.floor((Date.now() - t) / 60000);
+      return m < 1 ? '방금' : m < 60 ? `${m}분 전` : m < 1440 ? `${Math.floor(m / 60)}시간 전` : `${Math.floor(m / 1440)}일 전`;
+    };
+    items.forEach((f, i) => {
+      const y = top + 62 + i * 46;
+      const g = this.add.graphics();
+      g.fillStyle(f.dev === family.device ? 0xfdf0cf : 0xe6f4d9).fillRoundedRect(-PW / 2 + 12, y - 4, PW - 24, 40, 10);
+      box.add(g);
+      box.add(this.add.text(-PW / 2 + 22, y + 6, `${f.who} · ${ago(f.t)}`, { fontFamily: FONT, fontSize: '10px', color: '#a08a6a' }).setOrigin(0, 0.5));
+      box.add(this.add.text(-PW / 2 + 22, y + 23, f.msg, { fontFamily: FONT, fontSize: '12px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0, 0.5));
+    });
+  }
+
+  /** 다른 가족이 올린 새 소식 */
+  private onFeed(f: FeedItem) {
+    this.toast(`📰 ${f.who}: ${f.msg}`);
   }
 
   /** 다른 섬으로 가는 동안 보여 주는 화면 */
@@ -847,6 +1020,9 @@ export class HudScene extends Phaser.Scene {
       onComplete: () => {
         dim.destroy();
         if (this.hint) this.tweens.add({ targets: this.hint, alpha: 1, duration: 400 });
+        // 가족이 보내 준 링크(?family=123456)로 들어왔으면 코드 입력 창을 바로 띄운다
+        const q = new URLSearchParams(location.search).get('family') ?? '';
+        if (/^\d{6}$/.test(q) && family.enabled && !family.code) this.time.delayedCall(600, () => this.openKeypad(q));
       },
     });
   }
