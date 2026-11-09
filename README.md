@@ -22,7 +22,11 @@ src/
   main.ts              # Phaser 게임 설정 (세로 360×640 기준, EXPAND 스케일)
   config.ts            # 화면·타일·색상 상수
   sfx.ts               # 임시 효과음(WebAudio) + 진동
-  data/islandMap.ts    # 섬 맵 생성 (M1에서 수작업 맵으로 교체 예정)
+  data/islandMap.ts    # 섬 맵 생성
+  data/items.ts        # 아이템 정의
+  data/gathering.ts    # 오브젝트별 채집 규칙 (밸런스는 여기서)
+  state/inventory.ts   # 가족 창고 (localStorage, M5에서 Firebase)
+  util/korean.ts       # 조사(이/가) 처리
   scenes/
     BootScene.ts       # 스프라이트 로드 + 파티클 텍스처 생성
     IslandScene.ts     # 탐험 화면: 탭 이동, 오브젝트·가족 곰 상호작용

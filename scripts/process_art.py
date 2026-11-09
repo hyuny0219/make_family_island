@@ -30,7 +30,8 @@ def clean_alpha(im: Image.Image) -> Image.Image:
     return im
 
 
-def slice_grid(sheet: str, cols: int, rows: int, names: list[list[str | None]]):
+def slice_grid(sheet: str, cols: int, rows: int, names: list[list[str | None]], fit: int | None = None):
+    """fit: 지정하면 긴 변을 fit px에 맞춘다 (아이콘용). 아니면 1/SCALE 축소."""
     im = Image.open(SRC / sheet).convert("RGBA")
     cw, ch = im.width / cols, im.height / rows
     for r in range(rows):
@@ -53,8 +54,9 @@ def slice_grid(sheet: str, cols: int, rows: int, names: list[list[str | None]]):
             arr = np.array(cell)
             arr[..., 3] = np.where(region, arr[..., 3], 0)
             cell = Image.fromarray(arr).crop(bbox)
-            w = max(1, round(cell.width / SCALE))
-            h = max(1, round(cell.height / SCALE))
+            f = (fit / max(cell.width, cell.height)) if fit else (1 / SCALE)
+            w = max(1, round(cell.width * f))
+            h = max(1, round(cell.height * f))
             small = clean_alpha(cell.resize((w, h), Image.BOX))
             small.save(OUT / f"{name}.png")
             print(f"{name:20s} {w}x{h}")
@@ -109,5 +111,15 @@ if __name__ == "__main__":
             ["rock", "boulder", "pebbles", "ore_rock"],
             ["tent", "campfire", "bush", "flowers"],
         ],
+    )
+    slice_grid(
+        "items.png", 4, 4,
+        [
+            ["item_twig", "item_log", "item_plank", "item_chair"],
+            ["item_stone", "item_brick", "item_coal", "item_crystal"],
+            ["item_fruit", "item_pinecone", "item_flower", "item_bouquet"],
+            ["item_jelly", "item_wood_pickaxe", "item_stone_pickaxe", "item_basket"],
+        ],
+        fit=22,
     )
     slice_tiles()

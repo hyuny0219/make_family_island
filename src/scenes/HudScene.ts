@@ -2,8 +2,10 @@ import Phaser from 'phaser';
 import { COLORS } from '../config';
 import { sfx, unlockAudio, buzz } from '../sfx';
 import { BEARS } from '../data/assets';
+import { ITEMS, itemKey, type ItemId } from '../data/items';
+import { inventory } from '../state/inventory';
 
-export const HUD_TOP_H = 56;
+export const HUD_TOP_H = 96;
 export const HUD_BOTTOM_H = 76;
 
 const FONT = '"Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif';
@@ -18,6 +20,10 @@ const TABS: Tab[] = [
 /** 화면 고정 UI: 상단 섬 이름, 하단 탭, 안내 문구, 타이틀 */
 export class HudScene extends Phaser.Scene {
   private hint?: Phaser.GameObjects.Container;
+  private bagCount!: Phaser.GameObjects.Text;
+  private bagBtn!: Phaser.GameObjects.Container;
+  private strip?: Phaser.GameObjects.Container;
+  private slotPos = new Map<ItemId, { x: number; y: number; node: Phaser.GameObjects.Container }>();
 
   constructor() {
     super('Hud');
@@ -28,14 +34,25 @@ export class HudScene extends Phaser.Scene {
     const H = this.scale.height;
 
     this.makeTopBar(W);
+    this.makeBag(W);
+    this.rebuildStrip();
     this.makeTabBar(W, H);
     this.makeHint(W, H);
     this.add
-      .text(W - 6, H - HUD_BOTTOM_H - 6, `M0 · ${__BUILD_LABEL__.slice(0, 14)}`, { fontFamily: FONT, fontSize: '10px', color: '#ffffff' })
+      .text(W - 6, H - HUD_BOTTOM_H - 6, `M1 · ${__BUILD_LABEL__.slice(0, 14)}`, { fontFamily: FONT, fontSize: '10px', color: '#ffffff' })
       .setOrigin(1, 1)
       .setAlpha(0.7);
 
     this.game.events.on('player-moved', this.hideHint, this);
+    this.game.events.on('toast', this.toast, this);
+    this.game.events.on('item-gained', this.onItemGained, this);
+    inventory.on('changed', this.onInventoryChanged, this);
+    this.events.once('shutdown', () => {
+      this.game.events.off('player-moved', this.hideHint, this);
+      this.game.events.off('toast', this.toast, this);
+      this.game.events.off('item-gained', this.onItemGained, this);
+      inventory.off('changed', this.onInventoryChanged, this);
+    });
     this.makeTitle(W, H);
   }
 
@@ -47,12 +64,141 @@ export class HudScene extends Phaser.Scene {
     return g;
   }
 
-  private makeTopBar(W: number) {
-    const w = 170;
-    this.panel((W - w) / 2, 10, w, 36, 18);
+  private makeTopBar(_W: number) {
+    const w = 150;
+    this.panel(10, 10, w, 36, 18);
     this.add
-      .text(W / 2, 28, '🏝️ 우리 가족 섬', { fontFamily: FONT, fontSize: '16px', color: COLORS.uiText, fontStyle: 'bold' })
+      .text(10 + w / 2, 28, '🏝️ 우리 가족 섬', { fontFamily: FONT, fontSize: '15px', color: COLORS.uiText, fontStyle: 'bold' })
       .setOrigin(0.5);
+  }
+
+  /** 오른쪽 위 창고 버튼 — 누르면 전체 목록 */
+  private makeBag(W: number) {
+    const w = 92;
+    const c = this.add.container(W - 14 - w / 2, 28);
+    const g = this.add.graphics();
+    g.fillStyle(0x000000, 0.15).fillRoundedRect(-w / 2, -18 + 3, w, 36, 18);
+    g.fillStyle(0xffd166).fillRoundedRect(-w / 2, -18, w, 36, 18);
+    g.lineStyle(2, 0xe8b84a).strokeRoundedRect(-w / 2, -18, w, 36, 18);
+    const icon = this.add.image(-w / 2 + 20, 0, itemKey('basket')).setScale(1.1);
+    const label = this.add.text(4, 0, '창고', { fontFamily: FONT, fontSize: '13px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0, 0.5);
+    this.bagCount = this.add
+      .text(w / 2 - 6, -15, '0', { fontFamily: FONT, fontSize: '11px', color: '#ffffff', fontStyle: 'bold', backgroundColor: '#e07a5f', padding: { x: 5, y: 1 } })
+      .setOrigin(0.5);
+    c.add([g, icon, label, this.bagCount]);
+    c.setSize(w, 36).setInteractive({ useHandCursor: true });
+    c.on('pointerdown', () => {
+      sfx.tap();
+      buzz(8);
+      this.tweens.add({ targets: c, scale: { from: 0.88, to: 1 }, duration: 260, ease: 'Back.easeOut' });
+      this.openStorage();
+    });
+    this.bagBtn = c;
+    this.updateBagCount();
+  }
+
+  private updateBagCount() {
+    const total = inventory.owned().reduce((s, o) => s + o.count, 0);
+    this.bagCount.setText(String(total));
+    this.bagCount.setVisible(total > 0);
+  }
+
+  /** 상단 아이템 줄 — 가진 재료를 아이콘+개수로 (최대 7칸, 넘치면 +N) */
+  private rebuildStrip() {
+    this.strip?.destroy();
+    this.slotPos.clear();
+    const owned = inventory.owned();
+    if (owned.length === 0) return;
+    const W = this.scale.width;
+    const slotW = 44;
+    const max = Math.floor((W - 20) / slotW);
+    const shown = owned.slice(0, owned.length > max ? max - 1 : max);
+    const extra = owned.length - shown.length;
+    const n = shown.length + (extra > 0 ? 1 : 0);
+    const totalW = n * slotW;
+    const x0 = (W - totalW) / 2;
+    const y = 72;
+    const strip = this.add.container(0, 0);
+    const bg = this.add.graphics();
+    bg.fillStyle(COLORS.uiBg, 0.92).fillRoundedRect(x0 - 6, y - 19, totalW + 12, 38, 14);
+    strip.add(bg);
+    shown.forEach((o, i) => {
+      const cx = x0 + slotW * i + slotW / 2;
+      const node = this.add.container(cx, y);
+      const ic = this.add.image(0, -2, itemKey(o.id));
+      const ct = this.add
+        .text(13, 11, String(o.count), { fontFamily: FONT, fontSize: '11px', color: COLORS.uiText, fontStyle: 'bold', stroke: '#fff8e7', strokeThickness: 3 })
+        .setOrigin(1, 0.5);
+      node.add([ic, ct]);
+      strip.add(node);
+      this.slotPos.set(o.id, { x: cx, y, node });
+    });
+    if (extra > 0) {
+      const cx = x0 + slotW * shown.length + slotW / 2;
+      strip.add(this.add.text(cx, y, `+${extra}`, { fontFamily: FONT, fontSize: '13px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0.5));
+    }
+    this.strip = strip;
+  }
+
+  private onInventoryChanged(id?: ItemId, _count?: number, delta?: number) {
+    this.rebuildStrip();
+    this.updateBagCount();
+    if (id && delta && delta > 0) {
+      const slot = this.slotPos.get(id);
+      if (slot) this.tweens.add({ targets: slot.node, scale: { from: 1.45, to: 1 }, duration: 320, ease: 'Back.easeOut' });
+      this.tweens.add({ targets: this.bagBtn, scale: { from: 1.12, to: 1 }, duration: 260, ease: 'Back.easeOut' });
+    }
+  }
+
+  /** 곰 머리 위에 "+1 아이템" 이 떠오르기 */
+  private onItemGained(id: ItemId, sx: number, sy: number) {
+    const t = this.add
+      .text(0, 0, `+1 ${ITEMS[id].name}`, { fontFamily: FONT, fontSize: '13px', color: '#ffffff', fontStyle: 'bold', stroke: '#4a3b2a', strokeThickness: 4 })
+      .setOrigin(0.5);
+    const c = this.add.container(sx, sy, [t]).setDepth(50);
+    this.tweens.add({ targets: c, y: sy - 26, alpha: { from: 1, to: 0 }, duration: 900, ease: 'Cubic.easeOut', onComplete: () => c.destroy() });
+  }
+
+  /** 가족 창고 전체 보기 */
+  private openStorage() {
+    const W = this.scale.width;
+    const H = this.scale.height;
+    this.registry.set('modal', true);
+    const dim = this.add.rectangle(0, 0, W, H, 0x1b4965, 0.45).setOrigin(0).setDepth(300).setInteractive();
+    const PW = W - 40;
+    const owned = inventory.owned();
+    const cols = 4;
+    const cell = (PW - 32) / cols;
+    const rows = Math.max(1, Math.ceil(owned.length / cols));
+    const PH = 96 + rows * cell;
+    const box = this.add.container(W / 2, H / 2).setDepth(301);
+    const g = this.add.graphics();
+    g.fillStyle(0x000000, 0.2).fillRoundedRect(-PW / 2, -PH / 2 + 4, PW, PH, 24);
+    g.fillStyle(COLORS.uiBg).fillRoundedRect(-PW / 2, -PH / 2, PW, PH, 24);
+    g.lineStyle(3, 0xe8d5a9).strokeRoundedRect(-PW / 2, -PH / 2, PW, PH, 24);
+    box.add(g);
+    box.add(this.add.text(0, -PH / 2 + 28, '🧺 가족 창고', { fontFamily: FONT, fontSize: '20px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0.5));
+    if (owned.length === 0) {
+      box.add(this.add.text(0, 10, '아직 비어 있어요.\n나무를 흔들고 돌을 캐 보세요!', { fontFamily: FONT, fontSize: '14px', color: '#8a6d4b', align: 'center' }).setOrigin(0.5));
+    }
+    owned.forEach((o, i) => {
+      const cx = -PW / 2 + 16 + cell * (i % cols) + cell / 2;
+      const cy = -PH / 2 + 60 + cell * Math.floor(i / cols) + cell / 2;
+      const sg = this.add.graphics();
+      sg.fillStyle(0xfde8b0).fillRoundedRect(cx - cell / 2 + 4, cy - cell / 2 + 4, cell - 8, cell - 8, 12);
+      const ic = this.add.image(cx, cy - 8, itemKey(o.id)).setScale(1.6);
+      const nm = this.add.text(cx, cy + 20, `${ITEMS[o.id].name} ${o.count}`, { fontFamily: FONT, fontSize: '11px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0.5);
+      box.add([sg, ic, nm]);
+    });
+    box.add(this.add.text(0, PH / 2 - 18, '아무 곳이나 눌러서 닫기', { fontFamily: FONT, fontSize: '11px', color: '#a08a6a' }).setOrigin(0.5));
+    box.setScale(0.6).setAlpha(0);
+    this.tweens.add({ targets: box, scale: 1, alpha: 1, duration: 260, ease: 'Back.easeOut' });
+    this.time.delayedCall(150, () =>
+      dim.once('pointerdown', () => {
+        sfx.tap();
+        this.tweens.add({ targets: [box, dim], alpha: 0, duration: 180, onComplete: () => { box.destroy(); dim.destroy(); this.registry.set('modal', false); } });
+      }),
+    );
   }
 
   private makeTabBar(W: number, H: number) {
@@ -108,11 +254,11 @@ export class HudScene extends Phaser.Scene {
     const w = t.width + 28;
     const g = this.add.graphics();
     g.fillStyle(0x4a3b2a, 0.88).fillRoundedRect(-w / 2, -17, w, 34, 17);
-    const c = this.add.container(W / 2, 80, [g, t]).setAlpha(0).setDepth(100);
+    const c = this.add.container(W / 2, 112, [g, t]).setAlpha(0).setDepth(100);
     this.tweens.chain({
       targets: c,
       tweens: [
-        { alpha: 1, y: 92, duration: 200, ease: 'Back.easeOut' },
+        { alpha: 1, y: 124, duration: 200, ease: 'Back.easeOut' },
         { alpha: 0, delay: 1100, duration: 250 },
       ],
       onComplete: () => c.destroy(),

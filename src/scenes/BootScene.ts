@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { COLORS } from '../config';
 import { BEARS, FACINGS, OBJECTS } from '../data/assets';
+import { ITEM_IDS, itemKey } from '../data/items';
 
 /**
  * 스프라이트 로드 + 작은 파티클 텍스처 생성.
@@ -22,6 +23,7 @@ export class BootScene extends Phaser.Scene {
     this.load.spritesheet('tiles', 'tiles.png', { frameWidth: 24, frameHeight: 24, margin: 1, spacing: 2 });
     for (const b of BEARS) for (const f of FACINGS) this.load.image(`${b.id}_${f}`, `${b.id}_${f}.png`);
     for (const o of OBJECTS) this.load.image(o, `${o}.png`);
+    for (const id of ITEM_IDS) this.load.image(itemKey(id), `${itemKey(id)}.png`);
   }
 
   create() {
