@@ -10,6 +10,7 @@ import { drawEdges } from '../world/edges';
 import { inventory } from '../state/inventory';
 import { progress } from '../state/progress';
 import { village, type Placed } from '../state/village';
+import { family } from '../sync/family';
 import { DECOR_BLOCKING, DECOR_POINTS, RESIDENTS } from '../data/village';
 import { Bear } from '../objects/Bear';
 import { sfx, buzz } from '../sfx';
@@ -146,6 +147,8 @@ export class IslandScene extends Phaser.Scene {
     ge.on('travel', this.onTravel, this);
     ge.on('go-home', this.goHome, this);
     village.on('resident-joined', this.onResidentJoined, this);
+    village.on('remote', this.syncPlaced, this);
+    progress.on('remote', this.onRemoteProgress, this);
     this.events.once('shutdown', () => {
       ge.off('choose-bear', this.choosePlayer, this);
       ge.off('unlock-region', this.onUnlockRegion, this);
@@ -153,6 +156,8 @@ export class IslandScene extends Phaser.Scene {
       ge.off('travel', this.onTravel, this);
       ge.off('go-home', this.goHome, this);
       village.off('resident-joined', this.onResidentJoined, this);
+      village.off('remote', this.syncPlaced, this);
+      progress.off('remote', this.onRemoteProgress, this);
       this.input.off('pointerdown', this.onPointerDown, this);
     });
 
@@ -265,6 +270,7 @@ export class IslandScene extends Phaser.Scene {
     this.cameras.main.shake(200, 0.002);
     this.time.delayedCall(300, () => this.fx.heart.explode(8, this.player?.x ?? 0, (this.player?.y ?? 0) - 30));
     this.game.events.emit('celebrate', `${BIOME_INFO[reg.biome].emoji} ${withJosa(reg.name, '이', '가')} 열렸어요!`);
+    family.post(`${BIOME_INFO[reg.biome].emoji} ${ISLANDS[island].name}의 ${withJosa(reg.name, '을', '를')} 열었어요`);
     this.game.events.emit('world-ready', this.islandIdx, W.regions.length);
   }
 
@@ -294,6 +300,7 @@ export class IslandScene extends Phaser.Scene {
     sfx.pop();
     buzz(40);
     this.game.events.emit('celebrate', '⛵ 배가 완성됐어요! 다음 섬으로 떠날 수 있어요');
+    family.post(`⛵ ${ISLANDS[island].name}에서 배를 완성했어요`);
   }
 
   private onTravel(to: number) {
@@ -390,6 +397,7 @@ export class IslandScene extends Phaser.Scene {
 
   private choosePlayer(id: BearId) {
     this.registry.set('bear', id);
+    family.who = BEARS.find((b) => b.id === id)?.name ?? '가족';
     const bear = this.bears.find((b) => b.id === id)!;
     this.player = bear;
     bear.speed = PLAYER_SPEED;
@@ -674,6 +682,31 @@ export class IslandScene extends Phaser.Scene {
 
   // ───────────────────────── 꾸미기 · 주민 ─────────────────────────
 
+  /** 다른 가족이 지역을 열거나 배를 만들었을 때 화면 맞추기 */
+  private onRemoteProgress() {
+    if (!progress.canVisit(this.islandIdx)) {
+      // 다른 가족 섬에 들어가서 이 섬에 올 수 없게 됐다 → 첫 섬에서 다시 시작
+      this.scene.restart();
+      return;
+    }
+    this.refreshRegions(false);
+    if (progress.hasBoat(this.islandIdx)) this.showBoat(true);
+    this.game.events.emit('world-ready', this.islandIdx, this.world.regions.length);
+  }
+
+  /** 다른 가족이 놓거나 치운 장식을 화면에 맞추기 */
+  private syncPlaced() {
+    const want = new Map(village.placedOn(this.islandIdx).map((p) => [`${p.tx},${p.ty}`, p]));
+    for (const [key, img] of [...this.placedObjs]) {
+      const cur = (img as unknown as { placed: Placed }).placed;
+      if (want.get(key)?.id === cur.id) continue;
+      this.placedObjs.delete(key);
+      this.blocked.delete(key);
+      img.destroy();
+    }
+    for (const [key, p] of want) if (!this.placedObjs.has(key)) this.addPlaced(p, true);
+  }
+
   private addPlaced(p: Placed, anim: boolean) {
     const key = `${p.tx},${p.ty}`;
     const img = this.add.image(p.tx * TILE + TILE / 2, p.ty * TILE + TILE - 1, itemKey(p.id)).setOrigin(0.5, 1).setScale(1.5);
@@ -765,6 +798,7 @@ export class IslandScene extends Phaser.Scene {
   private onResidentJoined(id: string) {
     const r = RESIDENTS.find((v) => v.id === id);
     if (!r) return;
+    if (this.bears.some((b) => b.resident && b.id === id)) return;
     this.spawnResident(id, true);
     sfx.fanfare();
     this.game.events.emit('celebrate', `🏠 새 주민 ${withJosa(r.name, '이', '가')} 이사 왔어요!\n캠프에서 만나 봐요`);
@@ -905,7 +939,10 @@ export class IslandScene extends Phaser.Scene {
     this.fx.splash.explode(14, f.spot.x, f.spot.y);
     buzz(30);
     this.spawnDrop(item, f.spot.x, f.spot.y, this.player!.y + 6);
-    if (item === 'fish_gold') this.game.events.emit('celebrate', '✨ 황금 물고기를 낚았어요!');
+    if (item === 'fish_gold') {
+      this.game.events.emit('celebrate', '✨ 황금 물고기를 낚았어요!');
+      family.post('✨ 황금 물고기를 낚았어요');
+    }
     else if (item === 'boot') this.toast('👢 앗, 낡은 장화예요…');
     // 낚시터는 잠깐 쉬었다가 다시 생김
     f.spot.active = false;

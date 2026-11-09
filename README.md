@@ -3,6 +3,7 @@
 가족 넷이 함께, 또는 각자 즐기는 협동형 섬 개척 게임. 모바일 웹(PWA)으로 동작한다.
 
 - 📄 기획서: [`docs/GAME_DESIGN.md`](docs/GAME_DESIGN.md)
+- 👨‍👩‍👧‍👦 가족 동기화 설정: [`docs/FIREBASE.md`](docs/FIREBASE.md)
 - 🎮 정식 주소: https://hyuny0219.github.io/make_family_island/
 - 🔍 PR 미리보기: PR마다 봇이 댓글로 링크를 달아준다 (`/pr-preview/pr-<번호>/`)
 

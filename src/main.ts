@@ -7,6 +7,8 @@ import { MergeScene } from './scenes/MergeScene';
 import { inventory } from './state/inventory';
 import { progress } from './state/progress';
 import { village } from './state/village';
+import { family } from './sync/family';
+import './sync/bridge';
 
 const game = new Phaser.Game({
   type: Phaser.AUTO,
@@ -27,4 +29,4 @@ const game = new Phaser.Game({
 });
 
 // 디버그/테스트용 핸들
-Object.assign(window, { __game: game, __inv: inventory, __progress: progress, __village: village });
+Object.assign(window, { __game: game, __inv: inventory, __progress: progress, __village: village, __family: family });

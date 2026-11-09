@@ -1,6 +1,8 @@
 import Phaser from 'phaser';
 import { ITEMS, type ItemId } from '../data/items';
 import { DECOR_POINTS, ORDER_BASIC, ORDER_CRAFTED, RESIDENTS } from '../data/village';
+import { family } from '../sync/family';
+import { withJosa } from '../util/korean';
 
 const KEY = 'mfi.v1.village';
 
@@ -56,6 +58,7 @@ class Village extends Phaser.Events.EventEmitter {
 
   place(island: number, p: Placed) {
     (this.d.placed[island] ??= []).push(p);
+    family.union(`placed.${island}`, { id: p.id, tx: p.tx, ty: p.ty });
     this.afterChange();
   }
 
@@ -64,6 +67,7 @@ class Village extends Phaser.Events.EventEmitter {
     const i = list.findIndex((p) => p.tx === tx && p.ty === ty);
     if (i < 0) return null;
     const [p] = list.splice(i, 1);
+    family.remove(`placed.${island}`, { id: p.id, tx: p.tx, ty: p.ty });
     this.afterChange();
     return p;
   }
@@ -76,6 +80,8 @@ class Village extends Phaser.Events.EventEmitter {
       if (s >= r.score && !this.d.joined.includes(r.id)) {
         this.d.joined.push(r.id);
         joinedNow.push(r.id);
+        family.union('joined', r.id);
+        family.post(`🏠 새 주민 ${withJosa(r.name, '이', '가')} 이사 왔어요`);
       }
     }
     this.save();
@@ -107,6 +113,7 @@ class Village extends Phaser.Events.EventEmitter {
       const n = crafted ? 1 + Math.floor(h / 4) : 3 + Math.floor(Math.random() * 3) + Math.floor(h / 2);
       this.d.orders[id] = { item, n };
       this.save();
+      family.set(`orders.${id}`, { item, n });
     }
     return this.d.orders[id];
   }
@@ -121,9 +128,32 @@ class Village extends Phaser.Events.EventEmitter {
     delete this.d.orders[id];
     this.d.hearts[id] = this.hearts(id) + 1;
     this.d.nextAt[id] = Date.now() + 60_000;
+    family.del(`orders.${id}`);
+    family.inc(`hearts.${id}`, 1);
+    family.set(`nextAt.${id}`, this.d.nextAt[id]);
     this.save();
     this.emit('changed');
     return this.d.hearts[id];
+  }
+
+  exportDoc() {
+    const placed: Record<string, Placed[]> = {};
+    for (const [k, v] of Object.entries(this.d.placed)) placed[k] = v.map((p) => ({ ...p }));
+    return { placed, joined: [...this.d.joined], hearts: { ...this.d.hearts }, orders: { ...this.d.orders }, nextAt: { ...this.d.nextAt } };
+  }
+
+  /** 가족 섬의 최신 상태로 맞추기. 달라졌으면 'changed'·'remote', 새 주민은 'resident-joined' */
+  applyRemote(r: { placed?: Record<string, Placed[]>; joined?: string[]; hearts?: Record<string, number>; orders?: Record<string, Order>; nextAt?: Record<string, number> }) {
+    const placed: Record<number, Placed[]> = {};
+    for (const [k, v] of Object.entries(r.placed ?? {})) placed[Number(k)] = v.filter((p) => p.id in ITEMS).map((p) => ({ id: p.id, tx: p.tx, ty: p.ty }));
+    const next: Saved = { placed, joined: [...(r.joined ?? [])], hearts: { ...(r.hearts ?? {}) }, orders: { ...(r.orders ?? {}) }, nextAt: { ...(r.nextAt ?? {}) } };
+    if (JSON.stringify(next) === JSON.stringify(this.d)) return;
+    const before = new Set(this.d.joined);
+    this.d = next;
+    this.save();
+    this.emit('changed');
+    this.emit('remote');
+    next.joined.filter((id) => !before.has(id)).forEach((id) => this.emit('resident-joined', id));
   }
 
   private save() {

@@ -9,6 +9,7 @@
     "preview": "vite preview --host"
   },
   "dependencies": {
+    "firebase": "^13.2.0",
     "phaser": "3.90.0"
   },
   "devDependencies": {

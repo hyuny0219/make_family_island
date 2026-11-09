@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { ISLANDS } from '../data/islands';
+import { family } from '../sync/family';
 
 const KEY = 'mfi.v2.progress';
 
@@ -49,6 +50,7 @@ class Progress extends Phaser.Events.EventEmitter {
     if (this.isUnlocked(island, region)) return;
     (this.data.unlocked[island] ??= []).push(region);
     this.save();
+    family.union(`unlocked.${island}`, region);
     this.emit('region-unlocked', island, region);
   }
 
@@ -60,12 +62,33 @@ class Progress extends Phaser.Events.EventEmitter {
     if (this.hasBoat(island)) return;
     this.data.boats.push(island);
     this.save();
+    family.union('boats', island);
     this.emit('boat-built', island);
   }
 
   /** 갈 수 있는 섬: 0번 + 배를 만든 섬의 다음 섬들 */
   canVisit(island: number) {
     return island === 0 || this.hasBoat(island - 1);
+  }
+
+  exportDoc() {
+    const unlocked: Record<string, number[]> = {};
+    for (const [k, v] of Object.entries(this.data.unlocked)) unlocked[k] = [...v];
+    return { unlocked, boats: [...this.data.boats] };
+  }
+
+  /** 가족 섬의 최신 상태로 맞추기. 달라졌으면 'remote' 이벤트 */
+  applyRemote(unlocked: Record<string, number[]>, boats: number[]) {
+    const u: Record<number, number[]> = {};
+    for (const [k, v] of Object.entries(unlocked ?? {})) u[Number(k)] = [...v];
+    const b = [...(boats ?? [])];
+    if (JSON.stringify([u, b]) === JSON.stringify([this.data.unlocked, this.data.boats])) return;
+    this.data.unlocked = u;
+    this.data.boats = b;
+    // 지금 있는 섬에 더는 갈 수 없게 됐다면(다른 가족 섬에 들어감) 첫 섬으로
+    if (!this.canVisit(this.data.current)) this.data.current = 0;
+    this.save();
+    this.emit('remote');
   }
 
   private save() {
