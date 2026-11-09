@@ -6,6 +6,7 @@ import { HudScene } from './scenes/HudScene';
 import { MergeScene } from './scenes/MergeScene';
 import { inventory } from './state/inventory';
 import { progress } from './state/progress';
+import { village } from './state/village';
 
 const game = new Phaser.Game({
   type: Phaser.AUTO,
@@ -26,4 +27,4 @@ const game = new Phaser.Game({
 });
 
 // 디버그/테스트용 핸들
-Object.assign(window, { __game: game, __inv: inventory, __progress: progress });
+Object.assign(window, { __game: game, __inv: inventory, __progress: progress, __village: village });

@@ -1,12 +1,15 @@
 import Phaser from 'phaser';
-import type { BearId, Facing } from '../data/assets';
+import type { Facing } from '../data/assets';
 
 /**
  * 곰 캐릭터 (플레이어/가족 NPC 공용).
  * 논리 위치(x, y)는 발 위치이고, 스프라이트는 통통 튀는 연출만큼 위로 그려진다.
  */
 export class Bear {
-  readonly id: BearId;
+  /** 가족 곰이면 BearId, 주민이면 주민 id (텍스처 이름 앞부분) */
+  readonly id: string;
+  /** 동물 주민이면 true */
+  resident = false;
   readonly sprite: Phaser.GameObjects.Image;
   x: number;
   y: number;
@@ -18,7 +21,7 @@ export class Bear {
   private hop = 0;
   private hopV = 0;
 
-  constructor(scene: Phaser.Scene, id: BearId, x: number, y: number, speed: number) {
+  constructor(scene: Phaser.Scene, id: string, x: number, y: number, speed: number) {
     this.id = id;
     this.x = x;
     this.y = y;
