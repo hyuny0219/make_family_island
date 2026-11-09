@@ -16,6 +16,14 @@ export const ITEMS = {
   wood_pickaxe: { name: '나무 곡괭이' },
   stone_pickaxe: { name: '돌 곡괭이' },
   basket: { name: '바구니' },
+  fish_small: { name: '송사리' },
+  fish: { name: '붕어' },
+  fish_big: { name: '큰 물고기' },
+  fish_gold: { name: '황금 물고기' },
+  crab: { name: '꽃게' },
+  shell: { name: '조개껍데기' },
+  boot: { name: '낡은 장화' },
+  starfish: { name: '불가사리' },
 } as const;
 
 export type ItemId = keyof typeof ITEMS;

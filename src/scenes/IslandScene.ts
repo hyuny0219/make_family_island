@@ -1,153 +1,302 @@
 import Phaser from 'phaser';
-import { MAP_H, MAP_W, PLAYER_SPEED, TILE, WORLD_ZOOM, COLORS } from '../config';
-import { generateIsland, T_GRASS, T_SAND, T_SEA, type Decor } from '../data/islandMap';
-import { BEARS, BLOCKING, type BearId } from '../data/assets';
+import { PLAYER_SPEED, TILE, WORLD_ZOOM, COLORS } from '../config';
+import { BEARS, BLOCKING, OBJECT_TEXTURE, type BearId } from '../data/assets';
 import { GATHER, rollDrops } from '../data/gathering';
 import { ITEMS, itemKey, type ItemId } from '../data/items';
+import { ISLANDS } from '../data/islands';
+import { BIOME_INFO } from '../data/biomes';
+import { generateWorld, T_SEA, type Decor, type FishingSpot, type RegionInfo, type World } from '../world/generate';
+import { drawEdges } from '../world/edges';
 import { inventory } from '../state/inventory';
+import { progress } from '../state/progress';
 import { Bear } from '../objects/Bear';
 import { sfx, buzz } from '../sfx';
 import { withJosa } from '../util/korean';
 import { HUD_BOTTOM_H, HUD_TOP_H } from './HudScene';
 
-type DecorObj = Phaser.GameObjects.Image & {
-  decor: Decor;
-  hitsLeft: number;
-  resting: boolean;
-  gone: boolean;
-};
-type Hit = { bear?: Bear; decor?: DecorObj };
+type DecorObj = Phaser.GameObjects.Image & { decor: Decor; hitsLeft: number; resting: boolean; gone: boolean; region: number };
+type SpotObj = Phaser.GameObjects.Container & { spot: FishingSpot; active: boolean };
+type Hit = { bear?: Bear; decor?: DecorObj; sign?: number; spot?: SpotObj; dock?: boolean };
 
-/** 해안선 다듬기 색상 (tiles.png 기준) */
-const EDGE = {
-  grass: 0xb7e279,
-  grassLine: 0x8fc46a,
-  sand: 0xfde4b4,
-  foam: 0xf3f7f7,
-};
+const CLOUD_PX = 6; // 구름은 타일당 6px 저해상도로 그려 4배 확대 (도트 느낌 + 메모리 절약)
+
+/** 섬마다 생성 결과를 캐시 (다시 방문할 때 빠르게) */
+const worldCache = new Map<number, World>();
 
 export class IslandScene extends Phaser.Scene {
-  private terrain!: number[][];
+  private islandIdx = 0;
+  private world!: World;
   private blocked = new Set<string>();
   private bears: Bear[] = [];
   private player: Bear | null = null;
   private pending: Hit | null = null;
-  private camp = { x: 0, y: 0 };
   private npcTimers = new Map<Bear, number>();
   private stepTimer = 0;
   private lastHit = 0;
-  private fx!: Record<'leaf' | 'pebble' | 'sparkle' | 'ember' | 'heart' | 'dust', Phaser.GameObjects.Particles.ParticleEmitter>;
+  private curRegion = -1;
+  private decorObjs: DecorObj[] = [];
+  private signs = new Map<number, Phaser.GameObjects.Container>();
+  private spots: SpotObj[] = [];
+  private clouds!: Phaser.GameObjects.RenderTexture;
+  private boatImg?: Phaser.GameObjects.Image;
+  private fishing: null | { spot: SpotObj; phase: 'wait' | 'bite'; t: number; bobber: Phaser.GameObjects.Image; mark?: Phaser.GameObjects.Text } = null;
+  private fx!: Record<'leaf' | 'pebble' | 'sparkle' | 'ember' | 'heart' | 'dust' | 'splash' | 'puff', Phaser.GameObjects.Particles.ParticleEmitter>;
 
   constructor() {
     super('Island');
   }
 
   create() {
-    const map = generateIsland();
-    this.terrain = map.terrain;
+    this.islandIdx = progress.current;
+    const theme = ISLANDS[this.islandIdx];
+    if (!worldCache.has(this.islandIdx)) worldCache.set(this.islandIdx, generateWorld(theme, this.islandIdx));
+    this.world = worldCache.get(this.islandIdx)!;
+    const W = this.world;
     this.blocked.clear();
     this.bears = [];
     this.player = null;
+    this.decorObjs = [];
+    this.signs.clear();
+    this.spots = [];
+    this.fishing = null;
+    this.curRegion = -1;
+    this.boatImg = undefined;
 
-    // 바닥 + 경계 다듬기
-    const tm = this.make.tilemap({ data: map.tiles, tileWidth: TILE, tileHeight: TILE });
+    // 바닥 + 경계
+    const tm = this.make.tilemap({ data: W.tiles, tileWidth: TILE, tileHeight: TILE });
     const ts = tm.addTilesetImage('tiles', 'tiles', TILE, TILE, 1, 2)!;
     tm.createLayer(0, ts, 0, 0)!.setDepth(-1000);
-    this.drawEdges();
+    drawEdges(this, W.terrain);
+
+    this.makeFx();
 
     // 오브젝트
-    for (const d of map.decor) {
-      const img = this.add.image(d.tx * TILE + TILE / 2, d.ty * TILE + TILE - 2, d.kind).setOrigin(0.5, 1) as DecorObj;
+    for (const d of W.decor) {
+      const tex = OBJECT_TEXTURE[d.kind] ?? d.kind;
+      const img = this.add.image(d.tx * TILE + TILE / 2, d.ty * TILE + TILE - 2, tex).setOrigin(0.5, 1) as DecorObj;
       img.decor = d;
       img.hitsLeft = GATHER[d.kind]?.hits ?? 0;
       img.resting = false;
       img.gone = false;
+      img.region = W.region[d.ty * W.w + d.tx];
       img.setDepth(img.y);
+      if (d.kind === 'shell_pick' || d.kind === 'starfish_pick') img.setOrigin(0.5, 0.8).setDepth(img.y - 20);
       img.setInteractive({ useHandCursor: true });
       this.setBlocked(d, true);
       if (d.kind === 'campfire') this.animateCampfire(img);
+      if (d.kind === 'crate') img.setScale(0.75);
+      this.decorObjs.push(img);
     }
 
-    // 곰 가족 — 캠프 앞에 모여 있다가, 고른 곰이 플레이어가 된다
-    this.camp = { x: map.camp.tx * TILE + TILE / 2, y: (map.camp.ty + 2) * TILE + TILE / 2 };
+    // 선착장 + 배
+    const dk = W.dock;
+    const dockImg = this.add.image(dk.tx * TILE + TILE / 2, (dk.ty + 2) * TILE + 4, 'dock').setOrigin(0.5, 1).setDepth((dk.ty + 1) * TILE - 30);
+    dockImg.setInteractive({ useHandCursor: true });
+    (dockImg as unknown as { isDock: boolean }).isDock = true;
+    if (progress.hasBoat(this.islandIdx) || this.islandIdx > 0) this.showBoat(false);
+
+    // 표지판 · 낚시터 · 구름
+    this.clouds = this.add.renderTexture(0, 0, W.w * CLOUD_PX, W.h * CLOUD_PX).setOrigin(0).setScale(TILE / CLOUD_PX).setDepth(99980);
+    this.refreshRegions(false);
+
+    // 섬 색감 (전용 아트 전까지 임시)
+    const tint = ISLANDS[this.islandIdx].tint;
+    if (tint !== undefined) {
+      this.add.rectangle(0, 0, W.w * TILE, W.h * TILE, tint).setOrigin(0).setDepth(99970).setBlendMode(Phaser.BlendModes.MULTIPLY);
+    }
+
+    // 곰 가족
+    const camp = { x: W.camp.tx * TILE + TILE / 2, y: (W.camp.ty + 2) * TILE + TILE / 2 };
     BEARS.forEach((b, i) => {
-      const bear = new Bear(this, b.id, this.camp.x + (i - 1.5) * 26, this.camp.y + 30 + (i % 2) * 6, 45);
+      const bear = new Bear(this, b.id, camp.x + (i - 1.5) * 26, camp.y + 30 + (i % 2) * 6, 45);
       this.bears.push(bear);
       this.npcTimers.set(bear, 1 + Math.random() * 3);
     });
 
-    this.makeFx();
-
     const cam = this.cameras.main;
     cam.setZoom(WORLD_ZOOM);
-    cam.setBounds(0, 0, MAP_W * TILE, MAP_H * TILE);
-    cam.centerOn(this.camp.x, this.camp.y);
+    cam.setBounds(0, 0, W.w * TILE, W.h * TILE);
+    cam.centerOn(camp.x, camp.y);
     cam.setBackgroundColor(COLORS.sea);
     cam.setRoundPixels(true);
+    cam.fadeIn(500);
 
     this.input.on('pointerdown', this.onPointerDown, this);
-    this.game.events.on('choose-bear', this.choosePlayer, this);
-    this.events.once('shutdown', () => this.game.events.off('choose-bear', this.choosePlayer, this));
+    const ge = this.game.events;
+    ge.on('choose-bear', this.choosePlayer, this);
+    ge.on('unlock-region', this.onUnlockRegion, this);
+    ge.on('build-boat', this.onBuildBoat, this);
+    ge.on('travel', this.onTravel, this);
+    this.events.once('shutdown', () => {
+      ge.off('choose-bear', this.choosePlayer, this);
+      ge.off('unlock-region', this.onUnlockRegion, this);
+      ge.off('build-boat', this.onBuildBoat, this);
+      ge.off('travel', this.onTravel, this);
+      this.input.off('pointerdown', this.onPointerDown, this);
+    });
+
+    ge.emit('world-ready', this.islandIdx, W.regions.length);
+    // 섬을 옮겨 왔으면 고른 곰으로 바로 시작
+    const chosen = this.registry.get('bear') as BearId | undefined;
+    if (chosen) this.choosePlayer(chosen);
   }
 
-  // ───────────────────────── 지형 ─────────────────────────
+  // ───────────────────────── 지역 ─────────────────────────
 
-  /**
-   * 타일 경계가 계단처럼 보이지 않도록, 위 지형(풀>모래>바다)을 아래 지형 쪽으로
-   * 물결 모양으로 2~5px 덮어 그린다. 모래→바다 끝에는 흰 거품 선.
-   */
-  private drawEdges() {
-    const g = this.add.graphics().setDepth(-900);
-    const rank = (t: number) => (t === T_GRASS ? 2 : t === T_SAND ? 1 : 0);
-    const passes: [number, number, number][] = [
-      [T_SAND, EDGE.sand, EDGE.foam],
-      [T_GRASS, EDGE.grass, EDGE.grassLine],
-    ];
-    const dirs = [
-      [0, 1],
-      [0, -1],
-      [1, 0],
-      [-1, 0],
-    ];
-    for (const [type, fill, tip] of passes) {
-      for (let y = 0; y < MAP_H; y++) {
-        for (let x = 0; x < MAP_W; x++) {
-          if (this.terrain[y][x] !== type) continue;
-          for (const [dx, dy] of dirs) {
-            const nx = x + dx;
-            const ny = y + dy;
-            if (nx < 0 || ny < 0 || nx >= MAP_W || ny >= MAP_H) continue;
-            if (rank(this.terrain[ny][nx]) >= rank(type)) continue;
-            for (let i = 0; i < TILE; i++) {
-              const along = dx === 0 ? x * TILE + i : y * TILE + i;
-              const ext = 2 + Math.round(1.5 + 1.5 * Math.sin(along * 0.55 + (dx === 0 ? y : x) * 1.7));
-              let rx: number, ry: number, rw: number, rh: number, tx: number, ty: number;
-              if (dy === 1) [rx, ry, rw, rh, tx, ty] = [x * TILE + i, (y + 1) * TILE, 1, ext, x * TILE + i, (y + 1) * TILE + ext];
-              else if (dy === -1) [rx, ry, rw, rh, tx, ty] = [x * TILE + i, y * TILE - ext, 1, ext, x * TILE + i, y * TILE - ext - 1];
-              else if (dx === 1) [rx, ry, rw, rh, tx, ty] = [(x + 1) * TILE, y * TILE + i, ext, 1, (x + 1) * TILE + ext, y * TILE + i];
-              else [rx, ry, rw, rh, tx, ty] = [x * TILE - ext, y * TILE + i, ext, 1, x * TILE - ext - 1, y * TILE + i];
-              g.fillStyle(fill).fillRect(rx, ry, rw, rh);
-              g.fillStyle(tip, type === T_SAND ? 0.9 : 1).fillRect(tx, ty, 1, 1);
-            }
-          }
-        }
+  private regionAt(wx: number, wy: number) {
+    const tx = Math.floor(wx / TILE);
+    const ty = Math.floor(wy / TILE);
+    const W = this.world;
+    if (tx < 0 || ty < 0 || tx >= W.w || ty >= W.h) return -1;
+    return W.region[ty * W.w + tx];
+  }
+
+  private unlocked(r: number) {
+    return r >= 0 && progress.isUnlocked(this.islandIdx, r);
+  }
+
+  /** 열 수 있는 지역 = 잠겨 있고 부모가 열린 지역 */
+  private frontier(r: number) {
+    const reg = this.world.regions[r];
+    return !this.unlocked(r) && reg.parent >= 0 && this.unlocked(reg.parent);
+  }
+
+  /** 구름·표지판·낚시터·오브젝트 표시를 진행 상황에 맞추기 */
+  private refreshRegions(animateRegion: number | false) {
+    const W = this.world;
+    // 구름
+    const g = this.make.graphics({}, false);
+    const P = CLOUD_PX;
+    for (let y = 0; y < W.h; y++) {
+      for (let x = 0; x < W.w; x++) {
+        const r = W.region[y * W.w + x];
+        if (this.unlocked(r) || r === animateRegion) continue;
+        const hsh = (x * 73856093) ^ (y * 19349663);
+        g.fillStyle(0xd9e6f2).fillCircle(x * P + P / 2, y * P + P / 2 + 1.5, 4.5 + (hsh & 1));
       }
+    }
+    for (let y = 0; y < W.h; y++) {
+      for (let x = 0; x < W.w; x++) {
+        const r = W.region[y * W.w + x];
+        if (this.unlocked(r) || r === animateRegion) continue;
+        const hsh = (x * 73856093) ^ (y * 19349663);
+        g.fillStyle(this.frontier(r) ? 0xffffff : 0xf4f7fb).fillCircle(x * P + P / 2, y * P + P / 2, 4 + (hsh & 1));
+      }
+    }
+    this.clouds.clear();
+    this.clouds.draw(g);
+    g.destroy();
+
+    // 오브젝트: 잠긴 지역은 숨겨서 그리기 부담 줄이기
+    for (const o of this.decorObjs) if (!o.gone) o.setVisible(this.unlocked(o.region));
+
+    // 표지판 (열 수 있는 지역에만)
+    for (const reg of W.regions) {
+      if (reg.idx === 0) continue;
+      const show = this.frontier(reg.idx);
+      const has = this.signs.get(reg.idx);
+      if (show && !has) this.signs.set(reg.idx, this.makeSign(reg));
+      if (!show && has) {
+        has.destroy();
+        this.signs.delete(reg.idx);
+        this.blocked.delete(`${reg.signX},${reg.signY}`);
+      }
+    }
+
+    // 낚시터 (열린 지역만)
+    for (const s of W.fishing) {
+      if (!this.unlocked(s.region) || this.spots.some((o) => o.spot === s)) continue;
+      this.spots.push(this.makeSpot(s));
     }
   }
 
-  private setBlocked(d: Decor, on: boolean) {
-    if (!BLOCKING.has(d.kind)) return;
-    const keys = [`${d.tx},${d.ty}`];
-    if (d.kind === 'tent') keys.push(`${d.tx - 1},${d.ty}`);
-    for (const k of keys) on ? this.blocked.add(k) : this.blocked.delete(k);
+  private makeSign(reg: RegionInfo) {
+    const x = reg.signX * TILE + TILE / 2;
+    const y = reg.signY * TILE + TILE - 2;
+    const img = this.add.image(0, 0, 'sign').setOrigin(0.5, 1).setScale(0.8);
+    const emoji = this.add.text(0, -16, BIOME_INFO[reg.biome].emoji, { fontSize: '11px' }).setOrigin(0.5);
+    const bang = this.add
+      .text(0, -40, '!', { fontFamily: 'sans-serif', fontSize: '14px', color: '#ffffff', fontStyle: 'bold', backgroundColor: '#e07a5f', padding: { x: 5, y: 1 } })
+      .setOrigin(0.5);
+    const c = this.add.container(x, y, [img, emoji, bang]).setDepth(99982); // 구름 위에 보이도록
+    // 컨테이너 터치 영역은 (크기/2)만큼 밀린 좌표계 → 표지판 그림(발밑 위 48px)을 덮도록
+    c.setSize(36, 40).setInteractive({ useHandCursor: true, hitArea: new Phaser.Geom.Rectangle(0, -28, 36, 50), hitAreaCallback: Phaser.Geom.Rectangle.Contains });
+    (c as unknown as { signRegion: number }).signRegion = reg.idx;
+    this.tweens.add({ targets: bang, y: -45, duration: 500, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+    this.blocked.add(`${reg.signX},${reg.signY}`);
+    return c;
   }
 
-  private walkable = (wx: number, wy: number) => {
-    const tx = Math.floor(wx / TILE);
-    const ty = Math.floor(wy / TILE);
-    if (tx < 0 || ty < 0 || tx >= MAP_W || ty >= MAP_H) return false;
-    return this.terrain[ty][tx] !== T_SEA && !this.blocked.has(`${tx},${ty}`);
-  };
+  private onUnlockRegion(island: number, r: number) {
+    if (island !== this.islandIdx) return;
+    progress.unlock(island, r);
+    this.refreshRegions(false);
+    // 구름 걷히는 연출: 지역 타일 곳곳에서 구름 조각이 흩어진다
+    const W = this.world;
+    let n = 0;
+    for (let y = 0; y < W.h; y += 2) {
+      for (let x = 0; x < W.w; x += 2) {
+        if (W.region[y * W.w + x] !== r) continue;
+        if (n++ % 3 === 0) this.time.delayedCall(Math.random() * 500, () => this.fx.puff.explode(2, x * TILE + TILE / 2, y * TILE + TILE / 2));
+      }
+    }
+    sfx.pop();
+    buzz(40);
+    const reg = W.regions[r];
+    this.cameras.main.shake(200, 0.002);
+    this.time.delayedCall(300, () => this.fx.heart.explode(8, this.player?.x ?? 0, (this.player?.y ?? 0) - 30));
+    this.game.events.emit('celebrate', `${BIOME_INFO[reg.biome].emoji} ${withJosa(reg.name, '이', '가')} 열렸어요!`);
+    this.game.events.emit('world-ready', this.islandIdx, W.regions.length);
+  }
+
+  // ───────────────────────── 배 ─────────────────────────
+
+  private showBoat(anim: boolean) {
+    if (this.boatImg) return;
+    const dk = this.world.dock;
+    const x = dk.tx * TILE + TILE / 2 + 34;
+    const y = (dk.ty + 2) * TILE + 10;
+    const b = this.add.image(x, y, 'boat').setOrigin(0.5, 1).setDepth(y);
+    b.setInteractive({ useHandCursor: true });
+    (b as unknown as { isDock: boolean }).isDock = true;
+    this.tweens.add({ targets: b, y: y + 2, angle: 1.5, duration: 1200, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+    if (anim) {
+      b.setScale(0);
+      this.tweens.add({ targets: b, scale: 1, duration: 600, ease: 'Back.easeOut' });
+      this.fx.sparkle.explode(12, x, y - 20);
+    }
+    this.boatImg = b;
+  }
+
+  private onBuildBoat(island: number) {
+    if (island !== this.islandIdx) return;
+    progress.buildBoat(island);
+    this.showBoat(true);
+    sfx.pop();
+    buzz(40);
+    this.game.events.emit('celebrate', '⛵ 배가 완성됐어요! 다음 섬으로 떠날 수 있어요');
+  }
+
+  private onTravel(to: number) {
+    if (to === this.islandIdx) return;
+    const pl = this.player;
+    const cam = this.cameras.main;
+    // 곰이 배에 올라타 떠나는 연출
+    if (pl && this.boatImg) {
+      pl.sprite.setVisible(false);
+      const side = this.add.image(this.boatImg.x, this.boatImg.y, 'boat_side').setOrigin(0.5, 1).setDepth(this.boatImg.y + 1);
+      const rider = this.add.image(side.x + 4, side.y - 18, `${pl.id}_side`).setOrigin(0.5, 1).setDepth(side.depth + 1).setScale(0.8);
+      this.boatImg.setVisible(false);
+      cam.stopFollow();
+      this.tweens.add({ targets: [side, rider], x: '+=260', duration: 1600, ease: 'Sine.easeIn' });
+    }
+    sfx.pop();
+    this.time.delayedCall(900, () => cam.fadeOut(700, 126, 200, 227));
+    cam.once('camerafadeoutcomplete', () => {
+      progress.setCurrent(to);
+      this.scene.restart();
+    });
+  }
 
   // ───────────────────────── 연출 ─────────────────────────
 
@@ -158,10 +307,12 @@ export class IslandScene extends Phaser.Scene {
       pebble: this.add.particles(0, 0, 'pebble', { ...base, speed: { min: 30, max: 65 }, angle: { min: 210, max: 330 }, gravityY: 200, lifespan: 480, scale: 1.5 }),
       sparkle: this.add.particles(0, 0, 'sparkle', { ...base, speed: { min: 10, max: 30 }, lifespan: 550, scale: { start: 1.5, end: 0 } }),
       ember: this.add.particles(0, 0, 'ember', { ...base, speed: { min: 15, max: 45 }, angle: { min: 240, max: 300 }, gravityY: -40, lifespan: 700, alpha: { start: 1, end: 0 } }),
-      heart: this.add.particles(0, 0, 'heart', { ...base, speed: { min: 20, max: 40 }, angle: { min: 240, max: 300 }, gravityY: -20, lifespan: 900, alpha: { start: 1, end: 0 }, scale: { start: 1.2, end: 0.6 } }),
+      heart: this.add.particles(0, 0, 'heart', { ...base, speed: { min: 20, max: 50 }, angle: { min: 230, max: 310 }, gravityY: -20, lifespan: 900, alpha: { start: 1, end: 0 }, scale: { start: 1.2, end: 0.6 } }),
       dust: this.add.particles(0, 0, 'pebble', { ...base, speed: { min: 20, max: 50 }, lifespan: 500, scale: { start: 3, end: 0 }, alpha: { start: 0.8, end: 0 }, tint: 0xd9d4c7 }),
+      splash: this.add.particles(0, 0, 'sparkle', { ...base, speed: { min: 20, max: 60 }, angle: { min: 220, max: 320 }, gravityY: 160, lifespan: 500, tint: 0xd9f5ff, scale: 1.3 }),
+      puff: this.add.particles(0, 0, 'cloudpuff', { ...base, speed: { min: 10, max: 40 }, lifespan: 900, scale: { start: 1.6, end: 0.2 }, alpha: { start: 0.95, end: 0 } }),
     };
-    Object.values(this.fx).forEach((e) => e.setDepth(99999));
+    Object.values(this.fx).forEach((e) => e.setDepth(99990));
   }
 
   private animateCampfire(img: Phaser.GameObjects.Image) {
@@ -175,8 +326,8 @@ export class IslandScene extends Phaser.Scene {
 
   // ───────────────────────── 입력 ─────────────────────────
 
-  /** 시작 화면에서 고른 곰을 플레이어로 */
   private choosePlayer(id: BearId) {
+    this.registry.set('bear', id);
     const bear = this.bears.find((b) => b.id === id)!;
     this.player = bear;
     bear.speed = PLAYER_SPEED;
@@ -190,14 +341,42 @@ export class IslandScene extends Phaser.Scene {
   private onPointerDown(p: Phaser.Input.Pointer, over: Phaser.GameObjects.GameObject[]) {
     if (!this.player || this.registry.get('modal')) return;
     if (p.y < HUD_TOP_H || p.y > this.scale.height - HUD_BOTTOM_H) return;
+    if (this.fishing) return this.onFishingTap();
 
-    const bearHit = over.map((o) => (o as unknown as { bear?: Bear }).bear).find((b) => b && b !== this.player);
-    const decorHit = over.find((o) => (o as DecorObj).decor && !(o as DecorObj).gone) as DecorObj | undefined;
     const pl = this.player;
+    type Tagged = { bear?: Bear; decor?: Decor; signRegion?: number; spot?: FishingSpot; isDock?: boolean };
+    const tagged = over as unknown as (Phaser.GameObjects.GameObject & Tagged)[];
+
+    const sign = tagged.find((o) => o.signRegion !== undefined);
+    if (sign) {
+      const reg = this.world.regions[sign.signRegion!];
+      return this.walkTo(reg.signX * TILE + TILE / 2 + (pl.x < reg.signX * TILE ? -18 : 18), reg.signY * TILE + TILE - 1, { sign: reg.idx });
+    }
+    const dock = tagged.find((o) => o.isDock);
+    if (dock) return this.walkTo(this.world.dock.tx * TILE + TILE / 2, this.world.dock.ty * TILE + TILE / 2, { dock: true });
+
+    // 구름 위를 누르면: 열 수 있는 지역이면 퀘스트, 아니면 안내
+    const r = this.regionAt(p.worldX, p.worldY);
+    if (r >= 0 && !this.unlocked(r)) {
+      if (this.frontier(r)) {
+        this.game.events.emit('open-quest', this.islandIdx, this.world.regions[r]);
+      } else {
+        this.toast('☁️ 먼저 옆 지역을 열어야 해요');
+      }
+      sfx.tap();
+      return;
+    }
+
+    const bearHit = tagged.map((o) => o.bear).find((b) => b && b !== pl);
+    const spotHit = tagged.find((o) => o.spot && (o as unknown as SpotObj).active) as unknown as SpotObj | undefined;
+    const decorHit = tagged.find((o) => o.decor && !(o as unknown as DecorObj).gone && (o as unknown as DecorObj).visible) as unknown as DecorObj | undefined;
 
     if (bearHit) {
       const side = pl.x <= bearHit.x ? -1 : 1;
       this.walkTo(bearHit.x + side * 22, bearHit.y, { bear: bearHit });
+    } else if (spotHit) {
+      const stand = this.shoreStand(spotHit.spot);
+      if (stand) this.walkTo(stand.x, stand.y, { spot: spotHit });
     } else if (decorHit) {
       const d = decorHit.decor;
       const side = pl.x <= decorHit.x ? -1 : 1;
@@ -222,6 +401,23 @@ export class IslandScene extends Phaser.Scene {
     this.tweens.add({ targets: ring, scale: { from: 0.3, to: 1.5 }, alpha: { from: 1, to: 0 }, duration: 400, ease: 'Cubic.easeOut', onComplete: () => ring.destroy() });
   }
 
+  private setBlocked(d: Decor, on: boolean) {
+    if (!BLOCKING.has(d.kind)) return;
+    const keys = [`${d.tx},${d.ty}`];
+    if (d.kind === 'tent') keys.push(`${d.tx - 1},${d.ty}`);
+    for (const k of keys) on ? this.blocked.add(k) : this.blocked.delete(k);
+  }
+
+  private walkable = (wx: number, wy: number) => {
+    const W = this.world;
+    const tx = Math.floor(wx / TILE);
+    const ty = Math.floor(wy / TILE);
+    if (tx < 0 || ty < 0 || tx >= W.w || ty >= W.h) return false;
+    if (W.terrain[ty][tx] === T_SEA) return false;
+    if (!this.unlocked(W.region[ty * W.w + tx])) return false;
+    return !this.blocked.has(`${tx},${ty}`);
+  };
+
   // ───────────────────────── 루프 ─────────────────────────
 
   update(_t: number, deltaMs: number) {
@@ -242,18 +438,26 @@ export class IslandScene extends Phaser.Scene {
         this.updateNpc(bear, dt);
       }
     }
+    if (this.player) {
+      const r = this.regionAt(this.player.x, this.player.y);
+      if (r !== this.curRegion && r >= 0) {
+        this.curRegion = r;
+        this.game.events.emit('region-enter', this.world.regions[r]);
+      }
+    }
+    if (this.fishing) this.updateFishing(dt);
   }
 
-  /** 가족 곰: 캠프 근처를 느긋하게 돌아다니기 */
   private updateNpc(bear: Bear, dt: number) {
     if (bear.moving) return;
     const t = (this.npcTimers.get(bear) ?? 0) - dt;
     this.npcTimers.set(bear, t);
     if (t > 0) return;
     this.npcTimers.set(bear, 2 + Math.random() * 4);
+    const c = this.world.camp;
     for (let i = 0; i < 8; i++) {
-      const x = this.camp.x + Phaser.Math.Between(-90, 90);
-      const y = this.camp.y + Phaser.Math.Between(-30, 90);
+      const x = c.tx * TILE + Phaser.Math.Between(-100, 100);
+      const y = (c.ty + 2) * TILE + Phaser.Math.Between(-30, 90);
       if (this.walkable(x, y)) {
         bear.target = { x, y };
         return;
@@ -265,6 +469,15 @@ export class IslandScene extends Phaser.Scene {
 
   private interact(hit: Hit) {
     const pl = this.player!;
+    if (hit.sign !== undefined) {
+      pl.face('back');
+      return this.game.events.emit('open-quest', this.islandIdx, this.world.regions[hit.sign]);
+    }
+    if (hit.dock) {
+      pl.face('front');
+      return this.game.events.emit('open-boat', this.islandIdx);
+    }
+    if (hit.spot) return this.startFishing(hit.spot);
     buzz(15);
     if (hit.bear) {
       const other = hit.bear;
@@ -282,7 +495,6 @@ export class IslandScene extends Phaser.Scene {
     if (obj.gone) return;
     pl.face('side', obj.x < pl.x);
 
-    // 연타 방지
     const now = this.time.now;
     if (now - this.lastHit < 220) return;
     this.lastHit = now;
@@ -304,16 +516,14 @@ export class IslandScene extends Phaser.Scene {
     this.hitEffect(obj, rule.feel);
     obj.hitsLeft -= 1;
     const drops = rollDrops(rule.perHit);
-    // 아이들이 허탕 치지 않도록: 건드릴 때마다 최소 1개는 보장
     if (drops.length === 0 && rule.perHit.length > 0) drops.push(Phaser.Utils.Array.GetRandom(rule.perHit)[0]);
     if (obj.hitsLeft <= 0) {
       drops.push(...rollDrops(rule.final));
       this.deplete(obj, rule.deplete, rule.regrowSec);
     }
-    drops.forEach((id, i) => this.time.delayedCall(i * 90, () => this.spawnDrop(id, obj)));
+    drops.forEach((id, i) => this.time.delayedCall(i * 90, () => this.spawnDrop(id, obj.x, obj.y - Math.min(obj.height * 0.5, 18), obj.y)));
   }
 
-  /** 채집 규칙이 없는 오브젝트 (텐트·모닥불·새싹) */
   private pokeOnly(obj: DecorObj) {
     const kind = obj.decor.kind;
     sfx.pop();
@@ -321,6 +531,7 @@ export class IslandScene extends Phaser.Scene {
       this.fx.ember.explode(10, obj.x, obj.y - 14);
       return;
     }
+    if (kind === 'crate') return this.game.events.emit('open-boat', this.islandIdx);
     this.tweens.add({ targets: obj, scaleX: { from: 1.12, to: 1 }, scaleY: { from: 0.9, to: 1 }, duration: 260, ease: 'Back.easeOut' });
     this.fx.sparkle.explode(5, obj.x, obj.y - obj.height * 0.5);
     if (kind === 'sapling') this.toast('🌱 쑥쑥 자라는 중이에요');
@@ -363,7 +574,6 @@ export class IslandScene extends Phaser.Scene {
     this.time.delayedCall(regrowSec * 1000, () => this.regrow(obj));
   }
 
-  /** 다시 자라기. 그 자리에 누가 서 있으면 조금 뒤에 다시 시도 */
   private regrow(obj: DecorObj) {
     const d = obj.decor;
     const occupied = this.bears.some((b) => Math.floor(b.x / TILE) === d.tx && Math.floor(b.y / TILE) === d.ty);
@@ -386,22 +596,161 @@ export class IslandScene extends Phaser.Scene {
     this.fx.sparkle.explode(5, obj.x, obj.y - 8);
   }
 
-  /** 아이템이 톡 튀어나와 바닥에 떨어진 뒤 → 곰에게 빨려와 → 창고로 */
-  private spawnDrop(id: ItemId, from: DecorObj) {
-    const sx = from.x;
-    const sy = from.y - Math.min(from.height * 0.5, 18);
-    const ex = sx + Phaser.Math.Between(-22, 22);
-    const ey = from.y + Phaser.Math.Between(4, 14);
-    const icon = this.add.image(sx, sy, itemKey(id)).setDepth(99990).setScale(0.6);
+  // ───────────────────────── 낚시 ─────────────────────────
 
-    // 포물선 (x는 선형, y는 위로 솟았다 떨어짐)
+  private makeSpot(s: FishingSpot): SpotObj {
+    const x = s.tx * TILE + TILE / 2;
+    const y = s.ty * TILE + TILE / 2;
+    const shadow = this.add.ellipse(0, 2, 14, 6, 0x2a6f8a, 0.45);
+    const r1 = this.add.ellipse(0, 0, 10, 5).setStrokeStyle(1, 0xffffff, 0.9);
+    const r2 = this.add.ellipse(0, 0, 10, 5).setStrokeStyle(1, 0xffffff, 0.9);
+    const c = this.add.container(x, y, [shadow, r1, r2]).setDepth(-800) as SpotObj;
+    c.spot = s;
+    c.active = true;
+    c.setSize(TILE * 1.4, TILE * 1.2).setInteractive({ useHandCursor: true });
+    (c as unknown as { spot: FishingSpot }).spot = s;
+    this.tweens.add({ targets: r1, scale: { from: 0.6, to: 2.2 }, alpha: { from: 1, to: 0 }, duration: 1400, repeat: -1 });
+    this.tweens.add({ targets: r2, scale: { from: 0.6, to: 2.2 }, alpha: { from: 1, to: 0 }, duration: 1400, repeat: -1, delay: 700 });
+    this.tweens.add({ targets: shadow, x: { from: -3, to: 3 }, duration: 900, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+    return c;
+  }
+
+  /** 낚시터 옆에 설 수 있는 땅 (플레이어와 가장 가까운) */
+  private shoreStand(s: FishingSpot): { x: number; y: number } | null {
+    const pl = this.player!;
+    let best = null as { x: number; y: number } | null;
+    let bd = Infinity;
+    for (let oy = -2; oy <= 2; oy++) {
+      for (let ox = -2; ox <= 2; ox++) {
+        const x = (s.tx + ox) * TILE + TILE / 2;
+        const y = (s.ty + oy) * TILE + TILE / 2;
+        if (!this.walkable(x, y)) continue;
+        const d = Math.hypot(x - pl.x, y - pl.y) + Math.hypot(ox, oy) * 30;
+        if (d < bd) {
+          bd = d;
+          best = { x, y };
+        }
+      }
+    }
+    if (!best) this.toast('여기서는 낚시하기 어려워요');
+    return best;
+  }
+
+  private startFishing(spot: SpotObj) {
+    if (!spot.active) return;
+    const pl = this.player!;
+    const sx = spot.x;
+    const sy = spot.y;
+    const dx = sx - pl.x;
+    const dy = sy - pl.y;
+    if (Math.abs(dx) > Math.abs(dy)) pl.face('side', dx < 0);
+    else pl.face(dy < 0 ? 'back' : 'front');
+    sfx.rustle();
+    const bobber = this.add.image(pl.x, pl.y - 20, 'bobber').setDepth(-700);
+    const t = { v: 0 };
+    const fx = pl.x;
+    const fy = pl.y - 20;
+    this.tweens.add({
+      targets: t,
+      v: 1,
+      duration: 450,
+      onUpdate: () => {
+        bobber.x = fx + (sx - fx) * t.v;
+        bobber.y = fy + (sy - fy) * t.v - Math.sin(t.v * Math.PI) * 30;
+      },
+      onComplete: () => {
+        this.fx.splash.explode(5, sx, sy);
+        sfx.step();
+        this.tweens.add({ targets: bobber, y: sy + 1, duration: 600, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+      },
+    });
+    this.fishing = { spot, phase: 'wait', t: 1.6 + Math.random() * 2.4, bobber };
+    this.game.events.emit('fishing', true);
+    this.toast('🎣 느낌표(!)가 뜨면 화면을 톡!');
+  }
+
+  private updateFishing(dt: number) {
+    const f = this.fishing!;
+    f.t -= dt;
+    if (f.phase === 'wait') {
+      // 가끔 톡톡 건드리는 입질
+      if (Math.random() < dt * 1.2) this.tweens.add({ targets: f.bobber, y: f.bobber.y + 2, duration: 80, yoyo: true });
+      if (f.t <= 0) {
+        f.phase = 'bite';
+        f.t = 1.4; // 아이들도 누를 수 있게 넉넉히
+        this.tweens.killTweensOf(f.bobber);
+        this.tweens.add({ targets: f.bobber, y: f.spot.y + 4, duration: 120, yoyo: true, repeat: -1 });
+        this.fx.splash.explode(8, f.spot.x, f.spot.y);
+        const pl = this.player!;
+        f.mark = this.add
+          .text(pl.x, pl.y - 46, '!', { fontFamily: 'sans-serif', fontSize: '22px', color: '#ffffff', fontStyle: 'bold', stroke: '#e07a5f', strokeThickness: 5 })
+          .setOrigin(0.5)
+          .setDepth(99995);
+        this.tweens.add({ targets: f.mark, scale: { from: 0.3, to: 1.2 }, duration: 160, ease: 'Back.easeOut' });
+        sfx.pop();
+        buzz(60);
+      }
+    } else if (f.t <= 0) {
+      this.endFishing(false, '앗, 물고기가 도망갔어요 🐟');
+    }
+  }
+
+  private onFishingTap() {
+    const f = this.fishing!;
+    if (f.phase === 'bite') this.endFishing(true);
+    else this.endFishing(false, '너무 빨랐어요! 다시 해 봐요');
+  }
+
+  private endFishing(caught: boolean, msg?: string) {
+    const f = this.fishing!;
+    this.fishing = null;
+    this.game.events.emit('fishing', false);
+    f.mark?.destroy();
+    this.tweens.killTweensOf(f.bobber);
+    this.tweens.add({ targets: f.bobber, x: this.player!.x, y: this.player!.y - 20, alpha: 0, duration: 250, onComplete: () => f.bobber.destroy() });
+    if (!caught) {
+      if (msg) this.toast(msg);
+      return;
+    }
+    const biome = this.world.regions[f.spot.spot.region].biome;
+    const table = BIOME_INFO[biome].fish;
+    const total = table.reduce((s, [, w]) => s + w, 0);
+    let r = Math.random() * total;
+    let item: ItemId = table[0][0];
+    for (const [id, w] of table) {
+      r -= w;
+      if (r <= 0) {
+        item = id;
+        break;
+      }
+    }
+    this.fx.splash.explode(14, f.spot.x, f.spot.y);
+    buzz(30);
+    this.spawnDrop(item, f.spot.x, f.spot.y, this.player!.y + 6);
+    if (item === 'fish_gold') this.game.events.emit('celebrate', '✨ 황금 물고기를 낚았어요!');
+    else if (item === 'boot') this.toast('👢 앗, 낡은 장화예요…');
+    // 낚시터는 잠깐 쉬었다가 다시 생김
+    f.spot.active = false;
+    this.tweens.add({ targets: f.spot, alpha: 0, duration: 400 });
+    this.time.delayedCall(40000, () => {
+      f.spot.active = true;
+      this.tweens.add({ targets: f.spot, alpha: 1, duration: 600 });
+    });
+  }
+
+  // ───────────────────────── 아이템 ─────────────────────────
+
+  /** 아이템이 톡 튀어나와 바닥에 떨어진 뒤 → 곰에게 빨려와 → 창고로 */
+  private spawnDrop(id: ItemId, sx: number, sy: number, groundY: number) {
+    const ex = sx + Phaser.Math.Between(-22, 22);
+    const ey = groundY + Phaser.Math.Between(4, 14);
+    const icon = this.add.image(sx, sy, itemKey(id)).setDepth(99985).setScale(0.6);
     const peak = Math.min(sy, ey) - 26;
     const t = { v: 0 };
     this.tweens.add({
       targets: t,
       v: 1,
       duration: 420,
-      ease: 'Linear',
       onUpdate: () => {
         const k = t.v;
         icon.x = sx + (ex - sx) * k;
@@ -435,7 +784,6 @@ export class IslandScene extends Phaser.Scene {
         icon.destroy();
         sfx.pop();
         inventory.add(id, 1);
-        // 화면 좌표로 변환해서 HUD에 알림 (+1 연출)
         const cam = this.cameras.main;
         this.game.events.emit('item-gained', id, (pl.x - cam.worldView.x) * cam.zoom, (pl.y - 30 - cam.worldView.y) * cam.zoom);
       },

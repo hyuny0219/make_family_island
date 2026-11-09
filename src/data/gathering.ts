@@ -34,6 +34,8 @@ export const GATHER: Partial<Record<ObjectKind, GatherRule>> = {
   rock: { hits: 3, perHit: [['stone', 0.3, 1, 1]], final: [['stone', 1, 2, 3], ['coal', 0.35, 1, 1]], deplete: 'remove', regrowSec: 50, feel: 'stony' },
   pebbles: { hits: 1, perHit: [], final: [['stone', 1, 1, 2]], deplete: 'remove', regrowSec: 30, feel: 'stony' },
   ore_rock: { hits: 4, perHit: [['stone', 0.25, 1, 1]], final: [['crystal', 1, 1, 1], ['coal', 0.5, 1, 1]], deplete: 'remove', regrowSec: 90, feel: 'stony' },
+  shell_pick: { hits: 1, perHit: [], final: [['shell', 1, 1, 1]], deplete: 'remove', regrowSec: 35, feel: 'leafy' },
+  starfish_pick: { hits: 1, perHit: [], final: [['starfish', 1, 1, 1]], deplete: 'remove', regrowSec: 45, feel: 'leafy' },
   boulder: { hits: 5, perHit: [['stone', 0.5, 1, 1]], final: [['stone', 1, 3, 4], ['coal', 0.5, 1, 2]], deplete: 'remove', regrowSec: 120, needs: 'stone_pickaxe', feel: 'stony' },
 };
 

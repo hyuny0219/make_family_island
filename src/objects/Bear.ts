@@ -61,12 +61,15 @@ export class Bear {
       } else {
         const nx = this.x + (dx / dist) * s;
         const ny = this.y + (dy / dist) * s;
+        const ox = this.x;
+        const oy = this.y;
         if (walkable(nx, ny)) {
           this.x = nx;
           this.y = ny;
         } else if (walkable(nx, this.y)) this.x = nx;
         else if (walkable(this.x, ny)) this.y = ny;
-        else {
+        // 벽에 막혀 거의 못 움직였으면 거기서 멈춘다 (제자리 걸음 방지)
+        if (Math.hypot(this.x - ox, this.y - oy) < s * 0.25) {
           this.target = null;
           arrived = true;
         }

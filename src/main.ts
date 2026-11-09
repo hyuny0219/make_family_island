@@ -3,6 +3,8 @@ import { GAME_HEIGHT, GAME_WIDTH, COLORS } from './config';
 import { BootScene } from './scenes/BootScene';
 import { IslandScene } from './scenes/IslandScene';
 import { HudScene } from './scenes/HudScene';
+import { inventory } from './state/inventory';
+import { progress } from './state/progress';
 
 const game = new Phaser.Game({
   type: Phaser.AUTO,
@@ -23,4 +25,4 @@ const game = new Phaser.Game({
 });
 
 // 디버그/테스트용 핸들
-(window as unknown as { __game: Phaser.Game }).__game = game;
+Object.assign(window, { __game: game, __inv: inventory, __progress: progress });

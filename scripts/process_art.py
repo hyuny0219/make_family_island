@@ -122,4 +122,15 @@ if __name__ == "__main__":
         ],
         fit=22,
     )
+    slice_grid(
+        "fishing.png", 4, 3,
+        [
+            ["item_fish_small", "item_fish", "item_fish_big", "item_fish_gold"],
+            ["item_crab", "item_shell", "item_boot", "item_rod"],
+            [None, None, "item_starfish", None],
+        ],
+        fit=22,
+    )
+    slice_grid("fishing.png", 4, 3, [[None] * 4, [None] * 4, ["sign", "chest", None, "bridge"]])
+    slice_grid("boats.png", 3, 2, [["dock", "boat_frame", "boat"], ["boat_side", "crate", "lighthouse"]])
     slice_tiles()
