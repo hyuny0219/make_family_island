@@ -3,6 +3,7 @@ import { GAME_HEIGHT, GAME_WIDTH, COLORS } from './config';
 import { BootScene } from './scenes/BootScene';
 import { IslandScene } from './scenes/IslandScene';
 import { HudScene } from './scenes/HudScene';
+import { MergeScene } from './scenes/MergeScene';
 import { inventory } from './state/inventory';
 import { progress } from './state/progress';
 
@@ -21,7 +22,7 @@ const game = new Phaser.Game({
   input: {
     activePointers: 2,
   },
-  scene: [BootScene, IslandScene, HudScene],
+  scene: [BootScene, IslandScene, MergeScene, HudScene],
 });
 
 // 디버그/테스트용 핸들

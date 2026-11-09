@@ -31,6 +31,19 @@ class Inventory extends Phaser.Events.EventEmitter {
     return this.order.filter((id) => this.get(id) > 0).map((id) => ({ id, count: this.get(id) }));
   }
 
+  /** 한 번이라도 얻거나 만든 적이 있는지 (도감) */
+  discovered(id: ItemId) {
+    return this.order.includes(id);
+  }
+
+  /** 창고에 넣지 않고 발견만 기록 (머지 보드에서 처음 만든 것). 처음이면 true */
+  discover(id: ItemId) {
+    if (!(id in ITEMS) || this.order.includes(id)) return false;
+    this.order.push(id);
+    this.save();
+    return true;
+  }
+
   add(id: ItemId, n = 1) {
     if (!(id in ITEMS) || n === 0) return;
     const next = Math.max(0, this.get(id) + n);
