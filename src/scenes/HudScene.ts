@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { COLORS } from '../config';
-import { sfx, unlockAudio, buzz } from '../sfx';
+import { sfx, unlockAudio, buzz, refreshMusic } from '../sfx';
 import { BEARS } from '../data/assets';
 import { ITEMS, ITEM_IDS, itemKey, type ItemId } from '../data/items';
 import { inventory } from '../state/inventory';
@@ -42,6 +42,7 @@ export class HudScene extends Phaser.Scene {
   private view: View = 'explore';
   private buildTray?: Phaser.GameObjects.Container;
   private feedBtn!: Phaser.GameObjects.Container;
+  private emoteRow?: Phaser.GameObjects.Container;
   private tabNodes: { key: string; c: Phaser.GameObjects.Container; bg: Phaser.GameObjects.Graphics; enabled: boolean }[] = [];
   private sideBtns: Phaser.GameObjects.Container[] = [];
   private arrow!: Phaser.GameObjects.Container;
@@ -505,6 +506,7 @@ export class HudScene extends Phaser.Scene {
       this.scene.setVisible(true, 'Island');
     }
     this.sideBtns.forEach((b) => b.setVisible(v !== 'merge'));
+    this.emoteRow?.setVisible(false);
     this.refreshFeedBtn();
     this.arrow.setVisible(false);
     this.hideHint();
@@ -658,6 +660,33 @@ export class HudScene extends Phaser.Scene {
       this.toast('🏕️ 캠프로 돌아왔어요');
     });
     this.roundButton(W - 30, HUD_TOP_H + 74, '⚙️', () => this.openSettings());
+    // 말풍선: 누르면 이모지가 옆으로 펼쳐진다
+    const EMOTES = ['👋', '❤️', '😆', '👍', '🙏', '❗'];
+    const emoteBtn = this.roundButton(30, HUD_TOP_H + 30, '💬', () => {
+      if (!this.registry.get('bear')) return;
+      const open = !row.visible;
+      row.setVisible(open);
+      if (open) this.tweens.add({ targets: row, scaleX: { from: 0.3, to: 1 }, alpha: { from: 0, to: 1 }, duration: 160, ease: 'Back.easeOut' });
+    });
+    const row = this.add.container(emoteBtn.x + 26, emoteBtn.y).setVisible(false);
+    const rw = EMOTES.length * 34 + 10;
+    const rg = this.add.graphics();
+    rg.fillStyle(0x000000, 0.15).fillRoundedRect(0, -15, rw, 36, 18);
+    rg.fillStyle(COLORS.uiBg).fillRoundedRect(0, -18, rw, 36, 18);
+    rg.lineStyle(2, 0xe8d5a9).strokeRoundedRect(0, -18, rw, 36, 18);
+    row.add(rg);
+    EMOTES.forEach((e, i) => {
+      const t = this.add.text(22 + i * 34, 0, e, { fontSize: '19px' }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+      t.on('pointerdown', () => {
+        if (!row.visible || this.registry.get('modal')) return;
+        buzz(8);
+        this.game.events.emit('emote', e);
+        row.setVisible(false);
+      });
+      row.add(t);
+    });
+    this.sideBtns.push(row as Phaser.GameObjects.Container);
+    this.emoteRow = row;
     // 가족 소식판 (가족 섬에 들어가 있을 때만 보인다)
     this.feedBtn = this.roundButton(W - 30, HUD_TOP_H + 118, '📰', () => this.openFeed());
     this.sideBtns.pop();
@@ -710,14 +739,15 @@ export class HudScene extends Phaser.Scene {
   private openSettings() {
     if (this.registry.get('modal')) return;
     const PW = 280;
-    const PH = 326;
+    const PH = 372;
     const { box, close } = this.modal(PW, PH);
     const top = -PH / 2;
     box.add(this.add.text(0, top + 30, '⚙️ 설정', { fontFamily: FONT, fontSize: '20px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0.5));
-    const toggle = (y: number, name: string, key: 'sound' | 'vibrate') => {
+    const toggle = (y: number, name: string, key: 'sound' | 'vibrate' | 'music') => {
       const label = () => `${name}: ${settings[key] ? '켜짐' : '꺼짐'}`;
       const btn = this.button(label(), true, () => {
         setSetting(key, !settings[key]);
+        refreshMusic();
         (btn.list[1] as Phaser.GameObjects.Text).setText(label());
       }, 200);
       btn.setPosition(0, y);
@@ -731,8 +761,9 @@ export class HudScene extends Phaser.Scene {
     (fam.list[0] as Phaser.GameObjects.Graphics).clear().fillStyle(0x7cc4e8).fillRoundedRect(-100, -20, 200, 40, 20);
     (fam.list[1] as Phaser.GameObjects.Text).setStroke('#4a8fb3', 3);
     box.add(fam);
-    toggle(top + 140, '🔊 소리', 'sound');
-    toggle(top + 190, '📳 진동', 'vibrate');
+    toggle(top + 140, '🎵 배경음악', 'music');
+    toggle(top + 186, '🔊 효과음', 'sound');
+    toggle(top + 232, '📳 진동', 'vibrate');
     let armed = false;
     const reset = this.button('처음부터 다시 하기', true, () => {
       if (!armed) {
@@ -742,7 +773,7 @@ export class HudScene extends Phaser.Scene {
       }
       resetAll();
     }, 200);
-    reset.setPosition(0, top + 252);
+    reset.setPosition(0, top + 298);
     (reset.list[0] as Phaser.GameObjects.Graphics).clear().fillStyle(0xe58f7b).fillRoundedRect(-100, -20, 200, 40, 20);
     box.add(reset);
     (reset.list[1] as Phaser.GameObjects.Text).setStroke('#b85c48', 3);

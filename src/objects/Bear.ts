@@ -14,6 +14,10 @@ export class Bear {
   remote: string | null = null;
   /** 머리 위 이름표 (다른 가족 곰) */
   label?: Phaser.GameObjects.Text;
+  /** 머리 위 말풍선 */
+  private bubble?: Phaser.GameObjects.Container;
+  /** 마지막으로 보여 준 말풍선 시각 (같은 걸 두 번 띄우지 않게) */
+  emoteAt = 0;
   readonly sprite: Phaser.GameObjects.Image;
   x: number;
   y: number;
@@ -113,10 +117,34 @@ export class Bear {
     this.sprite.setPosition(Math.round(this.x), Math.round(this.y - bob - this.hop));
     this.sprite.setDepth(this.y);
     this.label?.setPosition(this.sprite.x, this.sprite.y - this.sprite.height - 3).setDepth(this.y + 1);
+    this.bubble?.setPosition(this.sprite.x, this.sprite.y - this.sprite.height - (this.label ? 14 : 4)).setDepth(99984);
     return arrived;
   }
 
+  /** 머리 위에 이모지 말풍선을 잠깐 띄운다 */
+  emote(emoji: string) {
+    const scene = this.sprite.scene;
+    this.bubble?.destroy();
+    const g = scene.add.graphics();
+    g.fillStyle(0x4a3b2a, 0.25).fillRoundedRect(-13, -25, 26, 24, 9);
+    g.fillStyle(0xffffff).fillRoundedRect(-13, -27, 26, 24, 9);
+    g.fillTriangle(-4, -4, 4, -4, 0, 2);
+    const t = scene.add.text(0, -15, emoji, { fontSize: '14px' }).setOrigin(0.5);
+    const c = scene.add.container(this.sprite.x, this.sprite.y - this.sprite.height, [g, t]).setScale(0);
+    this.bubble = c;
+    scene.tweens.add({ targets: c, scale: 1, duration: 220, ease: 'Back.easeOut' });
+    scene.tweens.add({
+      targets: c, scale: 0, delay: 2600, duration: 180,
+      onComplete: () => {
+        c.destroy();
+        if (this.bubble === c) this.bubble = undefined;
+      },
+    });
+    this.jump(100);
+  }
+
   destroy() {
+    this.bubble?.destroy();
     this.label?.destroy();
     this.sprite.destroy();
   }

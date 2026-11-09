@@ -3,13 +3,14 @@ const KEY = 'mfi.v1.settings';
 interface Settings {
   sound: boolean;
   vibrate: boolean;
+  music: boolean;
 }
 
 function load(): Settings {
   try {
-    return { sound: true, vibrate: true, ...(JSON.parse(localStorage.getItem(KEY) ?? '{}') as Partial<Settings>) };
+    return { sound: true, vibrate: true, music: true, ...(JSON.parse(localStorage.getItem(KEY) ?? '{}') as Partial<Settings>) };
   } catch {
-    return { sound: true, vibrate: true };
+    return { sound: true, vibrate: true, music: true };
   }
 }
 
