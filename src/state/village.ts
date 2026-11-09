@@ -1,0 +1,138 @@
+import Phaser from 'phaser';
+import { ITEMS, type ItemId } from '../data/items';
+import { DECOR_POINTS, ORDER_BASIC, ORDER_CRAFTED, RESIDENTS } from '../data/village';
+
+const KEY = 'mfi.v1.village';
+
+export interface Placed {
+  id: ItemId;
+  tx: number;
+  ty: number;
+}
+
+export interface Order {
+  item: ItemId;
+  n: number;
+}
+
+interface Saved {
+  /** 섬별로 놓인 장식 */
+  placed: Record<number, Placed[]>;
+  /** 이사 온 주민 */
+  joined: string[];
+  hearts: Record<string, number>;
+  orders: Record<string, Order>;
+  /** 다음 부탁이 생기는 시각 (ms) */
+  nextAt: Record<string, number>;
+}
+
+/**
+ * 마을 상태: 장식, 마을 점수, 주민, 부탁. 이 기기에 저장 (M5에서 가족 공유).
+ * 이벤트: 'changed', 'resident-joined'(id)
+ */
+class Village extends Phaser.Events.EventEmitter {
+  private d: Saved = { placed: {}, joined: [], hearts: {}, orders: {}, nextAt: {} };
+
+  constructor() {
+    super();
+    try {
+      const raw = localStorage.getItem(KEY);
+      if (raw) this.d = { ...this.d, ...(JSON.parse(raw) as Saved) };
+    } catch {
+      /* noop */
+    }
+  }
+
+  placedOn(island: number): readonly Placed[] {
+    return this.d.placed[island] ?? [];
+  }
+
+  /** 모든 섬에 놓인 장식 점수의 합 */
+  score() {
+    let s = 0;
+    for (const list of Object.values(this.d.placed)) for (const p of list) s += DECOR_POINTS[p.id] ?? 0;
+    return s;
+  }
+
+  place(island: number, p: Placed) {
+    (this.d.placed[island] ??= []).push(p);
+    this.afterChange();
+  }
+
+  remove(island: number, tx: number, ty: number) {
+    const list = this.d.placed[island] ?? [];
+    const i = list.findIndex((p) => p.tx === tx && p.ty === ty);
+    if (i < 0) return null;
+    const [p] = list.splice(i, 1);
+    this.afterChange();
+    return p;
+  }
+
+  private afterChange() {
+    // 점수가 기준을 넘으면 주민이 이사 온다 (한 번 온 주민은 떠나지 않는다)
+    const s = this.score();
+    const joinedNow: string[] = [];
+    for (const r of RESIDENTS) {
+      if (s >= r.score && !this.d.joined.includes(r.id)) {
+        this.d.joined.push(r.id);
+        joinedNow.push(r.id);
+      }
+    }
+    this.save();
+    this.emit('changed');
+    joinedNow.forEach((id) => this.emit('resident-joined', id));
+  }
+
+  joined() {
+    return RESIDENTS.filter((r) => this.d.joined.includes(r.id));
+  }
+
+  /** 다음에 이사 올 주민 (없으면 null) */
+  nextResident() {
+    return RESIDENTS.find((r) => !this.d.joined.includes(r.id)) ?? null;
+  }
+
+  hearts(id: string) {
+    return this.d.hearts[id] ?? 0;
+  }
+
+  /** 지금 부탁 (쉬는 중이면 null). 없으면 새로 만든다 */
+  order(id: string): Order | null {
+    if (Date.now() < (this.d.nextAt[id] ?? 0)) return null;
+    if (!this.d.orders[id]) {
+      const h = this.hearts(id);
+      const crafted = h >= 2 && Math.random() < 0.5;
+      const pool = (crafted ? ORDER_CRAFTED : ORDER_BASIC).filter((it) => it in ITEMS);
+      const item = pool[Math.floor(Math.random() * pool.length)];
+      const n = crafted ? 1 + Math.floor(h / 4) : 3 + Math.floor(Math.random() * 3) + Math.floor(h / 2);
+      this.d.orders[id] = { item, n };
+      this.save();
+    }
+    return this.d.orders[id];
+  }
+
+  /** 부탁이 다시 생길 때까지 남은 초 */
+  waitSec(id: string) {
+    return Math.max(0, Math.ceil(((this.d.nextAt[id] ?? 0) - Date.now()) / 1000));
+  }
+
+  /** 부탁 완료 → 호감도 +1, 잠깐 쉬었다가 다음 부탁. 새 호감도를 돌려준다 */
+  completeOrder(id: string) {
+    delete this.d.orders[id];
+    this.d.hearts[id] = this.hearts(id) + 1;
+    this.d.nextAt[id] = Date.now() + 60_000;
+    this.save();
+    this.emit('changed');
+    return this.d.hearts[id];
+  }
+
+  private save() {
+    try {
+      localStorage.setItem(KEY, JSON.stringify(this.d));
+    } catch {
+      /* noop */
+    }
+  }
+}
+
+export const village = new Village();

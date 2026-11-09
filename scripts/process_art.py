@@ -143,4 +143,13 @@ if __name__ == "__main__":
         ],
         fit=22,
     )
+    slice_grid(
+        "residents.png", 3, 4,
+        [
+            ["rabbit_front", "rabbit_side", "rabbit_back"],
+            ["cat_front", "cat_side", "cat_back"],
+            ["fox_front", "fox_side", "fox_back"],
+            ["penguin_front", "penguin_side", "penguin_back"],
+        ],
+    )
     slice_tiles()

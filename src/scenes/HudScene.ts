@@ -10,6 +10,8 @@ import { ISLANDS } from '../data/islands';
 import { BIOME_INFO } from '../data/biomes';
 import type { RegionInfo } from '../world/generate';
 import { settings, setSetting, resetAll } from '../state/settings';
+import { village } from '../state/village';
+import { DECOR_POINTS, ORDER_GIFTS, RESIDENTS, TROPHY_HEARTS, isPlaceable } from '../data/village';
 import type { IslandScene } from './IslandScene';
 
 export const HUD_TOP_H = 96;
@@ -17,11 +19,12 @@ export const HUD_BOTTOM_H = 76;
 
 const FONT = '"Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif';
 
+type View = 'explore' | 'merge' | 'build';
 type Tab = { key: string; icon: string; label: string; enabled: boolean };
 const TABS: Tab[] = [
   { key: 'explore', icon: '🗺️', label: '탐험', enabled: true },
   { key: 'merge', icon: '🧩', label: '머지', enabled: true },
-  { key: 'build', icon: '🏝️', label: '꾸미기', enabled: false },
+  { key: 'build', icon: '🏝️', label: '꾸미기', enabled: true },
 ];
 
 /** 화면 고정 UI: 상단 섬 이름, 하단 탭, 안내 문구, 타이틀 */
@@ -34,7 +37,8 @@ export class HudScene extends Phaser.Scene {
   private topBg!: Phaser.GameObjects.Graphics;
   private topBtn!: Phaser.GameObjects.Container;
   private banner?: Phaser.GameObjects.Container;
-  private view: 'explore' | 'merge' = 'explore';
+  private view: View = 'explore';
+  private buildTray?: Phaser.GameObjects.Container;
   private tabNodes: { key: string; c: Phaser.GameObjects.Container; bg: Phaser.GameObjects.Graphics; enabled: boolean }[] = [];
   private sideBtns: Phaser.GameObjects.Container[] = [];
   private arrow!: Phaser.GameObjects.Container;
@@ -59,6 +63,7 @@ export class HudScene extends Phaser.Scene {
     this.makeSideButtons(W);
     this.makeArrow();
     this.view = 'explore';
+    this.registry.set('view', 'explore');
     this.game.events.on('player-moved', this.hideHint, this);
     this.game.events.on('toast', this.toast, this);
     this.game.events.on('item-gained', this.onItemGained, this);
@@ -66,6 +71,8 @@ export class HudScene extends Phaser.Scene {
     const on: [string, (...a: never[]) => void][] = [
       ['world-ready', this.onWorldReady],
       ['sailing', this.onSailing],
+      ['open-order', this.openOrder],
+      ['float', this.onFloat],
       ['region-enter', this.onRegionEnter],
       ['open-quest', this.openQuest],
       ['open-boat', this.openBoat],
@@ -73,7 +80,9 @@ export class HudScene extends Phaser.Scene {
     ];
     on.forEach(([e, f]) => ge.on(e, f, this));
     inventory.on('changed', this.onInventoryChanged, this);
+    village.on('changed', this.rebuildBuildTray, this);
     this.events.once('shutdown', () => {
+      village.off('changed', this.rebuildBuildTray, this);
       on.forEach(([e, f]) => ge.off(e, f, this));
       this.game.events.off('player-moved', this.hideHint, this);
       this.game.events.off('toast', this.toast, this);
@@ -377,6 +386,7 @@ export class HudScene extends Phaser.Scene {
   private onInventoryChanged(id?: ItemId, _count?: number, delta?: number) {
     this.rebuildStrip();
     this.updateBagCount();
+    this.rebuildBuildTray();
     if (id && delta && delta > 0) {
       const slot = this.slotPos.get(id);
       if (slot) this.tweens.add({ targets: slot.node, scale: { from: 1.45, to: 1 }, duration: 320, ease: 'Back.easeOut' });
@@ -460,7 +470,7 @@ export class HudScene extends Phaser.Scene {
         buzz(8);
         this.tweens.add({ targets: c, scale: { from: 0.85, to: 1 }, duration: 260, ease: 'Back.easeOut' });
         if (!tab.enabled) return this.toast(`${tab.label} 탭은 곧 열려요!`);
-        this.setView(tab.key as 'explore' | 'merge');
+        this.setView(tab.key as View);
       });
       this.tabNodes.push({ key: tab.key, c, bg, enabled: tab.enabled });
     });
@@ -474,21 +484,141 @@ export class HudScene extends Phaser.Scene {
     }
   }
 
-  /** 탐험 ↔ 머지 화면 전환 */
-  private setView(v: 'explore' | 'merge') {
+  /** 탐험 ↔ 머지 ↔ 꾸미기 화면 전환 */
+  private setView(v: View) {
     if (v === this.view || this.registry.get('modal') || !this.registry.get('bear')) return;
+    const was = this.view;
     this.view = v;
+    this.registry.set('view', v);
     if (v === 'merge') {
       this.scene.launch('Merge');
       this.scene.setVisible(false, 'Island');
-    } else {
+    } else if (was === 'merge') {
       this.scene.stop('Merge');
       this.scene.setVisible(true, 'Island');
     }
-    this.sideBtns.forEach((b) => b.setVisible(v === 'explore'));
+    this.sideBtns.forEach((b) => b.setVisible(v !== 'merge'));
     this.arrow.setVisible(false);
     this.hideHint();
     this.refreshTabs();
+    this.rebuildBuildTray();
+    if (v === 'build') this.toast('🏝️ 물건을 고르고 땅을 톡! 놓인 물건을 누르면 다시 창고로');
+  }
+
+  /** 꾸미기 모드: 놓을 물건 고르는 줄 + 마을 점수 */
+  private rebuildBuildTray() {
+    this.buildTray?.destroy();
+    this.buildTray = undefined;
+    if (this.view !== 'build') return;
+    const W = this.scale.width;
+    const H = this.scale.height;
+    const h = 78;
+    const top = H - HUD_BOTTOM_H - h + 2;
+    const tray = this.add.container(0, 0).setDepth(30);
+    this.buildTray = tray;
+    const bg = this.add.graphics();
+    bg.fillStyle(0x000000, 0.15).fillRoundedRect(10, top + 3, W - 20, h, 16);
+    bg.fillStyle(COLORS.uiBg, 0.97).fillRoundedRect(10, top, W - 20, h, 16);
+    bg.lineStyle(2, 0xe8d5a9).strokeRoundedRect(10, top, W - 20, h, 16);
+    // 줄 전체가 터치를 받아서, 아래 섬으로 새지 않게 한다
+    const block = this.add.rectangle(W / 2, top + h / 2, W - 20, h, 0, 0).setInteractive();
+    tray.add([bg, block]);
+
+    const score = village.score();
+    const next = village.nextResident();
+    tray.add(this.add.text(22, top + 14, `⭐ 마을 점수 ${score}`, { fontFamily: FONT, fontSize: '13px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0, 0.5));
+    tray.add(
+      this.add
+        .text(W - 22, top + 14, next ? `🏠 다음 주민까지 ${Math.max(0, next.score - score)}점` : '🏠 주민이 모두 모였어요!', { fontFamily: FONT, fontSize: '11px', color: '#e07a5f', fontStyle: 'bold' })
+        .setOrigin(1, 0.5),
+    );
+
+    const items = inventory.owned().filter((o) => isPlaceable(o.id)).slice(0, 7);
+    let sel = this.registry.get('buildItem') as ItemId | undefined;
+    if (!sel || !items.some((o) => o.id === sel)) {
+      sel = items[0]?.id;
+      this.registry.set('buildItem', sel);
+    }
+    if (items.length === 0) {
+      tray.add(this.add.text(W / 2, top + 50, '놓을 물건이 없어요. 머지 탭에서 의자·화분 등을 만들어요!', { fontFamily: FONT, fontSize: '11px', color: '#a08a6a' }).setOrigin(0.5));
+      return;
+    }
+    const slot = 46;
+    const x0 = (W - items.length * slot) / 2;
+    items.forEach((o, i) => {
+      const x = x0 + i * slot + slot / 2;
+      const y = top + 51;
+      const g = this.add.graphics();
+      const on = o.id === sel;
+      g.fillStyle(on ? 0xffd166 : 0xfde8b0).fillRoundedRect(x - 21, y - 21, 42, 42, 10);
+      if (on) g.lineStyle(2.5, 0xe07a5f).strokeRoundedRect(x - 21, y - 21, 42, 42, 10);
+      const ic = this.add.image(x, y - 2, itemKey(o.id)).setScale(1.4);
+      const ct = this.add
+        .text(x + 18, y + 14, String(o.count), { fontFamily: FONT, fontSize: '11px', color: COLORS.uiText, fontStyle: 'bold', stroke: '#fff8e7', strokeThickness: 3 })
+        .setOrigin(1, 0.5);
+      const hit = this.add.rectangle(x, y, 44, 44, 0, 0).setInteractive({ useHandCursor: true });
+      hit.on('pointerdown', () => {
+        sfx.tap();
+        this.registry.set('buildItem', o.id);
+        this.toast(`${ITEMS[o.id].name} · ⭐ ${DECOR_POINTS[o.id] ?? 0}점`);
+        this.time.delayedCall(0, () => this.rebuildBuildTray());
+      });
+      tray.add([g, ic, ct, hit]);
+    });
+  }
+
+  /** 주민의 부탁 */
+  private openOrder(id: string) {
+    if (this.registry.get('modal')) return;
+    const r = RESIDENTS.find((v) => v.id === id);
+    if (!r) return;
+    const hearts = village.hearts(id);
+    const order = village.order(id);
+    const PW = Math.min(310, this.scale.width - 30);
+    const PH = order ? 340 : 230;
+    const { box, close } = this.modal(PW, PH);
+    const top = -PH / 2;
+    box.add(this.add.image(-PW / 2 + 48, top + 50, `${id}_front`).setScale(2));
+    box.add(this.add.text(-PW / 2 + 92, top + 30, r.name, { fontFamily: FONT, fontSize: '20px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0, 0.5));
+    const heartText = hearts === 0 ? '🤍 처음 만났어요' : `${'💗'.repeat(Math.min(hearts, 5))}${hearts > 5 ? ` ×${hearts}` : ''}`;
+    box.add(this.add.text(-PW / 2 + 92, top + 56, heartText, { fontFamily: FONT, fontSize: '13px', color: '#e07a5f', fontStyle: 'bold' }).setOrigin(0, 0.5));
+    if (!order) {
+      box.add(
+        this.add
+          .text(0, top + 130, `"고마워요! 지금은 쉬는 중이에요."\n${village.waitSec(id)}초 뒤에 새 부탁이 생겨요`, { fontFamily: FONT, fontSize: '13px', color: '#8a6d4b', align: 'center' })
+          .setOrigin(0.5),
+      );
+      return;
+    }
+    const line = hearts === 0 ? `"${r.hello}"\n"${ITEMS[order.item].name} ${order.n}개만 가져다줄래요?"` : `"${ITEMS[order.item].name} ${order.n}개만 가져다줄래요?"`;
+    box.add(this.add.text(0, top + 112, line, { fontFamily: FONT, fontSize: '13px', color: '#8a6d4b', align: 'center', wordWrap: { width: PW - 36 } }).setOrigin(0.5));
+    const { ok } = this.needList(box, { [order.item]: order.n }, top + 186, PW);
+    const btn = this.button(ok ? '🎁 가져다주기' : '재료가 부족해요', ok, () => {
+      this.spend({ [order.item]: order.n });
+      const h = village.completeOrder(id);
+      const gift = ORDER_GIFTS[Math.floor(Math.random() * ORDER_GIFTS.length)];
+      const n = 1 + Math.floor(Math.random() * 2);
+      inventory.add(gift, n);
+      close();
+      sfx.fanfare();
+      if (h === TROPHY_HEARTS) {
+        inventory.add('trophy', 1);
+        this.celebrate(`🏆 ${r.name}의 단짝이 됐어요!\n황금 트로피를 받았어요`);
+      } else {
+        this.celebrate(`💗 ${r.name} 호감도 ${h}\n선물: ${ITEMS[gift].name} ×${n}`);
+      }
+    });
+    btn.setPosition(0, PH / 2 - 36);
+    box.add(btn);
+  }
+
+  /** 화면 좌표에 글자가 떠오르기 */
+  private onFloat(msg: string, sx: number, sy: number) {
+    const t = this.add
+      .text(sx, sy, msg, { fontFamily: FONT, fontSize: '15px', color: '#ffffff', fontStyle: 'bold', stroke: '#e07a5f', strokeThickness: 5 })
+      .setOrigin(0.5)
+      .setDepth(50);
+    this.tweens.add({ targets: t, y: sy - 30, alpha: { from: 1, to: 0 }, duration: 1000, ease: 'Cubic.easeOut', onComplete: () => t.destroy() });
   }
 
   // ───────────────────────── 길잡이 · 옆 버튼 · 설정 ─────────────────────────
@@ -597,7 +727,7 @@ export class HudScene extends Phaser.Scene {
     box.add(reset);
     (reset.list[1] as Phaser.GameObjects.Text).setStroke('#b85c48', 3);
     box.add(this.add.text(0, PH / 2 - 26, '모은 재료와 열린 지역이 모두 지워져요', { fontFamily: FONT, fontSize: '10px', color: '#a08a6a' }).setOrigin(0.5));
-    box.add(this.add.text(0, PH / 2 - 12, `v0.6 · ${__BUILD_LABEL__.slice(0, 14)}`, { fontFamily: FONT, fontSize: '9px', color: '#c4b79c' }).setOrigin(0.5));
+    box.add(this.add.text(0, PH / 2 - 12, `v0.7 · ${__BUILD_LABEL__.slice(0, 14)}`, { fontFamily: FONT, fontSize: '9px', color: '#c4b79c' }).setOrigin(0.5));
   }
 
   /** 다른 섬으로 가는 동안 보여 주는 화면 */

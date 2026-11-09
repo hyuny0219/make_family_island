@@ -9,6 +9,8 @@ import { generateWorld, T_SEA, type Decor, type FishingSpot, type RegionInfo, ty
 import { drawEdges } from '../world/edges';
 import { inventory } from '../state/inventory';
 import { progress } from '../state/progress';
+import { village, type Placed } from '../state/village';
+import { DECOR_BLOCKING, DECOR_POINTS, RESIDENTS } from '../data/village';
 import { Bear } from '../objects/Bear';
 import { sfx, buzz } from '../sfx';
 import { withJosa } from '../util/korean';
@@ -39,6 +41,10 @@ export class IslandScene extends Phaser.Scene {
   private spots: SpotObj[] = [];
   private cloudTex!: Phaser.Textures.CanvasTexture;
   private boatImg?: Phaser.GameObjects.Image;
+  private placedObjs = new Map<string, Phaser.GameObjects.Image>();
+  /** 장식을 놓을 수 없는 칸 (원래 있던 나무·바위, 선착장 등) */
+  private occupied = new Set<string>();
+  private campPx = { x: 0, y: 0 };
   private fishing: null | { spot: SpotObj; phase: 'wait' | 'bite'; t: number; bobber: Phaser.GameObjects.Image; mark?: Phaser.GameObjects.Text } = null;
   private fx!: Record<'leaf' | 'pebble' | 'sparkle' | 'ember' | 'heart' | 'dust' | 'splash' | 'puff', Phaser.GameObjects.Particles.ParticleEmitter>;
 
@@ -88,6 +94,13 @@ export class IslandScene extends Phaser.Scene {
       this.decorObjs.push(img);
     }
 
+    // 가족이 놓은 장식
+    this.placedObjs.clear();
+    this.occupied.clear();
+    for (const d of W.decor) this.occupied.add(`${d.tx},${d.ty}`);
+    for (let oy = 0; oy <= 2; oy++) for (let ox = -1; ox <= 2; ox++) this.occupied.add(`${W.dock.tx + ox},${W.dock.ty + oy}`);
+    for (const p of village.placedOn(this.islandIdx)) this.addPlaced(p, false);
+
     // 선착장 + 배
     const dk = W.dock;
     const dockImg = this.add.image(dk.tx * TILE + TILE / 2, (dk.ty + 2) * TILE + 4, 'dock').setOrigin(0.5, 1).setDepth((dk.ty + 1) * TILE - 30);
@@ -114,6 +127,8 @@ export class IslandScene extends Phaser.Scene {
       this.bears.push(bear);
       this.npcTimers.set(bear, 1 + Math.random() * 3);
     });
+    this.campPx = camp;
+    village.joined().forEach((r) => this.spawnResident(r.id, false));
 
     const cam = this.cameras.main;
     cam.setZoom(WORLD_ZOOM);
@@ -130,12 +145,14 @@ export class IslandScene extends Phaser.Scene {
     ge.on('build-boat', this.onBuildBoat, this);
     ge.on('travel', this.onTravel, this);
     ge.on('go-home', this.goHome, this);
+    village.on('resident-joined', this.onResidentJoined, this);
     this.events.once('shutdown', () => {
       ge.off('choose-bear', this.choosePlayer, this);
       ge.off('unlock-region', this.onUnlockRegion, this);
       ge.off('build-boat', this.onBuildBoat, this);
       ge.off('travel', this.onTravel, this);
       ge.off('go-home', this.goHome, this);
+      village.off('resident-joined', this.onResidentJoined, this);
       this.input.off('pointerdown', this.onPointerDown, this);
     });
 
@@ -387,6 +404,7 @@ export class IslandScene extends Phaser.Scene {
     if (!this.player || this.registry.get('modal')) return;
     if (p.y < HUD_TOP_H || p.y > this.scale.height - HUD_BOTTOM_H) return;
     if (this.fishing) return this.onFishingTap();
+    if (this.registry.get('view') === 'build') return this.onBuildTap(p, over);
 
     const pl = this.player;
     type Tagged = { bear?: Bear; decor?: Decor; signRegion?: number; spot?: FishingSpot; isDock?: boolean };
@@ -529,6 +547,14 @@ export class IslandScene extends Phaser.Scene {
       other.target = null;
       other.face('side', other.x > pl.x);
       pl.face('side', pl.x > other.x);
+      if (other.resident) {
+        // 주민: 부탁 듣기
+        other.jump(90);
+        sfx.pop();
+        this.npcTimers.set(other, 6);
+        this.game.events.emit('open-order', other.id);
+        return;
+      }
       other.jump();
       pl.jump(90);
       sfx.pop();
@@ -644,6 +670,104 @@ export class IslandScene extends Phaser.Scene {
     obj.setScale(0).setAlpha(1);
     this.tweens.add({ targets: obj, scale: 1, duration: 420, ease: 'Back.easeOut' });
     this.fx.sparkle.explode(5, obj.x, obj.y - 8);
+  }
+
+  // ───────────────────────── 꾸미기 · 주민 ─────────────────────────
+
+  private addPlaced(p: Placed, anim: boolean) {
+    const key = `${p.tx},${p.ty}`;
+    const img = this.add.image(p.tx * TILE + TILE / 2, p.ty * TILE + TILE - 1, itemKey(p.id)).setOrigin(0.5, 1).setScale(1.5);
+    img.setDepth(img.y);
+    img.setInteractive({ useHandCursor: true });
+    (img as unknown as { placed: Placed }).placed = p;
+    this.placedObjs.set(key, img);
+    if (DECOR_BLOCKING.has(p.id)) this.blocked.add(key);
+    if (anim) {
+      img.setScale(0);
+      this.tweens.add({ targets: img, scale: 1.5, duration: 380, ease: 'Back.easeOut' });
+      this.fx.sparkle.explode(8, img.x, img.y - 14);
+    }
+  }
+
+  /** 꾸미기 모드에서 땅을 눌렀을 때: 놓인 물건이면 다시 창고로, 빈 땅이면 고른 물건 놓기 */
+  private onBuildTap(p: Phaser.Input.Pointer, _over: Phaser.GameObjects.GameObject[]) {
+    const W = this.world;
+    const tx = Math.floor(p.worldX / TILE);
+    const ty = Math.floor(p.worldY / TILE);
+    const key = `${tx},${ty}`;
+    // 그림이 아니라 "누른 칸" 기준으로 판단한다 (울타리를 나란히 놓을 때 옆 칸 물건이 집히지 않게)
+    const img = this.placedObjs.get(key);
+    if (img) {
+      const pl = (img as unknown as { placed: Placed }).placed;
+      village.remove(this.islandIdx, tx, ty);
+      this.placedObjs.delete(key);
+      this.blocked.delete(key);
+      inventory.add(pl.id, 1);
+      sfx.pop();
+      img.disableInteractive();
+      this.tweens.add({ targets: img, scale: 0, y: img.y - 10, duration: 200, ease: 'Back.easeIn', onComplete: () => img.destroy() });
+      return;
+    }
+    const id = this.registry.get('buildItem') as ItemId | undefined;
+    if (!id || inventory.get(id) <= 0) {
+      this.toast('아래에서 놓을 물건을 먼저 골라요');
+      return;
+    }
+    const inside = tx >= 0 && ty >= 0 && tx < W.w && ty < W.h;
+    const bearHere = this.bears.some((b) => Math.floor(b.x / TILE) === tx && Math.floor((b.y - 1) / TILE) === ty);
+    const ok =
+      inside &&
+      W.terrain[ty][tx] !== T_SEA &&
+      this.unlocked(W.region[ty * W.w + tx]) &&
+      !this.blocked.has(key) &&
+      !this.occupied.has(key) &&
+      !this.placedObjs.has(key) &&
+      !bearHere;
+    if (!ok) {
+      buzz(20);
+      this.toast('여기는 놓을 수 없어요');
+      return;
+    }
+    const placed: Placed = { id, tx, ty };
+    inventory.add(id, -1);
+    this.addPlaced(placed, true);
+    sfx.merge();
+    buzz(20);
+    const cam = this.cameras.main;
+    this.game.events.emit('float', `⭐ +${DECOR_POINTS[id] ?? 0}`, (p.worldX - cam.worldView.x) * cam.zoom, (p.worldY - 30 - cam.worldView.y) * cam.zoom);
+    village.place(this.islandIdx, placed); // 점수가 넘으면 'resident-joined'
+  }
+
+  private spawnResident(id: string, anim: boolean) {
+    let x = this.campPx.x;
+    let y = this.campPx.y + 50;
+    for (let i = 0; i < 12; i++) {
+      const cx = this.campPx.x + Phaser.Math.Between(-110, 110);
+      const cy = this.campPx.y + Phaser.Math.Between(20, 110);
+      if (this.walkable(cx, cy)) {
+        x = cx;
+        y = cy;
+        break;
+      }
+    }
+    const b = new Bear(this, id, x, y, 38);
+    b.resident = true;
+    this.bears.push(b);
+    this.npcTimers.set(b, 1 + Math.random() * 4);
+    if (anim) {
+      this.fx.puff.explode(8, x, y - 14);
+      this.fx.heart.explode(5, x, y - 30);
+      b.jump(160);
+    }
+    return b;
+  }
+
+  private onResidentJoined(id: string) {
+    const r = RESIDENTS.find((v) => v.id === id);
+    if (!r) return;
+    this.spawnResident(id, true);
+    sfx.fanfare();
+    this.game.events.emit('celebrate', `🏠 새 주민 ${withJosa(r.name, '이', '가')} 이사 왔어요!\n캠프에서 만나 봐요`);
   }
 
   // ───────────────────────── 낚시 ─────────────────────────

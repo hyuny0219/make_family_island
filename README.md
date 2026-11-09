@@ -28,6 +28,8 @@ src/
   world/edges.ts       # 해안선 물결 조각
   state/progress.ts    # 섬·지역 해금, 배 진행 저장
   data/items.ts        # 아이템 정의
+  data/village.ts      # 장식 점수, 동물 주민, 부탁
+  state/village.ts     # 놓인 장식·주민·호감도 저장
   data/merge.ts        # 머지 체인·작업대 레시피
   data/gathering.ts    # 오브젝트별 채집 규칙 (밸런스는 여기서)
   state/inventory.ts   # 가족 창고 (localStorage, M5에서 Firebase)
