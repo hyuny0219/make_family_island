@@ -39,6 +39,9 @@ export interface Presence {
   /** 걸어가는 목적지 (서 있으면 x,y와 같다) */
   tx: number;
   ty: number;
+  /** 마지막 말풍선 이모지와 보낸 시각(ms) */
+  e?: string;
+  et?: number;
   /** 보낸 시각(ms) */
   t: number;
 }
@@ -276,7 +279,7 @@ class FamilySync extends Phaser.Events.EventEmitter {
     this.presSentAt = Date.now();
     const p = this.presLast;
     const r = (n: number) => Math.round(n);
-    void this.rt.set(this.presRef, { bear: p.bear, island: p.island, x: r(p.x), y: r(p.y), tx: r(p.tx), ty: r(p.ty), t: Date.now() }).catch(() => undefined);
+    void this.rt.set(this.presRef, { bear: p.bear, island: p.island, x: r(p.x), y: r(p.y), tx: r(p.tx), ty: r(p.ty), ...(p.e ? { e: p.e, et: p.et ?? 0 } : {}), t: Date.now() }).catch(() => undefined);
   }
 
   private handleFeed(feed: FeedItem[]) {

@@ -49,6 +49,7 @@ export class IslandScene extends Phaser.Scene {
   /** 다른 가족이 조종하는 곰 (기기 id → 곰) */
   private remotes = new Map<string, Bear>();
   private presenceTimer = 0;
+  private myEmote: { e: string; et: number } | null = null;
   private fishing: null | { spot: SpotObj; phase: 'wait' | 'bite'; t: number; bobber: Phaser.GameObjects.Image; mark?: Phaser.GameObjects.Text } = null;
   private fx!: Record<'leaf' | 'pebble' | 'sparkle' | 'ember' | 'heart' | 'dust' | 'splash' | 'puff', Phaser.GameObjects.Particles.ParticleEmitter>;
 
@@ -150,6 +151,7 @@ export class IslandScene extends Phaser.Scene {
     ge.on('build-boat', this.onBuildBoat, this);
     ge.on('travel', this.onTravel, this);
     ge.on('go-home', this.goHome, this);
+    ge.on('emote', this.onEmote, this);
     village.on('resident-joined', this.onResidentJoined, this);
     village.on('remote', this.syncPlaced, this);
     family.on('presence', this.onPresence, this);
@@ -161,6 +163,7 @@ export class IslandScene extends Phaser.Scene {
       ge.off('build-boat', this.onBuildBoat, this);
       ge.off('travel', this.onTravel, this);
       ge.off('go-home', this.goHome, this);
+      ge.off('emote', this.onEmote, this);
       village.off('resident-joined', this.onResidentJoined, this);
       village.off('remote', this.syncPlaced, this);
       family.off('presence', this.onPresence, this);
@@ -512,6 +515,7 @@ export class IslandScene extends Phaser.Scene {
           this.stepTimer -= dt;
           if (this.stepTimer <= 0) {
             sfx.step();
+            this.fx.dust.explode(1, bear.x, bear.y - 1);
             this.stepTimer = 0.26;
           }
         }
@@ -702,11 +706,21 @@ export class IslandScene extends Phaser.Scene {
 
   // ───────────────────────── 다른 가족 곰 ─────────────────────────
 
+  /** 내 곰 머리 위에 말풍선을 띄우고 가족에게도 보낸다 */
+  private onEmote(emoji: string) {
+    const pl = this.player;
+    if (!pl) return;
+    pl.emote(emoji);
+    sfx.pop();
+    this.myEmote = { e: emoji, et: Date.now() };
+    this.sendPresence();
+  }
+
   private sendPresence() {
     const pl = this.player;
     if (!pl || !family.active) return;
     this.presenceTimer = pl.moving ? 2 : 30;
-    family.setPresence({ bear: pl.id, island: this.islandIdx, x: pl.x, y: pl.y, tx: pl.target?.x ?? pl.x, ty: pl.target?.y ?? pl.y });
+    family.setPresence({ bear: pl.id, island: this.islandIdx, x: pl.x, y: pl.y, tx: pl.target?.x ?? pl.x, ty: pl.target?.y ?? pl.y, ...(this.myEmote ?? {}) });
   }
 
   /** 같은 섬에 있는 다른 가족의 곰을 보여 주고, 그쪽이 누른 곳으로 걸어가게 한다 */
@@ -740,6 +754,15 @@ export class IslandScene extends Phaser.Scene {
         bear.y = p.y;
       }
       bear.target = Math.hypot(p.tx - bear.x, p.ty - bear.y) > 2 ? { x: p.tx, y: p.ty } : null;
+      // 새 말풍선 (방금 보낸 것만 — 뒤늦게 들어와서 옛 말풍선을 보지 않게)
+      if (p.e && p.et && p.et > bear.emoteAt) {
+        const first = bear.emoteAt === 0;
+        bear.emoteAt = p.et;
+        if (!first || Date.now() - p.et < 5000) {
+          bear.emote(p.e);
+          sfx.pop();
+        }
+      }
     }
     // 다른 가족이 조종 중인 곰과 같은 곰은 캠프에서 숨긴다 (아빠 곰이 둘이 되지 않게)
     const taken = new Set(here.map(([, p]) => p.bear));
