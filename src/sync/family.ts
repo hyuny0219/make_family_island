@@ -29,10 +29,28 @@ export interface FamilyDoc {
   createdAt?: number;
 }
 
+/** 다른 가족의 곰 위치 (Realtime Database presence/{code}/{device}) */
+export interface Presence {
+  /** 고른 곰 */
+  bear: string;
+  island: number;
+  x: number;
+  y: number;
+  /** 걸어가는 목적지 (서 있으면 x,y와 같다) */
+  tx: number;
+  ty: number;
+  /** 보낸 시각(ms) */
+  t: number;
+}
+
 export type SyncStatus = 'off' | 'connecting' | 'online' | 'error';
 
 type Op = { kind: 'inc' | 'union' | 'remove' | 'set' | 'del'; path: string; value?: unknown };
 type Fs = typeof import('firebase/firestore');
+type Rt = typeof import('firebase/database');
+
+/** 이 시간(ms) 동안 소식이 없으면 나간 것으로 본다 */
+const PRESENCE_STALE = 90_000;
 
 function deviceId() {
   try {
@@ -70,6 +88,14 @@ class FamilySync extends Phaser.Events.EventEmitter {
   private flushing = false;
   private timer: number | null = null;
   private seenFeed = 0;
+  private rt: Rt | null = null;
+  private presRef: import('firebase/database').DatabaseReference | null = null;
+  private presUnsub: (() => void) | null = null;
+  private presLast: Omit<Presence, 't'> | null = null;
+  private presSentAt = 0;
+  private presTimer: number | null = null;
+  /** 같은 가족 섬에 접속해 있는 다른 기기들 */
+  others: Record<string, Presence> = {};
 
   constructor() {
     super();
@@ -154,6 +180,7 @@ class FamilySync extends Phaser.Events.EventEmitter {
   leave() {
     this.unsub?.();
     this.unsub = null;
+    this.stopPresence();
     this.ref = null;
     this.queue = [];
     this.feed = [];
@@ -193,6 +220,63 @@ class FamilySync extends Phaser.Events.EventEmitter {
       () => this.setStatus('error'),
     );
     void this.flush();
+    void this.startPresence().catch(() => undefined);
+  }
+
+  // ───────── 다른 가족 곰 위치 (Realtime Database) ─────────
+
+  private async startPresence() {
+    if (!firebaseConfig?.databaseURL || !this.code) return;
+    const rt = (this.rt ??= await import('firebase/database'));
+    this.stopPresence(false);
+    const db = rt.getDatabase();
+    this.presRef = rt.ref(db, `presence/${this.code}/${this.device}`);
+    // 앱을 닫거나 연결이 끊기면 서버가 알아서 지운다
+    void rt.onDisconnect(this.presRef).remove();
+    this.presUnsub = rt.onValue(rt.ref(db, `presence/${this.code}`), (snap) => {
+      const all = (snap.val() ?? {}) as Record<string, Presence>;
+      const now = Date.now();
+      const others: Record<string, Presence> = {};
+      for (const [dev, p] of Object.entries(all)) {
+        if (dev !== this.device && p && now - p.t < PRESENCE_STALE) others[dev] = p;
+      }
+      this.others = others;
+      this.emit('presence', others);
+    });
+    if (this.presLast) this.sendPresence();
+  }
+
+  private stopPresence(removeMine = true) {
+    this.presUnsub?.();
+    this.presUnsub = null;
+    if (removeMine && this.presRef && this.rt) void this.rt.remove(this.presRef).catch(() => undefined);
+    if (removeMine) this.presRef = null;
+    if (this.presTimer !== null) window.clearTimeout(this.presTimer);
+    this.presTimer = null;
+    this.others = {};
+    this.emit('presence', this.others);
+  }
+
+  /** 내 곰 위치 알리기. 너무 자주 보내지 않게 0.25초에 한 번으로 묶는다 */
+  setPresence(p: Omit<Presence, 't'>) {
+    this.presLast = p;
+    if (!this.presRef || !this.rt) return;
+    const wait = 250 - (Date.now() - this.presSentAt);
+    if (wait <= 0) this.sendPresence();
+    else if (this.presTimer === null) {
+      this.presTimer = window.setTimeout(() => {
+        this.presTimer = null;
+        this.sendPresence();
+      }, wait);
+    }
+  }
+
+  private sendPresence() {
+    if (!this.presRef || !this.rt || !this.presLast) return;
+    this.presSentAt = Date.now();
+    const p = this.presLast;
+    const r = (n: number) => Math.round(n);
+    void this.rt.set(this.presRef, { bear: p.bear, island: p.island, x: r(p.x), y: r(p.y), tx: r(p.tx), ty: r(p.ty), t: Date.now() }).catch(() => undefined);
   }
 
   private handleFeed(feed: FeedItem[]) {

@@ -10,7 +10,7 @@ import { drawEdges } from '../world/edges';
 import { inventory } from '../state/inventory';
 import { progress } from '../state/progress';
 import { village, type Placed } from '../state/village';
-import { family } from '../sync/family';
+import { family, type Presence } from '../sync/family';
 import { DECOR_BLOCKING, DECOR_POINTS, RESIDENTS } from '../data/village';
 import { Bear } from '../objects/Bear';
 import { sfx, buzz } from '../sfx';
@@ -46,6 +46,9 @@ export class IslandScene extends Phaser.Scene {
   /** 장식을 놓을 수 없는 칸 (원래 있던 나무·바위, 선착장 등) */
   private occupied = new Set<string>();
   private campPx = { x: 0, y: 0 };
+  /** 다른 가족이 조종하는 곰 (기기 id → 곰) */
+  private remotes = new Map<string, Bear>();
+  private presenceTimer = 0;
   private fishing: null | { spot: SpotObj; phase: 'wait' | 'bite'; t: number; bobber: Phaser.GameObjects.Image; mark?: Phaser.GameObjects.Text } = null;
   private fx!: Record<'leaf' | 'pebble' | 'sparkle' | 'ember' | 'heart' | 'dust' | 'splash' | 'puff', Phaser.GameObjects.Particles.ParticleEmitter>;
 
@@ -64,6 +67,7 @@ export class IslandScene extends Phaser.Scene {
     this.player = null;
     this.decorObjs = [];
     this.signs.clear();
+    this.remotes.clear();
     this.spots = [];
     this.fishing = null;
     this.curRegion = -1;
@@ -148,6 +152,8 @@ export class IslandScene extends Phaser.Scene {
     ge.on('go-home', this.goHome, this);
     village.on('resident-joined', this.onResidentJoined, this);
     village.on('remote', this.syncPlaced, this);
+    family.on('presence', this.onPresence, this);
+    family.on('status', this.sendPresence, this);
     progress.on('remote', this.onRemoteProgress, this);
     this.events.once('shutdown', () => {
       ge.off('choose-bear', this.choosePlayer, this);
@@ -157,6 +163,8 @@ export class IslandScene extends Phaser.Scene {
       ge.off('go-home', this.goHome, this);
       village.off('resident-joined', this.onResidentJoined, this);
       village.off('remote', this.syncPlaced, this);
+      family.off('presence', this.onPresence, this);
+      family.off('status', this.sendPresence, this);
       progress.off('remote', this.onRemoteProgress, this);
       this.input.off('pointerdown', this.onPointerDown, this);
     });
@@ -363,6 +371,7 @@ export class IslandScene extends Phaser.Scene {
     pl.y = (c.ty + 3) * TILE;
     pl.face('front');
     pl.jump(140);
+    this.sendPresence();
     this.time.delayedCall(60, () => this.fx.puff.explode(6, pl.x, pl.y - 14));
     sfx.pop();
   }
@@ -406,6 +415,8 @@ export class IslandScene extends Phaser.Scene {
     bear.jump(150);
     this.fx.heart.explode(4, bear.x, bear.y - 30);
     this.cameras.main.startFollow(bear.sprite, true, 0.12, 0.12, 0, 20);
+    this.sendPresence();
+    this.onPresence(family.others);
   }
 
   private onPointerDown(p: Phaser.Input.Pointer, over: Phaser.GameObjects.GameObject[]) {
@@ -462,6 +473,7 @@ export class IslandScene extends Phaser.Scene {
     if (!this.player) return;
     this.player.target = { x, y };
     this.pending = hit;
+    this.sendPresence();
     this.showTapMarker(x, y);
     sfx.tap();
     this.game.events.emit('player-moved');
@@ -504,8 +516,11 @@ export class IslandScene extends Phaser.Scene {
           }
         }
         if (arrived && this.pending) this.interact(this.pending);
-        if (arrived) this.pending = null;
-      } else {
+        if (arrived) {
+          this.pending = null;
+          this.sendPresence();
+        }
+      } else if (!bear.remote) {
         this.updateNpc(bear, dt);
       }
     }
@@ -517,6 +532,9 @@ export class IslandScene extends Phaser.Scene {
       }
     }
     if (this.fishing) this.updateFishing(dt);
+    // 내 위치를 가끔 다시 알린다 (걷는 중엔 2초, 서 있을 땐 30초마다 — 접속 중이라는 신호)
+    this.presenceTimer -= dt;
+    if (this.presenceTimer <= 0 && this.player) this.sendPresence();
   }
 
   private updateNpc(bear: Bear, dt: number) {
@@ -681,6 +699,55 @@ export class IslandScene extends Phaser.Scene {
   }
 
   // ───────────────────────── 꾸미기 · 주민 ─────────────────────────
+
+  // ───────────────────────── 다른 가족 곰 ─────────────────────────
+
+  private sendPresence() {
+    const pl = this.player;
+    if (!pl || !family.active) return;
+    this.presenceTimer = pl.moving ? 2 : 30;
+    family.setPresence({ bear: pl.id, island: this.islandIdx, x: pl.x, y: pl.y, tx: pl.target?.x ?? pl.x, ty: pl.target?.y ?? pl.y });
+  }
+
+  /** 같은 섬에 있는 다른 가족의 곰을 보여 주고, 그쪽이 누른 곳으로 걸어가게 한다 */
+  private onPresence(others: Record<string, Presence>) {
+    if (!this.player) return; // 곰을 고르기 전에는 가족 곰이 모두 캠프에 있다
+    const here = Object.entries(others).filter(([, p]) => p.island === this.islandIdx && BEARS.some((b) => b.id === p.bear));
+    // 나간 가족 지우기
+    for (const [dev, bear] of [...this.remotes]) {
+      const p = others[dev];
+      if (p && p.island === this.islandIdx && p.bear === bear.id) continue;
+      this.fx.puff.explode(5, bear.x, bear.y - 14);
+      bear.destroy();
+      this.remotes.delete(dev);
+      this.bears.splice(this.bears.indexOf(bear), 1);
+    }
+    for (const [dev, p] of here) {
+      let bear = this.remotes.get(dev);
+      if (!bear) {
+        bear = new Bear(this, p.bear, p.x, p.y, PLAYER_SPEED);
+        bear.remote = dev;
+        bear.label = this.add
+          .text(p.x, p.y, BEARS.find((b) => b.id === p.bear)?.name ?? '', { fontFamily: 'sans-serif', fontSize: '9px', color: '#ffffff', fontStyle: 'bold', stroke: '#4a3b2a', strokeThickness: 3 })
+          .setOrigin(0.5, 1);
+        this.remotes.set(dev, bear);
+        this.bears.push(bear);
+        this.fx.puff.explode(5, p.x, p.y - 14);
+      }
+      // 너무 멀리 어긋났으면 바로 옮기고, 아니면 목적지로 걸어가게
+      if (Math.hypot(bear.x - p.x, bear.y - p.y) > 120) {
+        bear.x = p.x;
+        bear.y = p.y;
+      }
+      bear.target = Math.hypot(p.tx - bear.x, p.ty - bear.y) > 2 ? { x: p.tx, y: p.ty } : null;
+    }
+    // 다른 가족이 조종 중인 곰과 같은 곰은 캠프에서 숨긴다 (아빠 곰이 둘이 되지 않게)
+    const taken = new Set(here.map(([, p]) => p.bear));
+    for (const b of this.bears) {
+      if (b.remote || b.resident || b === this.player) continue;
+      b.sprite.setVisible(!taken.has(b.id));
+    }
+  }
 
   /** 다른 가족이 지역을 열거나 배를 만들었을 때 화면 맞추기 */
   private onRemoteProgress() {

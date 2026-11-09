@@ -10,6 +10,10 @@ export class Bear {
   readonly id: string;
   /** 동물 주민이면 true */
   resident = false;
+  /** 다른 가족이 조종하는 곰이면 그 기기 id */
+  remote: string | null = null;
+  /** 머리 위 이름표 (다른 가족 곰) */
+  label?: Phaser.GameObjects.Text;
   readonly sprite: Phaser.GameObjects.Image;
   x: number;
   y: number;
@@ -108,6 +112,12 @@ export class Bear {
     this.sprite.setScale(sx, sy);
     this.sprite.setPosition(Math.round(this.x), Math.round(this.y - bob - this.hop));
     this.sprite.setDepth(this.y);
+    this.label?.setPosition(this.sprite.x, this.sprite.y - this.sprite.height - 3).setDepth(this.y + 1);
     return arrived;
+  }
+
+  destroy() {
+    this.label?.destroy();
+    this.sprite.destroy();
   }
 }
