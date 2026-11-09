@@ -9,8 +9,8 @@ export const TILE = 24;
 export const WORLD_ZOOM = 1.5;
 
 /** 섬 맵 크기 (타일 수) */
-export const MAP_W = 30;
-export const MAP_H = 30;
+export const MAP_W = 60;
+export const MAP_H = 60;
 
 /** 캐릭터 이동 속도 (px/초, 월드 좌표) */
 export const PLAYER_SPEED = 90;

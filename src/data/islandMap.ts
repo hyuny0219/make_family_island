@@ -61,10 +61,12 @@ export function generateIsland(seed = 20261109): IslandMap {
       const dx = (x - cx) / (MAP_W * 0.42);
       const dy = (y - cy) / (MAP_H * 0.42);
       const ang = Math.atan2(dy, dx);
-      const wobble = 0.08 * Math.sin(ang * 3 + 1.3) + 0.05 * Math.sin(ang * 7 + 0.4);
+      // 해안선: 큰 굴곡(만·곶) + 잔물결
+      const wobble =
+        0.1 * Math.sin(ang * 3 + 1.3) + 0.06 * Math.sin(ang * 5 + 2.1) + 0.04 * Math.sin(ang * 9 + 0.4) + 0.02 * Math.sin(ang * 17);
       const d = Math.sqrt(dx * dx + dy * dy) - wobble;
       drow.push(d);
-      row.push(d < 0.76 ? T_GRASS : d < 0.93 ? T_SAND : T_SEA);
+      row.push(d < 0.85 ? T_GRASS : d < 0.96 ? T_SAND : T_SEA);
     }
     terrain.push(row);
     dist.push(drow);
@@ -100,33 +102,43 @@ export function generateIsland(seed = 20261109): IslandMap {
   // 캠프 주변은 비워두기 (가족 곰들이 돌아다니는 공간)
   for (let oy = -3; oy <= 5; oy++) for (let ox = -4; ox <= 4; ox++) taken.add(`${camp.tx + ox},${camp.ty + oy}`);
 
-  for (let i = 0; i < 600 && decor.length < 44; i++) {
-    const tx = Math.floor(rnd() * MAP_W);
-    const ty = Math.floor(rnd() * MAP_H);
-    if (taken.has(`${tx},${ty}`)) continue;
-    const t = terrain[ty][tx];
-    let kind: ObjectKind | null = null;
-    if (t === T_GRASS) {
-      kind = pick<ObjectKind>(rnd, [
-        ['fruit_tree', 7],
-        ['pine_tree', 4],
-        ['bush', 3],
-        ['rock', 3],
-        ['flowers', 4],
-        ['boulder', 1],
-        ['stump', 1],
-        ['sapling', 2],
-        ['ore_rock', 1],
-      ]);
-    } else if (t === T_SAND && rnd() < 0.35) {
-      kind = pick<ObjectKind>(rnd, [
-        ['rock', 2],
-        ['pebbles', 3],
-      ]);
+  // 지역별 분위기: 북쪽 숲 / 동쪽 바위 언덕 / 서쪽 꽃밭 / 남쪽·가운데 과수원
+  const biome = (x: number, y: number): 'forest' | 'rocky' | 'meadow' | 'orchard' => {
+    const a = Math.atan2(y - cy, x - cx); // -π..π, 0=동쪽, -π/2=북쪽
+    const r = Math.hypot(x - cx, y - cy);
+    if (r < 7) return 'orchard';
+    if (a < -Math.PI * 0.25 && a > -Math.PI * 0.75) return 'forest';
+    if (a >= -Math.PI * 0.25 && a < Math.PI * 0.2) return 'rocky';
+    if (a > Math.PI * 0.75 || a < -Math.PI * 0.75) return 'meadow';
+    return 'orchard';
+  };
+  const TABLE: Record<ReturnType<typeof biome>, [ObjectKind, number][]> = {
+    forest: [['pine_tree', 10], ['fruit_tree', 2], ['bush', 3], ['stump', 2], ['sapling', 2], ['flowers', 1], ['rock', 1]],
+    rocky: [['rock', 7], ['boulder', 3], ['ore_rock', 3], ['pebbles', 3], ['bush', 1], ['pine_tree', 1]],
+    meadow: [['flowers', 9], ['bush', 3], ['sapling', 2], ['fruit_tree', 2], ['rock', 1]],
+    orchard: [['fruit_tree', 8], ['bush', 2], ['flowers', 2], ['sapling', 2], ['rock', 1], ['stump', 1]],
+  };
+  const density = { forest: 0.55, rocky: 0.4, meadow: 0.4, orchard: 0.3 };
+
+  // 격자 간격으로 후보를 훑어서 고르게 배치 (뭉치지도, 비지도 않게)
+  for (let y = 1; y < MAP_H - 1; y++) {
+    for (let x = 1; x < MAP_W - 1; x++) {
+      if (taken.has(`${x},${y}`)) continue;
+      const t = terrain[y][x];
+      let kind: ObjectKind | null = null;
+      if (t === T_GRASS) {
+        const b = biome(x, y);
+        if (rnd() < density[b] * 0.5) kind = pick<ObjectKind>(rnd, TABLE[b]);
+      } else if (t === T_SAND && rnd() < 0.06) {
+        kind = pick<ObjectKind>(rnd, [
+          ['rock', 2],
+          ['pebbles', 3],
+        ]);
+      }
+      if (!kind) continue;
+      decor.push({ kind, tx: x, ty: y });
+      for (let oy = -1; oy <= 1; oy++) for (let ox = -1; ox <= 1; ox++) taken.add(`${x + ox},${y + oy}`);
     }
-    if (!kind) continue;
-    decor.push({ kind, tx, ty });
-    for (let oy = -1; oy <= 1; oy++) for (let ox = -1; ox <= 1; ox++) taken.add(`${tx + ox},${ty + oy}`);
   }
 
   return { terrain, tiles, decor, spawn, camp };
