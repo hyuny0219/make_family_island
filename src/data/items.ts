@@ -24,6 +24,23 @@ export const ITEMS = {
   shell: { name: '조개껍데기' },
   boot: { name: '낡은 장화' },
   starfish: { name: '불가사리' },
+  rod: { name: '낚싯대' },
+  sofa: { name: '소파' },
+  wall: { name: '돌담' },
+  fountain: { name: '분수' },
+  flowerpot: { name: '화분' },
+  arch: { name: '꽃 아치' },
+  juice: { name: '과일 주스' },
+  jam: { name: '과일 잼' },
+  pie: { name: '과일 파이' },
+  pearl: { name: '진주' },
+  necklace: { name: '진주 목걸이' },
+  wreath: { name: '솔방울 리스' },
+  lantern: { name: '등불' },
+  table: { name: '나무 탁자' },
+  bed: { name: '나무 침대' },
+  fence: { name: '울타리' },
+  trophy: { name: '황금 트로피' },
 } as const;
 
 export type ItemId = keyof typeof ITEMS;

@@ -37,7 +37,7 @@ export class IslandScene extends Phaser.Scene {
   private decorObjs: DecorObj[] = [];
   private signs = new Map<number, Phaser.GameObjects.Container>();
   private spots: SpotObj[] = [];
-  private clouds!: Phaser.GameObjects.RenderTexture;
+  private cloudTex!: Phaser.Textures.CanvasTexture;
   private boatImg?: Phaser.GameObjects.Image;
   private fishing: null | { spot: SpotObj; phase: 'wait' | 'bite'; t: number; bobber: Phaser.GameObjects.Image; mark?: Phaser.GameObjects.Text } = null;
   private fx!: Record<'leaf' | 'pebble' | 'sparkle' | 'ember' | 'heart' | 'dust' | 'splash' | 'puff', Phaser.GameObjects.Particles.ParticleEmitter>;
@@ -96,7 +96,9 @@ export class IslandScene extends Phaser.Scene {
     if (progress.hasBoat(this.islandIdx) || this.islandIdx > 0) this.showBoat(false);
 
     // 표지판 · 낚시터 · 구름
-    this.clouds = this.add.renderTexture(0, 0, W.w * CLOUD_PX, W.h * CLOUD_PX).setOrigin(0).setScale(TILE / CLOUD_PX).setDepth(99980);
+    if (this.textures.exists('clouds')) this.textures.remove('clouds');
+    this.cloudTex = this.textures.createCanvas('clouds', W.w * CLOUD_PX, W.h * CLOUD_PX)!;
+    this.add.image(0, 0, 'clouds').setOrigin(0).setScale(TILE / CLOUD_PX).setDepth(99980);
     this.refreshRegions(false);
 
     // 섬 색감 (전용 아트 전까지 임시)
@@ -127,11 +129,13 @@ export class IslandScene extends Phaser.Scene {
     ge.on('unlock-region', this.onUnlockRegion, this);
     ge.on('build-boat', this.onBuildBoat, this);
     ge.on('travel', this.onTravel, this);
+    ge.on('go-home', this.goHome, this);
     this.events.once('shutdown', () => {
       ge.off('choose-bear', this.choosePlayer, this);
       ge.off('unlock-region', this.onUnlockRegion, this);
       ge.off('build-boat', this.onBuildBoat, this);
       ge.off('travel', this.onTravel, this);
+      ge.off('go-home', this.goHome, this);
       this.input.off('pointerdown', this.onPointerDown, this);
     });
 
@@ -164,28 +168,26 @@ export class IslandScene extends Phaser.Scene {
   /** 구름·표지판·낚시터·오브젝트 표시를 진행 상황에 맞추기 */
   private refreshRegions(animateRegion: number | false) {
     const W = this.world;
-    // 구름
-    const g = this.make.graphics({}, false);
+    // 구름 (캔버스에 직접 그려서 지역을 열 때도 끊김 없이)
+    const ctx = this.cloudTex.getContext();
     const P = CLOUD_PX;
-    for (let y = 0; y < W.h; y++) {
-      for (let x = 0; x < W.w; x++) {
-        const r = W.region[y * W.w + x];
-        if (this.unlocked(r) || r === animateRegion) continue;
-        const hsh = (x * 73856093) ^ (y * 19349663);
-        g.fillStyle(0xd9e6f2).fillCircle(x * P + P / 2, y * P + P / 2 + 1.5, 4.5 + (hsh & 1));
+    ctx.clearRect(0, 0, W.w * P, W.h * P);
+    const pass = (dy: number, color: (r: number) => string, rad: number) => {
+      for (let y = 0; y < W.h; y++) {
+        for (let x = 0; x < W.w; x++) {
+          const r = W.region[y * W.w + x];
+          if (this.unlocked(r) || r === animateRegion) continue;
+          const hsh = (x * 73856093) ^ (y * 19349663);
+          ctx.fillStyle = color(r);
+          ctx.beginPath();
+          ctx.arc(x * P + P / 2, y * P + P / 2 + dy, rad + (hsh & 1), 0, Math.PI * 2);
+          ctx.fill();
+        }
       }
-    }
-    for (let y = 0; y < W.h; y++) {
-      for (let x = 0; x < W.w; x++) {
-        const r = W.region[y * W.w + x];
-        if (this.unlocked(r) || r === animateRegion) continue;
-        const hsh = (x * 73856093) ^ (y * 19349663);
-        g.fillStyle(this.frontier(r) ? 0xffffff : 0xf4f7fb).fillCircle(x * P + P / 2, y * P + P / 2, 4 + (hsh & 1));
-      }
-    }
-    this.clouds.clear();
-    this.clouds.draw(g);
-    g.destroy();
+    };
+    pass(1.5, () => '#d9e6f2', 4.5);
+    pass(0, (r) => (this.frontier(r) ? '#ffffff' : '#f4f7fb'), 4);
+    this.cloudTex.refresh();
 
     // 오브젝트: 잠긴 지역은 숨겨서 그리기 부담 줄이기
     for (const o of this.decorObjs) if (!o.gone) o.setVisible(this.unlocked(o.region));
@@ -291,11 +293,54 @@ export class IslandScene extends Phaser.Scene {
       this.tweens.add({ targets: [side, rider], x: '+=260', duration: 1600, ease: 'Sine.easeIn' });
     }
     sfx.pop();
+    this.game.events.emit('sailing', to);
     this.time.delayedCall(900, () => cam.fadeOut(700, 126, 200, 227));
     cam.once('camerafadeoutcomplete', () => {
       progress.setCurrent(to);
       this.scene.restart();
     });
+  }
+
+  /**
+   * 길잡이: 다음에 가 볼 곳(가장 가까운 표지판, 다 열었으면 선착장)의 화면 좌표.
+   * HUD가 화면 밖일 때 화살표로 알려준다.
+   */
+  guide(): { x: number; y: number; kind: 'sign' | 'dock' } | null {
+    const pl = this.player;
+    if (!pl || this.fishing) return null;
+    let best: { x: number; y: number; kind: 'sign' | 'dock' } | null = null;
+    let bd = Infinity;
+    for (const c of this.signs.values()) {
+      const d = Math.hypot(c.x - pl.x, c.y - pl.y);
+      if (d < bd) {
+        bd = d;
+        best = { x: c.x, y: c.y - 20, kind: 'sign' };
+      }
+    }
+    if (!best && !progress.hasBoat(this.islandIdx) && this.islandIdx < ISLANDS.length - 1) {
+      const dk = this.world.dock;
+      best = { x: dk.tx * TILE + TILE / 2, y: dk.ty * TILE, kind: 'dock' };
+    }
+    if (!best) return null;
+    const cam = this.cameras.main;
+    return { x: (best.x - cam.worldView.x) * cam.zoom, y: (best.y - cam.worldView.y) * cam.zoom, kind: best.kind };
+  }
+
+  /** 캠프로 돌아가기 (길을 잃었을 때) */
+  private goHome() {
+    const pl = this.player;
+    if (!pl) return;
+    if (this.fishing) this.endFishing(false);
+    const c = this.world.camp;
+    this.fx.puff.explode(6, pl.x, pl.y - 14);
+    pl.target = null;
+    this.pending = null;
+    pl.x = c.tx * TILE + TILE / 2;
+    pl.y = (c.ty + 3) * TILE;
+    pl.face('front');
+    pl.jump(140);
+    this.time.delayedCall(60, () => this.fx.puff.explode(6, pl.x, pl.y - 14));
+    sfx.pop();
   }
 
   // ───────────────────────── 연출 ─────────────────────────
@@ -514,9 +559,14 @@ export class IslandScene extends Phaser.Scene {
     }
 
     this.hitEffect(obj, rule.feel);
-    obj.hitsLeft -= 1;
+    // 돌 곡괭이가 있으면 돌을 두 배로 빨리 캔다
+    obj.hitsLeft -= rule.feel === 'stony' && inventory.get('stone_pickaxe') > 0 ? 2 : 1;
     const drops = rollDrops(rule.perHit);
     if (drops.length === 0 && rule.perHit.length > 0) drops.push(Phaser.Utils.Array.GetRandom(rule.perHit)[0]);
+    // 바구니가 있으면 나무·덤불에서 하나 더
+    if (rule.feel === 'leafy' && rule.perHit.length > 0 && inventory.get('basket') > 0 && Math.random() < 0.6) {
+      drops.push(Phaser.Utils.Array.GetRandom(rule.perHit)[0]);
+    }
     if (obj.hitsLeft <= 0) {
       drops.push(...rollDrops(rule.final));
       this.deplete(obj, rule.deplete, rule.regrowSec);
@@ -677,7 +727,7 @@ export class IslandScene extends Phaser.Scene {
       if (Math.random() < dt * 1.2) this.tweens.add({ targets: f.bobber, y: f.bobber.y + 2, duration: 80, yoyo: true });
       if (f.t <= 0) {
         f.phase = 'bite';
-        f.t = 1.4; // 아이들도 누를 수 있게 넉넉히
+        f.t = inventory.get('rod') > 0 ? 2.2 : 1.4; // 아이들도 누를 수 있게 넉넉히 (낚싯대가 있으면 더 길게)
         this.tweens.killTweensOf(f.bobber);
         this.tweens.add({ targets: f.bobber, y: f.spot.y + 4, duration: 120, yoyo: true, repeat: -1 });
         this.fx.splash.explode(8, f.spot.x, f.spot.y);
@@ -713,7 +763,11 @@ export class IslandScene extends Phaser.Scene {
       return;
     }
     const biome = this.world.regions[f.spot.spot.region].biome;
-    const table = BIOME_INFO[biome].fish;
+    const hasRod = inventory.get('rod') > 0;
+    // 낚싯대가 있으면 꽝(장화)이 안 나오고 황금 물고기가 잘 나온다
+    const table = BIOME_INFO[biome].fish
+      .filter(([id]) => !(hasRod && id === 'boot'))
+      .map(([id, w]) => [id, hasRod && id === 'fish_gold' ? w * 3 : w] as [ItemId, number]);
     const total = table.reduce((s, [, w]) => s + w, 0);
     let r = Math.random() * total;
     let item: ItemId = table[0][0];

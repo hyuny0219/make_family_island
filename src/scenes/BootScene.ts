@@ -18,6 +18,7 @@ export class BootScene extends Phaser.Scene {
     const bar = this.add.rectangle(W / 2 - 80, H / 2, 0, 10, 0xffffff).setOrigin(0, 0.5);
     this.add.rectangle(W / 2, H / 2, 164, 14).setStrokeStyle(2, 0xffffff);
     this.load.on('progress', (p: number) => (bar.width = 160 * p));
+    this.add.text(W / 2, H / 2 + 26, '🏝️ 섬을 준비하고 있어요…', { fontFamily: 'sans-serif', fontSize: '13px', color: '#ffffff' }).setOrigin(0.5);
 
     this.load.setPath('assets/');
     this.load.spritesheet('tiles', 'tiles.png', { frameWidth: 24, frameHeight: 24, margin: 1, spacing: 2 });

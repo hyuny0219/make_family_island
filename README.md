@@ -28,6 +28,7 @@ src/
   world/edges.ts       # 해안선 물결 조각
   state/progress.ts    # 섬·지역 해금, 배 진행 저장
   data/items.ts        # 아이템 정의
+  data/merge.ts        # 머지 체인·작업대 레시피
   data/gathering.ts    # 오브젝트별 채집 규칙 (밸런스는 여기서)
   state/inventory.ts   # 가족 창고 (localStorage, M5에서 Firebase)
   util/korean.ts       # 조사(이/가) 처리
@@ -36,6 +37,7 @@ src/
     IslandScene.ts     # 탐험 화면: 이동, 채집, 낚시, 지역 해금, 배 타기
   objects/Bear.ts      # 곰 캐릭터 (플레이어/가족 NPC 공용)
   data/assets.ts       # 스프라이트 목록
+    MergeScene.ts      # 머지 보드 + 작업대
     HudScene.ts        # 상단 바, 창고, 퀘스트·배·섬 목록 팝업, 시작 화면(곰 고르기)
 scripts/make_icons.py  # PWA 임시 아이콘 생성
 scripts/process_art.py # AI 생성 시트(art/source) → 게임 스프라이트(public/assets)

@@ -2,6 +2,7 @@ import { TILE_IDX, type ObjectKind } from '../data/assets';
 import { BIOMES, BIOME_INFO, type Biome } from '../data/biomes';
 import type { IslandTheme } from '../data/islands';
 import type { ItemId } from '../data/items';
+import { CHAINS } from '../data/merge';
 
 export const T_SEA = 0;
 export const T_SAND = 1;
@@ -380,8 +381,8 @@ export function generateWorld(theme: IslandTheme, islandIdx: number): World {
       }
     }
     const cand = [...pool, ...fishPool];
-    const kinds = Math.min(cand.length, r.depth <= 2 ? 2 : 3);
-    const total = Math.min(36, Math.round(4 + r.depth * 1.6 + islandIdx * 2.2));
+    const kinds = Math.min(cand.length, r.depth <= 1 ? 2 : 3);
+    const total = Math.min(60, Math.round(7 + r.depth * 2.4 + islandIdx * 3.5));
     const chosen: ItemId[] = [];
     // 바로 앞 지역 재료를 하나는 꼭 포함
     const parentItems = BIOME_INFO[regions[r.parent].biome].items;
@@ -396,6 +397,24 @@ export function generateWorld(theme: IslandTheme, islandIdx: number): World {
       const scale = it.startsWith('fish') || it === 'coal' || it === 'starfish' ? 0.5 : 1;
       r.need[it] = Math.max(1, Math.round(share * scale));
     });
+
+    // 캠프에서 3칸 이상 떨어진 지역(2번 섬부터는 2칸)은 머지로 만든 물건도 필요하다
+    const craftFrom = islandIdx >= 1 ? 2 : 3;
+    if (r.depth >= craftFrom) {
+      const stage2 = CHAINS.filter((c) => pool.has(c[0])).map((c) => c[1]);
+      if (stage2.length) {
+        const it = stage2[Math.floor(rnd() * stage2.length)];
+        r.need[it] = 1 + Math.floor(r.depth / 4) + Math.floor(islandIdx / 3);
+      }
+    }
+    // 아주 먼 지역은 두 번 합친 물건까지
+    if (r.depth >= craftFrom + 4) {
+      const stage3 = CHAINS.filter((c) => pool.has(c[0]) && c.length > 2 && !(c[1] in r.need)).map((c) => c[2]);
+      if (stage3.length) {
+        const it = stage3[Math.floor(rnd() * stage3.length)];
+        r.need[it] = 1 + Math.floor(islandIdx / 4);
+      }
+    }
 
     // 표지판: 부모 지역과 맞닿은 이 지역 땅 중, 부모 씨앗에 가장 가까운 곳 (바로 옆 부모 땅)
     const p = regions[r.parent];
