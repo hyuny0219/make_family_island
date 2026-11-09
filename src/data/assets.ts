@@ -25,7 +25,27 @@ export const OBJECTS = [
   'campfire',
   'bush',
   'flowers',
+  'sign',
+  'chest',
+  'dock',
+  'boat',
+  'boat_frame',
+  'lighthouse',
+  'crate',
+  'boat_side',
+  // 바닥에 떨어진 줍기용 (아이템 아이콘 텍스처를 그대로 사용)
+  'shell_pick',
+  'starfish_pick',
 ] as const;
+
+/** 텍스처 키가 이름과 다른 오브젝트 */
+export const OBJECT_TEXTURE: Partial<Record<ObjectKind, string>> = {
+  shell_pick: 'item_shell',
+  starfish_pick: 'item_starfish',
+};
+
+/** public/assets 에서 따로 불러오지 않는 오브젝트 */
+export const NO_LOAD: ReadonlySet<string> = new Set(['shell_pick', 'starfish_pick']);
 
 export type ObjectKind = (typeof OBJECTS)[number];
 
@@ -40,6 +60,8 @@ export const BLOCKING: ReadonlySet<ObjectKind> = new Set<ObjectKind>([
   'tent',
   'campfire',
   'bush',
+  'chest',
+  'lighthouse',
 ]);
 
 /** 타일셋 인덱스 (tiles.png 순서) */

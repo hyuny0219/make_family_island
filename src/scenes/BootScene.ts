@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { COLORS } from '../config';
-import { BEARS, FACINGS, OBJECTS } from '../data/assets';
+import { BEARS, FACINGS, NO_LOAD, OBJECTS } from '../data/assets';
+import { ITEM_IDS, itemKey } from '../data/items';
 
 /**
  * 스프라이트 로드 + 작은 파티클 텍스처 생성.
@@ -21,7 +22,8 @@ export class BootScene extends Phaser.Scene {
     this.load.setPath('assets/');
     this.load.spritesheet('tiles', 'tiles.png', { frameWidth: 24, frameHeight: 24, margin: 1, spacing: 2 });
     for (const b of BEARS) for (const f of FACINGS) this.load.image(`${b.id}_${f}`, `${b.id}_${f}.png`);
-    for (const o of OBJECTS) this.load.image(o, `${o}.png`);
+    for (const o of OBJECTS) if (!NO_LOAD.has(o)) this.load.image(o, `${o}.png`);
+    for (const id of ITEM_IDS) this.load.image(itemKey(id), `${itemKey(id)}.png`);
   }
 
   create() {
@@ -49,6 +51,20 @@ export class BootScene extends Phaser.Scene {
     g.fillStyle(0xff6b8a);
     g.fillRect(1, 0, 2, 1).fillRect(4, 0, 2, 1).fillRect(0, 1, 7, 2).fillRect(1, 3, 5, 1).fillRect(2, 4, 3, 1).fillRect(3, 5, 1, 1);
     g.generateTexture('heart', 7, 6);
+    g.clear();
+    // 낚시 찌 5×7
+    g.fillStyle(0x2b2d42).fillRect(1, 0, 3, 7).fillRect(0, 1, 5, 5);
+    g.fillStyle(0xff5d5d).fillRect(1, 1, 3, 3);
+    g.fillStyle(0xffffff).fillRect(1, 4, 3, 2);
+    g.generateTexture('bobber', 5, 7);
+    g.clear();
+    // 구름 조각
+    g.fillStyle(0xffffff).fillCircle(6, 6, 6);
+    g.generateTexture('cloudpuff', 12, 12);
+    g.clear();
+    // 색종이
+    g.fillStyle(0xffffff).fillRect(0, 0, 4, 3);
+    g.generateTexture('confetti', 4, 3);
     g.destroy();
   }
 }

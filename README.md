@@ -22,13 +22,21 @@ src/
   main.ts              # Phaser 게임 설정 (세로 360×640 기준, EXPAND 스케일)
   config.ts            # 화면·타일·색상 상수
   sfx.ts               # 임시 효과음(WebAudio) + 진동
-  data/islandMap.ts    # 섬 맵 생성 (M1에서 수작업 맵으로 교체 예정)
+  data/islands.ts      # 섬 10개 정의 (지역 수, 분위기, 배 재료)
+  data/biomes.ts       # 지역 분위기별 재료·오브젝트·어종·이름
+  world/generate.ts    # 섬·지역·퀘스트 자동 생성 (시드 고정)
+  world/edges.ts       # 해안선 물결 조각
+  state/progress.ts    # 섬·지역 해금, 배 진행 저장
+  data/items.ts        # 아이템 정의
+  data/gathering.ts    # 오브젝트별 채집 규칙 (밸런스는 여기서)
+  state/inventory.ts   # 가족 창고 (localStorage, M5에서 Firebase)
+  util/korean.ts       # 조사(이/가) 처리
   scenes/
     BootScene.ts       # 스프라이트 로드 + 파티클 텍스처 생성
-    IslandScene.ts     # 탐험 화면: 탭 이동, 오브젝트·가족 곰 상호작용
+    IslandScene.ts     # 탐험 화면: 이동, 채집, 낚시, 지역 해금, 배 타기
   objects/Bear.ts      # 곰 캐릭터 (플레이어/가족 NPC 공용)
   data/assets.ts       # 스프라이트 목록
-    HudScene.ts        # 상단 바, 하단 탭, 시작 화면(곰 고르기), 안내/토스트
+    HudScene.ts        # 상단 바, 창고, 퀘스트·배·섬 목록 팝업, 시작 화면(곰 고르기)
 scripts/make_icons.py  # PWA 임시 아이콘 생성
 scripts/process_art.py # AI 생성 시트(art/source) → 게임 스프라이트(public/assets)
 ```

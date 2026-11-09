@@ -2,8 +2,15 @@ import Phaser from 'phaser';
 import { COLORS } from '../config';
 import { sfx, unlockAudio, buzz } from '../sfx';
 import { BEARS } from '../data/assets';
+import { ITEMS, itemKey, type ItemId } from '../data/items';
+import { inventory } from '../state/inventory';
+import { progress } from '../state/progress';
+import { withJosa } from '../util/korean';
+import { ISLANDS } from '../data/islands';
+import { BIOME_INFO } from '../data/biomes';
+import type { RegionInfo } from '../world/generate';
 
-export const HUD_TOP_H = 56;
+export const HUD_TOP_H = 96;
 export const HUD_BOTTOM_H = 76;
 
 const FONT = '"Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif';
@@ -18,6 +25,14 @@ const TABS: Tab[] = [
 /** 화면 고정 UI: 상단 섬 이름, 하단 탭, 안내 문구, 타이틀 */
 export class HudScene extends Phaser.Scene {
   private hint?: Phaser.GameObjects.Container;
+  private bagCount!: Phaser.GameObjects.Text;
+  private bagBtn!: Phaser.GameObjects.Container;
+  private strip?: Phaser.GameObjects.Container;
+  private topText!: Phaser.GameObjects.Text;
+  private topBg!: Phaser.GameObjects.Graphics;
+  private topBtn!: Phaser.GameObjects.Container;
+  private banner?: Phaser.GameObjects.Container;
+  private slotPos = new Map<ItemId, { x: number; y: number; node: Phaser.GameObjects.Container }>();
 
   constructor() {
     super('Hud');
@@ -28,14 +43,35 @@ export class HudScene extends Phaser.Scene {
     const H = this.scale.height;
 
     this.makeTopBar(W);
+    this.makeBag(W);
+    this.rebuildStrip();
     this.makeTabBar(W, H);
     this.makeHint(W, H);
     this.add
-      .text(W - 6, H - HUD_BOTTOM_H - 6, `M0 · ${__BUILD_LABEL__.slice(0, 14)}`, { fontFamily: FONT, fontSize: '10px', color: '#ffffff' })
+      .text(W - 6, H - HUD_BOTTOM_H - 6, `v0.5 · ${__BUILD_LABEL__.slice(0, 14)}`, { fontFamily: FONT, fontSize: '10px', color: '#ffffff' })
       .setOrigin(1, 1)
       .setAlpha(0.7);
 
     this.game.events.on('player-moved', this.hideHint, this);
+    this.game.events.on('toast', this.toast, this);
+    this.game.events.on('item-gained', this.onItemGained, this);
+    const ge = this.game.events;
+    const on: [string, (...a: never[]) => void][] = [
+      ['world-ready', this.updateTopBar],
+      ['region-enter', this.onRegionEnter],
+      ['open-quest', this.openQuest],
+      ['open-boat', this.openBoat],
+      ['celebrate', this.celebrate],
+    ];
+    on.forEach(([e, f]) => ge.on(e, f, this));
+    inventory.on('changed', this.onInventoryChanged, this);
+    this.events.once('shutdown', () => {
+      on.forEach(([e, f]) => ge.off(e, f, this));
+      this.game.events.off('player-moved', this.hideHint, this);
+      this.game.events.off('toast', this.toast, this);
+      this.game.events.off('item-gained', this.onItemGained, this);
+      inventory.off('changed', this.onInventoryChanged, this);
+    });
     this.makeTitle(W, H);
   }
 
@@ -47,12 +83,348 @@ export class HudScene extends Phaser.Scene {
     return g;
   }
 
-  private makeTopBar(W: number) {
-    const w = 170;
-    this.panel((W - w) / 2, 10, w, 36, 18);
-    this.add
-      .text(W / 2, 28, '🏝️ 우리 가족 섬', { fontFamily: FONT, fontSize: '16px', color: COLORS.uiText, fontStyle: 'bold' })
+  /** 왼쪽 위: 지금 섬 이름 + 열린 지역 수. 누르면 섬 목록 */
+  private makeTopBar(_W: number) {
+    const c = this.add.container(10, 10);
+    this.topBg = this.add.graphics();
+    this.topText = this.add.text(14, 18, '', { fontFamily: FONT, fontSize: '14px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0, 0.5);
+    c.add([this.topBg, this.topText]);
+    this.topBtn = c;
+    c.on('pointerdown', () => {
+      sfx.tap();
+      this.tweens.add({ targets: c, scale: { from: 0.9, to: 1 }, duration: 240, ease: 'Back.easeOut' });
+      this.openIslandList(false);
+    });
+    this.updateTopBar();
+  }
+
+  private updateTopBar() {
+    const i = progress.current;
+    const isl = ISLANDS[i];
+    this.topText.setText(`${isl.emoji} ${isl.name}  ${progress.unlockedCount(i)}/${isl.regions}`);
+    const w = this.topText.width + 28;
+    this.topBg.clear();
+    this.topBg.fillStyle(0x000000, 0.15).fillRoundedRect(0, 3, w, 36, 18);
+    this.topBg.fillStyle(COLORS.uiBg).fillRoundedRect(0, 0, w, 36, 18);
+    this.topBg.lineStyle(2, 0xe8d5a9).strokeRoundedRect(0, 0, w, 36, 18);
+    // 컨테이너 터치 좌표는 크기/2만큼 밀려 있음 → (w/2, 18)부터 w×36
+    this.topBtn.setSize(w, 36).setInteractive({ hitArea: new Phaser.Geom.Rectangle(w / 2, 18, w, 36), hitAreaCallback: Phaser.Geom.Rectangle.Contains, useHandCursor: true });
+  }
+
+  /** 새 지역에 들어서면 이름 띄우기 */
+  private onRegionEnter(reg: RegionInfo) {
+    if (!progress.isUnlocked(progress.current, reg.idx)) return;
+    this.banner?.destroy();
+    const W = this.scale.width;
+    const t = this.add.text(0, 0, `${BIOME_INFO[reg.biome].emoji} ${reg.name}`, { fontFamily: FONT, fontSize: '16px', color: '#ffffff', fontStyle: 'bold', stroke: '#4a3b2a', strokeThickness: 5 }).setOrigin(0.5);
+    const c = this.add.container(W / 2, 150, [t]).setAlpha(0).setDepth(90);
+    this.banner = c;
+    this.tweens.chain({ targets: c, tweens: [{ alpha: 1, y: 140, duration: 300 }, { alpha: 0, delay: 1300, duration: 400 }], onComplete: () => c.destroy() });
+  }
+
+  /** 공통 팝업 틀 */
+  private modal(PW: number, PH: number) {
+    const W = this.scale.width;
+    const H = this.scale.height;
+    this.registry.set('modal', true);
+    const dim = this.add.rectangle(0, 0, W, H, 0x1b4965, 0.45).setOrigin(0).setDepth(300).setInteractive();
+    const box = this.add.container(W / 2, H / 2).setDepth(301);
+    const g = this.add.graphics();
+    g.fillStyle(0x000000, 0.2).fillRoundedRect(-PW / 2, -PH / 2 + 4, PW, PH, 24);
+    g.fillStyle(COLORS.uiBg).fillRoundedRect(-PW / 2, -PH / 2, PW, PH, 24);
+    g.lineStyle(3, 0xe8d5a9).strokeRoundedRect(-PW / 2, -PH / 2, PW, PH, 24);
+    box.add(g);
+    box.setScale(0.6).setAlpha(0);
+    this.tweens.add({ targets: box, scale: 1, alpha: 1, duration: 260, ease: 'Back.easeOut' });
+    let closed = false;
+    const close = () => {
+      if (closed) return;
+      closed = true;
+      this.tweens.add({ targets: [box, dim], alpha: 0, duration: 180, onComplete: () => { box.destroy(); dim.destroy(); this.registry.set('modal', false); } });
+    };
+    this.time.delayedCall(150, () => dim.once('pointerdown', () => { sfx.tap(); close(); }));
+    return { box, close };
+  }
+
+  private button(label: string, enabled: boolean, onTap: () => void, w = 170) {
+    const c = this.add.container(0, 0);
+    const g = this.add.graphics();
+    g.fillStyle(0x000000, 0.15).fillRoundedRect(-w / 2, -20 + 3, w, 40, 20);
+    g.fillStyle(enabled ? 0x8bd17c : 0xd8d2c4).fillRoundedRect(-w / 2, -20, w, 40, 20);
+    const t = this.add.text(0, 0, label, { fontFamily: FONT, fontSize: '16px', color: enabled ? '#ffffff' : '#9a917f', fontStyle: 'bold', stroke: enabled ? '#4f8f43' : '#d8d2c4', strokeThickness: enabled ? 3 : 0 }).setOrigin(0.5);
+    c.add([g, t]);
+    c.setSize(w, 40).setInteractive({ useHandCursor: true });
+    c.on('pointerdown', (_p: Phaser.Input.Pointer, _x: number, _y: number, e: Phaser.Types.Input.EventData) => {
+      e.stopPropagation();
+      this.tweens.add({ targets: c, scale: { from: 0.9, to: 1 }, duration: 200, ease: 'Back.easeOut' });
+      if (!enabled) {
+        buzz(20);
+        this.tweens.add({ targets: c, x: '+=4', duration: 50, yoyo: true, repeat: 2 });
+        return;
+      }
+      sfx.pop();
+      buzz(20);
+      onTap();
+    });
+    return c;
+  }
+
+  /** 필요 재료 목록 (있는 개수 / 필요 개수) — 모두 모였는지 돌려준다 */
+  private needList(box: Phaser.GameObjects.Container, need: Partial<Record<ItemId, number>>, y: number, PW: number) {
+    const entries = Object.entries(need) as [ItemId, number][];
+    const cols = Math.min(entries.length, 3);
+    const cell = Math.min(90, (PW - 32) / cols);
+    let ok = true;
+    entries.forEach(([id, n], i) => {
+      const have = inventory.get(id);
+      const enough = have >= n;
+      if (!enough) ok = false;
+      const cx = (i % cols - (cols - 1) / 2) * cell;
+      const cy = y + Math.floor(i / cols) * 86;
+      const g = this.add.graphics();
+      g.fillStyle(enough ? 0xd9f2c9 : 0xfde8b0).fillRoundedRect(cx - cell / 2 + 4, cy - 34, cell - 8, 78, 12);
+      const ic = this.add.image(cx, cy - 8, itemKey(id)).setScale(1.5);
+      const nm = this.add.text(cx, cy + 16, ITEMS[id].name, { fontFamily: FONT, fontSize: '11px', color: COLORS.uiText }).setOrigin(0.5);
+      const ct = this.add.text(cx, cy + 32, `${Math.min(have, n)}/${n}${enough ? ' ✓' : ''}`, { fontFamily: FONT, fontSize: '12px', color: enough ? '#3f8f3a' : '#c0573f', fontStyle: 'bold' }).setOrigin(0.5);
+      box.add([g, ic, nm, ct]);
+    });
+    return { ok, height: Math.ceil(entries.length / cols) * 86 };
+  }
+
+  private spend(need: Partial<Record<ItemId, number>>) {
+    for (const [id, n] of Object.entries(need) as [ItemId, number][]) inventory.add(id, -n);
+  }
+
+  /** 지역 해금 퀘스트 */
+  private openQuest(island: number, reg: RegionInfo) {
+    if (this.registry.get('modal')) return;
+    const PW = Math.min(330, this.scale.width - 30);
+    const rows = Math.ceil(Object.keys(reg.need).length / 3);
+    const PH = 230 + rows * 86;
+    const { box, close } = this.modal(PW, PH);
+    const top = -PH / 2;
+    box.add(this.add.text(0, top + 30, `${BIOME_INFO[reg.biome].emoji} ${reg.name}`, { fontFamily: FONT, fontSize: '20px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0.5));
+    box.add(this.add.text(0, top + 64, `${reg.story}\n이 재료를 모으면 길이 열려요!`, { fontFamily: FONT, fontSize: '13px', color: '#8a6d4b', align: 'center' }).setOrigin(0.5));
+    const { ok } = this.needList(box, reg.need, top + 140, PW);
+    const btn = this.button(ok ? '🌈 길 열기!' : '재료가 부족해요', ok, () => {
+      this.spend(reg.need);
+      close();
+      this.game.events.emit('unlock-region', island, reg.idx);
+    });
+    btn.setPosition(0, PH / 2 - 36);
+    box.add(btn);
+  }
+
+  /** 선착장: 배 만들기 / 다른 섬으로 떠나기 */
+  private openBoat(island: number) {
+    if (this.registry.get('modal')) return;
+    const isl = ISLANDS[island];
+    const last = island === ISLANDS.length - 1;
+    if (!progress.hasBoat(island) && !last) {
+      const PW = Math.min(330, this.scale.width - 30);
+      const rows = Math.ceil(Object.keys(isl.boat).length / 3);
+      const PH = 240 + rows * 86;
+      const { box, close } = this.modal(PW, PH);
+      const top = -PH / 2;
+      box.add(this.add.image(-PW / 2 + 44, top + 40, 'boat').setScale(0.9));
+      box.add(this.add.text(10, top + 32, '⛵ 배 만들기', { fontFamily: FONT, fontSize: '20px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0.5));
+      box.add(this.add.text(0, top + 76, `${ISLANDS[island + 1].emoji} ${withJosa(ISLANDS[island + 1].name, "으로", "로")} 가려면\n튼튼한 배가 필요해요!`, { fontFamily: FONT, fontSize: '13px', color: '#8a6d4b', align: 'center' }).setOrigin(0.5));
+      const { ok } = this.needList(box, isl.boat, top + 150, PW);
+      const btn = this.button(ok ? '🔨 배 만들기!' : '재료가 부족해요', ok, () => {
+        this.spend(isl.boat);
+        close();
+        this.game.events.emit('build-boat', island);
+      });
+      btn.setPosition(0, PH / 2 - 36);
+      box.add(btn);
+      return;
+    }
+    this.openIslandList(true);
+  }
+
+  /** 섬 목록 (선착장에서는 떠날 수 있음) */
+  private openIslandList(canSail: boolean) {
+    if (this.registry.get('modal')) return;
+    const PW = Math.min(340, this.scale.width - 24);
+    const rowH = 40;
+    const PH = 90 + ISLANDS.length * rowH;
+    const { box, close } = this.modal(PW, PH);
+    const top = -PH / 2;
+    box.add(this.add.text(0, top + 28, canSail ? '⛵ 어디로 떠날까요?' : '🗺️ 섬 지도', { fontFamily: FONT, fontSize: '19px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0.5));
+    ISLANDS.forEach((isl, i) => {
+      const y = top + 66 + i * rowH + rowH / 2;
+      const here = i === progress.current;
+      const open = progress.canVisit(i);
+      const label = open ? `${isl.emoji} ${i + 1}. ${isl.name}` : `🔒 ${i + 1}. ???`;
+      const sub = open ? `${progress.unlockedCount(i)}/${isl.regions}` : '';
+      const g = this.add.graphics();
+      g.fillStyle(here ? 0xffe39a : open ? 0xfdf0cf : 0xece6d8).fillRoundedRect(-PW / 2 + 14, y - rowH / 2 + 3, PW - 28, rowH - 6, 10);
+      box.add(g);
+      box.add(this.add.text(-PW / 2 + 26, y, label, { fontFamily: FONT, fontSize: '14px', color: open ? COLORS.uiText : '#a69c88', fontStyle: 'bold' }).setOrigin(0, 0.5));
+      box.add(this.add.text(PW / 2 - 26, y, here ? `여기! ${sub}` : sub, { fontFamily: FONT, fontSize: '12px', color: '#8a6d4b' }).setOrigin(1, 0.5));
+      if (canSail && open && !here) {
+        const hit = this.add.rectangle(0, y, PW - 28, rowH - 6, 0, 0).setInteractive({ useHandCursor: true });
+        hit.on('pointerdown', (_p: Phaser.Input.Pointer, _x: number, _y: number, e: Phaser.Types.Input.EventData) => {
+          e.stopPropagation();
+          sfx.pop();
+          close();
+          this.game.events.emit('travel', i);
+          this.time.delayedCall(1700, () => this.updateTopBar());
+        });
+        box.add(hit);
+      }
+    });
+    if (!canSail) box.add(this.add.text(0, PH / 2 - 16, '배는 캠프 아래 선착장에서 만들 수 있어요', { fontFamily: FONT, fontSize: '11px', color: '#a08a6a' }).setOrigin(0.5));
+  }
+
+  /** 큰 축하 (지역 해금, 배 완성) */
+  private celebrate(msg: string) {
+    const W = this.scale.width;
+    const H = this.scale.height;
+    const t = this.add.text(0, 0, msg, { fontFamily: FONT, fontSize: '17px', color: '#ffffff', fontStyle: 'bold', stroke: '#e07a5f', strokeThickness: 6, align: 'center', wordWrap: { width: W - 60 } }).setOrigin(0.5);
+    const c = this.add.container(W / 2, H * 0.36, [t]).setDepth(120).setScale(0);
+    this.tweens.chain({ targets: c, tweens: [{ scale: 1, duration: 380, ease: 'Back.easeOut' }, { alpha: 0, y: H * 0.33, delay: 1800, duration: 400 }], onComplete: () => c.destroy() });
+    const conf = this.add.particles(W / 2, H * 0.3, 'confetti', {
+      speed: { min: 120, max: 260 },
+      angle: { min: 200, max: 340 },
+      gravityY: 380,
+      lifespan: 1600,
+      rotate: { min: 0, max: 360 },
+      tint: [0xff6b8a, 0xffd166, 0x8bd17c, 0x6cc3ff, 0xc39bff],
+      scale: { start: 1.8, end: 1 },
+      emitting: false,
+    }).setDepth(119);
+    conf.explode(50);
+    this.time.delayedCall(2000, () => conf.destroy());
+  }
+
+  /** 오른쪽 위 창고 버튼 — 누르면 전체 목록 */
+  private makeBag(W: number) {
+    const w = 92;
+    const c = this.add.container(W - 14 - w / 2, 28);
+    const g = this.add.graphics();
+    g.fillStyle(0x000000, 0.15).fillRoundedRect(-w / 2, -18 + 3, w, 36, 18);
+    g.fillStyle(0xffd166).fillRoundedRect(-w / 2, -18, w, 36, 18);
+    g.lineStyle(2, 0xe8b84a).strokeRoundedRect(-w / 2, -18, w, 36, 18);
+    const icon = this.add.image(-w / 2 + 20, 0, itemKey('basket')).setScale(1.1);
+    const label = this.add.text(4, 0, '창고', { fontFamily: FONT, fontSize: '13px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0, 0.5);
+    this.bagCount = this.add
+      .text(w / 2 - 6, -15, '0', { fontFamily: FONT, fontSize: '11px', color: '#ffffff', fontStyle: 'bold', backgroundColor: '#e07a5f', padding: { x: 5, y: 1 } })
       .setOrigin(0.5);
+    c.add([g, icon, label, this.bagCount]);
+    c.setSize(w, 36).setInteractive({ useHandCursor: true });
+    c.on('pointerdown', () => {
+      sfx.tap();
+      buzz(8);
+      this.tweens.add({ targets: c, scale: { from: 0.88, to: 1 }, duration: 260, ease: 'Back.easeOut' });
+      this.openStorage();
+    });
+    this.bagBtn = c;
+    this.updateBagCount();
+  }
+
+  private updateBagCount() {
+    const total = inventory.owned().reduce((s, o) => s + o.count, 0);
+    this.bagCount.setText(String(total));
+    this.bagCount.setVisible(total > 0);
+  }
+
+  /** 상단 아이템 줄 — 가진 재료를 아이콘+개수로 (최대 7칸, 넘치면 +N) */
+  private rebuildStrip() {
+    this.strip?.destroy();
+    this.slotPos.clear();
+    const owned = inventory.owned();
+    if (owned.length === 0) return;
+    const W = this.scale.width;
+    const slotW = 44;
+    const max = Math.floor((W - 20) / slotW);
+    const shown = owned.slice(0, owned.length > max ? max - 1 : max);
+    const extra = owned.length - shown.length;
+    const n = shown.length + (extra > 0 ? 1 : 0);
+    const totalW = n * slotW;
+    const x0 = (W - totalW) / 2;
+    const y = 72;
+    const strip = this.add.container(0, 0);
+    const bg = this.add.graphics();
+    bg.fillStyle(COLORS.uiBg, 0.92).fillRoundedRect(x0 - 6, y - 19, totalW + 12, 38, 14);
+    strip.add(bg);
+    shown.forEach((o, i) => {
+      const cx = x0 + slotW * i + slotW / 2;
+      const node = this.add.container(cx, y);
+      const ic = this.add.image(0, -2, itemKey(o.id));
+      const ct = this.add
+        .text(13, 11, String(o.count), { fontFamily: FONT, fontSize: '11px', color: COLORS.uiText, fontStyle: 'bold', stroke: '#fff8e7', strokeThickness: 3 })
+        .setOrigin(1, 0.5);
+      node.add([ic, ct]);
+      strip.add(node);
+      this.slotPos.set(o.id, { x: cx, y, node });
+    });
+    if (extra > 0) {
+      const cx = x0 + slotW * shown.length + slotW / 2;
+      strip.add(this.add.text(cx, y, `+${extra}`, { fontFamily: FONT, fontSize: '13px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0.5));
+    }
+    this.strip = strip;
+  }
+
+  private onInventoryChanged(id?: ItemId, _count?: number, delta?: number) {
+    this.rebuildStrip();
+    this.updateBagCount();
+    if (id && delta && delta > 0) {
+      const slot = this.slotPos.get(id);
+      if (slot) this.tweens.add({ targets: slot.node, scale: { from: 1.45, to: 1 }, duration: 320, ease: 'Back.easeOut' });
+      this.tweens.add({ targets: this.bagBtn, scale: { from: 1.12, to: 1 }, duration: 260, ease: 'Back.easeOut' });
+    }
+  }
+
+  /** 곰 머리 위에 "+1 아이템" 이 떠오르기 */
+  private onItemGained(id: ItemId, sx: number, sy: number) {
+    const t = this.add
+      .text(0, 0, `+1 ${ITEMS[id].name}`, { fontFamily: FONT, fontSize: '13px', color: '#ffffff', fontStyle: 'bold', stroke: '#4a3b2a', strokeThickness: 4 })
+      .setOrigin(0.5);
+    const c = this.add.container(sx, sy, [t]).setDepth(50);
+    this.tweens.add({ targets: c, y: sy - 26, alpha: { from: 1, to: 0 }, duration: 900, ease: 'Cubic.easeOut', onComplete: () => c.destroy() });
+  }
+
+  /** 가족 창고 전체 보기 */
+  private openStorage() {
+    const W = this.scale.width;
+    const H = this.scale.height;
+    this.registry.set('modal', true);
+    const dim = this.add.rectangle(0, 0, W, H, 0x1b4965, 0.45).setOrigin(0).setDepth(300).setInteractive();
+    const PW = W - 40;
+    const owned = inventory.owned();
+    const cols = 4;
+    const cell = (PW - 32) / cols;
+    const rows = Math.max(1, Math.ceil(owned.length / cols));
+    const PH = 96 + rows * cell;
+    const box = this.add.container(W / 2, H / 2).setDepth(301);
+    const g = this.add.graphics();
+    g.fillStyle(0x000000, 0.2).fillRoundedRect(-PW / 2, -PH / 2 + 4, PW, PH, 24);
+    g.fillStyle(COLORS.uiBg).fillRoundedRect(-PW / 2, -PH / 2, PW, PH, 24);
+    g.lineStyle(3, 0xe8d5a9).strokeRoundedRect(-PW / 2, -PH / 2, PW, PH, 24);
+    box.add(g);
+    box.add(this.add.text(0, -PH / 2 + 28, '🧺 가족 창고', { fontFamily: FONT, fontSize: '20px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0.5));
+    if (owned.length === 0) {
+      box.add(this.add.text(0, 10, '아직 비어 있어요.\n나무를 흔들고 돌을 캐 보세요!', { fontFamily: FONT, fontSize: '14px', color: '#8a6d4b', align: 'center' }).setOrigin(0.5));
+    }
+    owned.forEach((o, i) => {
+      const cx = -PW / 2 + 16 + cell * (i % cols) + cell / 2;
+      const cy = -PH / 2 + 60 + cell * Math.floor(i / cols) + cell / 2;
+      const sg = this.add.graphics();
+      sg.fillStyle(0xfde8b0).fillRoundedRect(cx - cell / 2 + 4, cy - cell / 2 + 4, cell - 8, cell - 8, 12);
+      const ic = this.add.image(cx, cy - 8, itemKey(o.id)).setScale(1.6);
+      const nm = this.add.text(cx, cy + 20, `${ITEMS[o.id].name} ${o.count}`, { fontFamily: FONT, fontSize: '11px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0.5);
+      box.add([sg, ic, nm]);
+    });
+    box.add(this.add.text(0, PH / 2 - 18, '아무 곳이나 눌러서 닫기', { fontFamily: FONT, fontSize: '11px', color: '#a08a6a' }).setOrigin(0.5));
+    box.setScale(0.6).setAlpha(0);
+    this.tweens.add({ targets: box, scale: 1, alpha: 1, duration: 260, ease: 'Back.easeOut' });
+    this.time.delayedCall(150, () =>
+      dim.once('pointerdown', () => {
+        sfx.tap();
+        this.tweens.add({ targets: [box, dim], alpha: 0, duration: 180, onComplete: () => { box.destroy(); dim.destroy(); this.registry.set('modal', false); } });
+      }),
+    );
   }
 
   private makeTabBar(W: number, H: number) {
@@ -108,11 +480,11 @@ export class HudScene extends Phaser.Scene {
     const w = t.width + 28;
     const g = this.add.graphics();
     g.fillStyle(0x4a3b2a, 0.88).fillRoundedRect(-w / 2, -17, w, 34, 17);
-    const c = this.add.container(W / 2, 80, [g, t]).setAlpha(0).setDepth(100);
+    const c = this.add.container(W / 2, 112, [g, t]).setAlpha(0).setDepth(100);
     this.tweens.chain({
       targets: c,
       tweens: [
-        { alpha: 1, y: 92, duration: 200, ease: 'Back.easeOut' },
+        { alpha: 1, y: 124, duration: 200, ease: 'Back.easeOut' },
         { alpha: 0, delay: 1100, duration: 250 },
       ],
       onComplete: () => c.destroy(),

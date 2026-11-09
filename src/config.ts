@@ -8,9 +8,6 @@ export const TILE = 24;
 /** 월드 카메라 배율. 24px 타일이 화면에서 36px로 보인다. */
 export const WORLD_ZOOM = 1.5;
 
-/** 섬 맵 크기 (타일 수) */
-export const MAP_W = 30;
-export const MAP_H = 30;
 
 /** 캐릭터 이동 속도 (px/초, 월드 좌표) */
 export const PLAYER_SPEED = 90;
