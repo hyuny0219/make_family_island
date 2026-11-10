@@ -11,7 +11,7 @@ export function localDoc(): FamilyDoc {
 /** 가족 섬 문서가 바뀔 때마다 저장소를 최신 상태로 맞춘다 */
 family.on('doc', (d: FamilyDoc) => {
   inventory.applyRemote(d.inv, d.order);
-  progress.applyRemote(d.unlocked, d.boats);
+  progress.applyRemote(d.unlocked, d.boats, d.treasures);
   village.applyRemote(d as never);
 });
 

@@ -14,13 +14,14 @@ import { family, type Presence } from '../sync/family';
 import { DECOR_BLOCKING, DECOR_POINTS, RESIDENTS } from '../data/village';
 import { Bear } from '../objects/Bear';
 import { Slime } from '../objects/Slime';
+import { TREASURES, treasureKey } from '../data/treasures';
 import { sfx, buzz } from '../sfx';
 import { withJosa } from '../util/korean';
 import { HUD_BOTTOM_H, HUD_TOP_H } from './HudScene';
 
 type DecorObj = Phaser.GameObjects.Image & { decor: Decor; hitsLeft: number; resting: boolean; gone: boolean; region: number };
 type SpotObj = Phaser.GameObjects.Container & { spot: FishingSpot; active: boolean };
-type Hit = { bear?: Bear; decor?: DecorObj; sign?: number; spot?: SpotObj; dock?: boolean; slime?: Slime };
+type Hit = { bear?: Bear; decor?: DecorObj; sign?: number; spot?: SpotObj; dock?: boolean; slime?: Slime; treasure?: boolean; pedestal?: boolean };
 
 /** 지역 분위기별 슬라임 색 (초록이 기본) */
 const SLIME_KIND: Record<string, '' | '_pink' | '_blue'> = { orchard: '', forest: '', rocky: '_blue', meadow: '_pink', beach: '_blue' };
@@ -55,6 +56,11 @@ export class IslandScene extends Phaser.Scene {
   private remotes = new Map<string, Bear>();
   private presenceTimer = 0;
   private slimes: Slime[] = [];
+  private chest?: Phaser.GameObjects.Image;
+  private chestRegion = -1;
+  private pedestal?: Phaser.GameObjects.Image;
+  private pedestalItem?: Phaser.GameObjects.Image;
+  private opening = false;
   private slimeTimer = 3;
   private slimeTip = false;
   private myEmote: { e: string; et: number } | null = null;
@@ -92,6 +98,7 @@ export class IslandScene extends Phaser.Scene {
     drawEdges(this, W.terrain, skin);
 
     this.makeFx();
+    this.placeTreasure();
 
     // 오브젝트
     for (const d of W.decor) {
@@ -163,6 +170,7 @@ export class IslandScene extends Phaser.Scene {
     family.on('presence', this.onPresence, this);
     family.on('status', this.sendPresence, this);
     progress.on('remote', this.onRemoteProgress, this);
+    progress.on('treasure', this.refreshTreasure, this);
     this.events.once('shutdown', () => {
       ge.off('choose-bear', this.choosePlayer, this);
       ge.off('unlock-region', this.onUnlockRegion, this);
@@ -175,6 +183,7 @@ export class IslandScene extends Phaser.Scene {
       family.off('presence', this.onPresence, this);
       family.off('status', this.sendPresence, this);
       progress.off('remote', this.onRemoteProgress, this);
+      progress.off('treasure', this.refreshTreasure, this);
       this.input.off('pointerdown', this.onPointerDown, this);
     });
 
@@ -435,7 +444,7 @@ export class IslandScene extends Phaser.Scene {
     if (this.registry.get('view') === 'build') return this.onBuildTap(p, over);
 
     const pl = this.player;
-    type Tagged = { slime?: Slime; bear?: Bear; decor?: Decor; signRegion?: number; spot?: FishingSpot; isDock?: boolean };
+    type Tagged = { treasure?: boolean; pedestal?: boolean; slime?: Slime; bear?: Bear; decor?: Decor; signRegion?: number; spot?: FishingSpot; isDock?: boolean };
     const tagged = over as unknown as (Phaser.GameObjects.GameObject & Tagged)[];
 
     const sign = tagged.find((o) => o.signRegion !== undefined);
@@ -463,7 +472,14 @@ export class IslandScene extends Phaser.Scene {
     const decorHit = tagged.find((o) => o.decor && !(o as unknown as DecorObj).gone && (o as unknown as DecorObj).visible) as unknown as DecorObj | undefined;
 
     const slimeHit = tagged.map((o) => o.slime).find((s) => s && !s.dead);
-    if (slimeHit) {
+    const chest = this.chest;
+    if (chest && tagged.some((o) => o.treasure)) {
+      const side = pl.x <= chest.x ? -1 : 1;
+      this.walkTo(chest.x + side * 24, chest.y - 1, { treasure: true });
+    } else if (this.pedestal && tagged.some((o) => o.pedestal)) {
+      const side = pl.x <= this.pedestal.x ? -1 : 1;
+      this.walkTo(this.pedestal.x + side * 20, this.pedestal.y - 1, { pedestal: true });
+    } else if (slimeHit) {
       const side = pl.x <= slimeHit.x ? -1 : 1;
       this.walkTo(slimeHit.x + side * 18, slimeHit.y, { slime: slimeHit });
     } else if (bearHit) {
@@ -582,7 +598,9 @@ export class IslandScene extends Phaser.Scene {
       return this.game.events.emit('open-boat', this.islandIdx);
     }
     if (hit.spot) return this.startFishing(hit.spot);
+    if (hit.pedestal) return this.game.events.emit('open-treasures');
     buzz(15);
+    if (hit.treasure) return this.openTreasure();
     if (hit.slime) return this.bopSlime(hit.slime);
     if (hit.bear) {
       const other = hit.bear;
@@ -640,6 +658,106 @@ export class IslandScene extends Phaser.Scene {
       this.deplete(obj, rule.deplete, rule.regrowSec);
     }
     drops.forEach((id, i) => this.time.delayedCall(i * 90, () => this.spawnDrop(id, obj.x, obj.y - Math.min(obj.height * 0.5, 18), obj.y)));
+  }
+
+  // ───────────────────────── 섬 보물 ─────────────────────────
+
+  /** 가장 깊은 지역 한가운데에 보물 상자를, 캠프 옆에 전시대를 놓는다 (섬마다 늘 같은 자리) */
+  private placeTreasure() {
+    const W = this.world;
+    this.opening = false;
+    const deep = W.regions.reduce((a, r) => (r.depth >= a.depth ? r : a), W.regions[0]);
+    this.chestRegion = deep.idx;
+    const taken = new Set(W.decor.map((d) => `${d.tx},${d.ty}`));
+    for (const r of W.regions) taken.add(`${r.signX},${r.signY}`);
+    for (const f of W.fishing) taken.add(`${f.tx},${f.ty}`);
+    const inside = (x: number, y: number) =>
+      x >= 0 && y >= 0 && x < W.w && y < W.h && W.region[y * W.w + x] === deep.idx && W.terrain[y][x] !== T_SEA;
+    let best: { tx: number; ty: number } | null = null;
+    let bestD = Infinity;
+    for (let y = 1; y < W.h - 1; y++) {
+      for (let x = 1; x < W.w - 1; x++) {
+        if (!inside(x, y) || taken.has(`${x},${y}`)) continue;
+        // 사방이 같은 지역의 땅이어야 곰이 옆에 설 수 있다
+        if (!inside(x - 1, y) || !inside(x + 1, y) || !inside(x, y + 1) || !inside(x, y - 1)) continue;
+        const d = Math.hypot(x - deep.sx, y - deep.sy);
+        if (d < bestD) {
+          bestD = d;
+          best = { tx: x, ty: y };
+        }
+      }
+    }
+    this.chest = undefined;
+    if (best) {
+      const img = this.add.image(best.tx * TILE + TILE / 2, best.ty * TILE + TILE - 2, 'chest').setOrigin(0.5, 1);
+      img.setDepth(img.y).setInteractive({ useHandCursor: true });
+      (img as unknown as { treasure: boolean }).treasure = true;
+      this.blocked.add(`${best.tx},${best.ty}`);
+      this.chest = img;
+      // 아직 못 찾은 보물은 가끔 반짝인다
+      this.time.addEvent({
+        delay: 1400,
+        loop: true,
+        callback: () => {
+          if (!progress.hasTreasure(this.islandIdx) && this.unlocked(this.chestRegion)) this.fx.sparkle.explode(2, img.x + Phaser.Math.Between(-10, 10), img.y - 14);
+        },
+      });
+    }
+    // 캠프 전시대
+    const px = (W.camp.tx - 3) * TILE + TILE / 2;
+    const py = W.camp.ty * TILE + TILE - 2;
+    this.pedestal = this.add.image(px, py, 'pedestal').setOrigin(0.5, 1);
+    this.pedestal.setDepth(py).setInteractive({ useHandCursor: true });
+    (this.pedestal as unknown as { pedestal: boolean }).pedestal = true;
+    this.blocked.add(`${W.camp.tx - 3},${W.camp.ty}`);
+    this.pedestalItem = this.add.image(px, py - 14, treasureKey(this.islandIdx)).setOrigin(0.5, 1).setDepth(py + 1);
+    this.tweens.add({ targets: this.pedestalItem, y: py - 17, duration: 900, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+    this.refreshTreasure();
+  }
+
+  /** 찾았는지에 맞춰 상자와 전시대 모습을 바꾼다 */
+  private refreshTreasure() {
+    const found = progress.hasTreasure(this.islandIdx);
+    if (this.chest && !this.opening) this.chest.setTexture(found ? 'chest_open' : 'chest');
+    // 못 찾은 보물은 까만 그림자로만 보인다
+    if (this.pedestalItem) {
+      if (found) this.pedestalItem.clearTint().setAlpha(1);
+      else this.pedestalItem.setTintFill(0x5b4a3a).setAlpha(0.35);
+    }
+  }
+
+  private openTreasure() {
+    const chest = this.chest;
+    const pl = this.player;
+    if (!chest || !pl || this.opening) return;
+    pl.face('side', chest.x < pl.x);
+    if (progress.hasTreasure(this.islandIdx)) {
+      this.toast(`✨ ${TREASURES[this.islandIdx].name}이(가) 들어 있던 상자예요`);
+      return;
+    }
+    this.opening = true;
+    const island = this.islandIdx;
+    sfx.rustle();
+    this.tweens.add({
+      targets: chest,
+      angle: { from: -5, to: 5 },
+      duration: 70,
+      yoyo: true,
+      repeat: 5,
+      onComplete: () => {
+        chest.setAngle(0).setTexture('chest_open');
+        sfx.fanfare();
+        buzz(60);
+        this.fx.sparkle.explode(18, chest.x, chest.y - 16);
+        const icon = this.add.image(chest.x, chest.y - 18, treasureKey(island)).setOrigin(0.5, 1).setDepth(99990).setScale(0);
+        this.tweens.add({ targets: icon, y: chest.y - 46, scale: 1.6, duration: 600, ease: 'Back.easeOut' });
+        this.tweens.add({ targets: icon, alpha: 0, scale: 0.6, delay: 2400, duration: 400, onComplete: () => icon.destroy() });
+        pl.jump(140);
+        this.opening = false;
+        progress.findTreasure(island);
+        this.game.events.emit('treasure-found', island);
+      },
+    });
   }
 
   // ───────────────────────── 사냥 (슬라임) ─────────────────────────
@@ -862,6 +980,7 @@ export class IslandScene extends Phaser.Scene {
       return;
     }
     this.refreshRegions(false);
+    this.refreshTreasure();
     if (progress.hasBoat(this.islandIdx)) this.showBoat(true);
     this.game.events.emit('world-ready', this.islandIdx, this.world.regions.length);
   }

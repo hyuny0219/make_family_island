@@ -11,6 +11,7 @@ import { BIOME_INFO } from '../data/biomes';
 import type { RegionInfo } from '../world/generate';
 import { settings, setSetting, resetAll } from '../state/settings';
 import { daily, DAILY_REWARDS } from '../state/daily';
+import { TREASURES, treasureKey } from '../data/treasures';
 import { village } from '../state/village';
 import { family, type FeedItem, type SyncStatus } from '../sync/family';
 import { localDoc } from '../sync/bridge';
@@ -77,6 +78,8 @@ export class HudScene extends Phaser.Scene {
     const ge = this.game.events;
     const on: [string, (...a: never[]) => void][] = [
       ['world-ready', this.onWorldReady],
+      ['open-treasures', this.openTreasures],
+      ['treasure-found', this.onTreasureFound],
       ['sailing', this.onSailing],
       ['open-order', this.openOrder],
       ['float', this.onFloat],
@@ -690,6 +693,10 @@ export class HudScene extends Phaser.Scene {
     });
     this.sideBtns.push(row as Phaser.GameObjects.Container);
     this.emoteRow = row;
+    // 보물 도감
+    this.roundButton(30, HUD_TOP_H + 118, '👑', () => {
+      if (this.registry.get('bear')) this.openTreasures();
+    });
     // 매일 선물 (안 받았으면 빨간 점)
     this.giftBtn = this.roundButton(30, HUD_TOP_H + 74, '🎁', () => {
       if (this.registry.get('bear')) this.openDaily();
@@ -744,6 +751,41 @@ export class HudScene extends Phaser.Scene {
     this.arrow.setVisible(true).setPosition(cx, cy);
     this.arrowTip.setRotation(Math.atan2(g.y - cy, g.x - cx));
     this.arrowIcon.setText(g.kind === 'dock' ? '⛵' : '❗');
+  }
+
+  private onTreasureFound(island: number) {
+    const t = TREASURES[island];
+    const all = progress.treasureCount >= TREASURES.length;
+    this.celebrate(all ? `👑 보물을 모두 모았어요!\n${t.name}` : `👑 보물 발견!\n${t.name}`);
+    family.post(`👑 ${ISLANDS[island].name}의 보물 '${t.name}'을(를) 찾았어요`);
+    this.time.delayedCall(2600, () => this.openTreasures());
+  }
+
+  /** 보물 도감 — 섬마다 하나씩, 모두 10개 */
+  private openTreasures() {
+    if (this.registry.get('modal')) return;
+    const PW = 320;
+    const PH = 404;
+    const { box } = this.modal(PW, PH);
+    const top = -PH / 2;
+    box.add(this.add.text(0, top + 30, `👑 섬의 보물  ${progress.treasureCount}/${TREASURES.length}`, { fontFamily: FONT, fontSize: '19px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0.5));
+    box.add(this.add.text(0, top + 54, '섬마다 가장 깊은 곳에 보물 상자가 숨어 있어요', { fontFamily: FONT, fontSize: '11px', color: '#a08a6a' }).setOrigin(0.5));
+    TREASURES.forEach((t, i) => {
+      const found = progress.hasTreasure(i);
+      const known = progress.canVisit(i);
+      const x = -PW / 2 + 16 + (i % 2) * 146;
+      const y = top + 74 + Math.floor(i / 2) * 64;
+      const g = this.add.graphics();
+      g.fillStyle(found ? 0xffe9a8 : 0xf3ecd9).fillRoundedRect(x, y, 142, 58, 12);
+      if (found) g.lineStyle(2, 0xf2a93b).strokeRoundedRect(x, y, 142, 58, 12);
+      box.add(g);
+      const icon = this.add.image(x + 28, y + 30, treasureKey(i)).setScale(1.5);
+      if (!found) icon.setTintFill(0x5b4a3a).setAlpha(0.3);
+      box.add(icon);
+      box.add(this.add.text(x + 54, y + 8, known ? `${ISLANDS[i].emoji} ${ISLANDS[i].name}` : '🔒 ???', { fontFamily: FONT, fontSize: '10px', color: '#a08a6a' }));
+      box.add(this.add.text(x + 54, y + 20, found ? t.name : '???', { fontFamily: FONT, fontSize: '13px', color: found ? COLORS.uiText : '#b3a892', fontStyle: 'bold' }));
+      if (found) box.add(this.add.text(x + 54, y + 36, t.story, { fontFamily: FONT, fontSize: '8px', color: '#8a6d4b', wordWrap: { width: 84 } }));
+    });
   }
 
   /** 매일 선물 달력 */

@@ -20,6 +20,7 @@ export interface FamilyDoc {
   order: string[];
   unlocked: Record<string, number[]>;
   boats: number[];
+  treasures?: number[];
   placed: Record<string, { id: string; tx: number; ty: number }[]>;
   joined: string[];
   hearts: Record<string, number>;
