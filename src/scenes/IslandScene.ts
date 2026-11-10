@@ -282,6 +282,9 @@ export class IslandScene extends Phaser.Scene {
     if (island !== this.islandIdx) return;
     progress.unlock(island, r);
     this.refreshRegions(false);
+    if (progress.unlockedCount(island) >= this.world.regions.length && !progress.hasTreasure(island)) {
+      this.time.delayedCall(2600, () => this.game.events.emit('celebrate', '🎉 섬의 모든 지역을 열었어요!\n보물 상자가 열렸어요 — 찾으러 가요'));
+    }
     // 구름 걷히는 연출: 지역 타일 곳곳에서 구름 조각이 흩어진다
     const W = this.world;
     let n = 0;
@@ -688,7 +691,7 @@ export class IslandScene extends Phaser.Scene {
         delay: 1400,
         loop: true,
         callback: () => {
-          if (!progress.hasTreasure(this.islandIdx) && this.unlocked(this.chestRegion)) this.fx.sparkle.explode(2, img.x + Phaser.Math.Between(-10, 10), img.y - 14);
+          if (!progress.hasTreasure(this.islandIdx) && progress.unlockedCount(this.islandIdx) >= this.world.regions.length) this.fx.sparkle.explode(2, img.x + Phaser.Math.Between(-10, 10), img.y - 14);
         },
       });
     }
@@ -774,6 +777,15 @@ export class IslandScene extends Phaser.Scene {
     pl.face('side', chest.x < pl.x);
     if (progress.hasTreasure(this.islandIdx)) {
       this.toast(`✨ ${TREASURES[this.islandIdx].name}이(가) 들어 있던 상자예요`);
+      return;
+    }
+    // 섬의 마지막 보상: 모든 지역을 열어야 상자가 열린다
+    const open = progress.unlockedCount(this.islandIdx);
+    const total = this.world.regions.length;
+    if (open < total) {
+      sfx.rustle();
+      this.tweens.add({ targets: chest, angle: { from: -4, to: 4 }, duration: 60, yoyo: true, repeat: 2, onComplete: () => chest.setAngle(0) });
+      this.toast(`🔒 섬의 지역을 모두 열면 열려요 (${open}/${total})`);
       return;
     }
     this.opening = true;

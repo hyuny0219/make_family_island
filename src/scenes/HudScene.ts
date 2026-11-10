@@ -255,14 +255,29 @@ export class HudScene extends Phaser.Scene {
     if (!progress.hasBoat(island) && !last) {
       const PW = Math.min(330, this.scale.width - 30);
       const rows = Math.ceil(Object.keys(isl.boat).length / 3);
-      const PH = 240 + rows * 86;
+      const PH = 270 + rows * 86;
       const { box, close } = this.modal(PW, PH);
       const top = -PH / 2;
       box.add(this.add.image(-PW / 2 + 44, top + 40, 'boat').setScale(0.9));
       box.add(this.add.text(10, top + 32, '⛵ 배 만들기', { fontFamily: FONT, fontSize: '20px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0.5));
       box.add(this.add.text(0, top + 76, `${ISLANDS[island + 1].emoji} ${withJosa(ISLANDS[island + 1].name, "으로", "로")} 가려면\n튼튼한 배가 필요해요!`, { fontFamily: FONT, fontSize: '13px', color: '#8a6d4b', align: 'center' }).setOrigin(0.5));
-      const { ok } = this.needList(box, isl.boat, top + 150, PW);
-      const btn = this.button(ok ? '🔨 배 만들기!' : '재료가 부족해요', ok, () => {
+      const { ok: itemsOk } = this.needList(box, isl.boat, top + 150, PW);
+      // 섬을 끝까지 탐험해서 얻는 보물이 있어야 뱃길을 알 수 있다 (보물은 쓰지 않고 그대로 남는다)
+      const has = progress.hasTreasure(island);
+      const ty = top + 150 + rows * 86 + 14;
+      const tg = this.add.graphics();
+      tg.fillStyle(has ? 0xe3f4d7 : 0xf3ecd9).fillRoundedRect(-PW / 2 + 16, ty - 24, PW - 32, 48, 12);
+      box.add(tg);
+      const ticon = this.add.image(-PW / 2 + 44, ty, treasureKey(island)).setScale(1.4);
+      if (!has) ticon.setTintFill(0x5b4a3a).setAlpha(0.3);
+      box.add(ticon);
+      box.add(
+        this.add
+          .text(-PW / 2 + 68, ty, has ? `✅ 섬의 보물: ${TREASURES[island].name}\n보물이 다음 섬 뱃길을 알려 줘요` : `🔒 섬의 보물이 필요해요\n지역을 모두 열고(${progress.unlockedCount(island)}/${isl.regions}) 보물 상자를 열어요`, { fontFamily: FONT, fontSize: '11px', color: has ? '#4f8f43' : '#8a6d4b', fontStyle: 'bold', lineSpacing: 3 })
+          .setOrigin(0, 0.5),
+      );
+      const ok = itemsOk && has;
+      const btn = this.button(ok ? '🔨 배 만들기!' : !has ? '보물을 먼저 찾아요' : '재료가 부족해요', ok, () => {
         this.spend(isl.boat);
         close();
         this.game.events.emit('build-boat', island);
@@ -801,7 +816,7 @@ export class HudScene extends Phaser.Scene {
     const { box } = this.modal(PW, PH);
     const top = -PH / 2;
     box.add(this.add.text(0, top + 30, `👑 섬의 보물  ${progress.treasureCount}/${TREASURES.length}`, { fontFamily: FONT, fontSize: '19px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0.5));
-    box.add(this.add.text(0, top + 54, '섬마다 가장 깊은 곳에 보물 상자가 숨어 있어요', { fontFamily: FONT, fontSize: '11px', color: '#a08a6a' }).setOrigin(0.5));
+    box.add(this.add.text(0, top + 54, '섬의 지역을 모두 열면 보물 상자가 열려요', { fontFamily: FONT, fontSize: '11px', color: '#a08a6a' }).setOrigin(0.5));
     TREASURES.forEach((t, i) => {
       const found = progress.hasTreasure(i);
       const known = progress.canVisit(i);
