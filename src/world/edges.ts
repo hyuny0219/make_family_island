@@ -1,8 +1,9 @@
 import Phaser from 'phaser';
 import { TILE } from '../config';
+import { SKIN_COLORS } from '../data/skinColors';
 import { T_GRASS, T_SAND, T_SEA } from './generate';
 
-const EDGE = { grass: '#b7e279', grassLine: '#8fc46a', sand: '#fde4b4', foam: 'rgba(243,247,247,0.9)' };
+const BASE_EDGE = { grass: '#b7e279', grassLine: '#8fc46a', sand: '#fde4b4', foam: 'rgba(243,247,247,0.9)' };
 const D = 7; // 물결 최대 두께
 const O = 1; // 타일 안쪽으로 1px 겹쳐 그려서, 화면 배율 반올림으로 생기는 틈을 막는다
 const F = D + 1 + O; // 조각 두께
@@ -17,9 +18,12 @@ const DIRS: [number, number][] = [
  * 지형 경계 물결 조각 텍스처 (2종 × 4방향 × 4변형) 를 한 번 만든다.
  * 큰 렌더 텍스처 대신 작은 조각을 Blitter로 찍어서 메모리를 아낀다.
  */
-export function ensureEdgeTexture(scene: Phaser.Scene) {
-  if (scene.textures.exists('edges')) return;
-  const tex = scene.textures.createCanvas('edges', TILE * 8, TILE * 4)!;
+export function ensureEdgeTexture(scene: Phaser.Scene, skin?: string) {
+  const key = skin ? `edges_${skin}` : 'edges';
+  if (scene.textures.exists(key)) return key;
+  const sc = skin ? SKIN_COLORS[skin] : undefined;
+  const EDGE = sc ? { ...BASE_EDGE, ...sc } : BASE_EDGE;
+  const tex = scene.textures.createCanvas(key, TILE * 8, TILE * 4)!;
   const ctx = tex.getContext();
   const kinds: [string, string][] = [
     [EDGE.sand, EDGE.foam],
@@ -50,14 +54,15 @@ export function ensureEdgeTexture(scene: Phaser.Scene) {
     });
   });
   tex.refresh();
+  return key;
 }
 
 /** 지형 경계에 물결 조각 찍기 */
-export function drawEdges(scene: Phaser.Scene, terrain: number[][]) {
-  ensureEdgeTexture(scene);
+export function drawEdges(scene: Phaser.Scene, terrain: number[][], skin?: string) {
+  const key = ensureEdgeTexture(scene, skin);
   const h = terrain.length;
   const w = terrain[0].length;
-  const blit = scene.add.blitter(0, 0, 'edges').setDepth(-900);
+  const blit = scene.add.blitter(0, 0, key).setDepth(-900);
   const rank = (t: number) => (t === T_GRASS ? 2 : t === T_SAND ? 1 : 0);
   // 모래→바다 먼저, 그 위에 풀→모래
   [T_SAND, T_GRASS].forEach((type, k) => {

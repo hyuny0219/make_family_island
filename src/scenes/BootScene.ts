@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { COLORS } from '../config';
+import { SKINS, SKIN_OBJECTS } from '../data/islands';
 import { BEARS, FACINGS, NO_LOAD, OBJECTS } from '../data/assets';
 import { ITEM_IDS, itemKey } from '../data/items';
 import { RESIDENTS } from '../data/village';
@@ -26,6 +27,10 @@ export class BootScene extends Phaser.Scene {
     for (const b of BEARS) for (const f of FACINGS) this.load.image(`${b.id}_${f}`, `${b.id}_${f}.png`);
     for (const r of RESIDENTS) for (const f of FACINGS) this.load.image(`${r.id}_${f}`, `${r.id}_${f}.png`);
     for (const o of OBJECTS) if (!NO_LOAD.has(o)) this.load.image(o, `${o}.png`);
+    for (const skin of SKINS) {
+      this.load.spritesheet(`tiles_${skin}`, `tiles_${skin}.png`, { frameWidth: 24, frameHeight: 24, margin: 1, spacing: 2 });
+      for (const o of SKIN_OBJECTS) this.load.image(`${o}_${skin}`, `${o}_${skin}.png`);
+    }
     for (const k of ['slime', 'slime_squash', 'slime_king', 'slime_pink', 'slime_squash_pink', 'slime_blue', 'slime_squash_blue']) this.load.image(k, `${k}.png`);
     for (const id of ITEM_IDS) this.load.image(itemKey(id), `${itemKey(id)}.png`);
   }
