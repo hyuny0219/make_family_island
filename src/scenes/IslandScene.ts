@@ -148,6 +148,7 @@ export class IslandScene extends Phaser.Scene {
     });
     this.campPx = camp;
     village.joined().forEach((r) => this.spawnResident(r.id, false));
+    this.placeFriend();
 
     const cam = this.cameras.main;
     cam.setZoom(WORLD_ZOOM);
@@ -550,7 +551,7 @@ export class IslandScene extends Phaser.Scene {
           this.pending = null;
           this.sendPresence();
         }
-      } else if (!bear.remote) {
+      } else if (!bear.remote && !bear.wild) {
         this.updateNpc(bear, dt);
       }
     }
@@ -607,6 +608,12 @@ export class IslandScene extends Phaser.Scene {
       other.target = null;
       other.face('side', other.x > pl.x);
       pl.face('side', pl.x > other.x);
+      if (other.wild) {
+        other.jump(90);
+        sfx.pop();
+        this.game.events.emit('open-friend', other.id);
+        return;
+      }
       if (other.resident) {
         // 주민: 부탁 듣기
         other.jump(90);
@@ -668,25 +675,7 @@ export class IslandScene extends Phaser.Scene {
     this.opening = false;
     const deep = W.regions.reduce((a, r) => (r.depth >= a.depth ? r : a), W.regions[0]);
     this.chestRegion = deep.idx;
-    const taken = new Set(W.decor.map((d) => `${d.tx},${d.ty}`));
-    for (const r of W.regions) taken.add(`${r.signX},${r.signY}`);
-    for (const f of W.fishing) taken.add(`${f.tx},${f.ty}`);
-    const inside = (x: number, y: number) =>
-      x >= 0 && y >= 0 && x < W.w && y < W.h && W.region[y * W.w + x] === deep.idx && W.terrain[y][x] !== T_SEA;
-    let best: { tx: number; ty: number } | null = null;
-    let bestD = Infinity;
-    for (let y = 1; y < W.h - 1; y++) {
-      for (let x = 1; x < W.w - 1; x++) {
-        if (!inside(x, y) || taken.has(`${x},${y}`)) continue;
-        // 사방이 같은 지역의 땅이어야 곰이 옆에 설 수 있다
-        if (!inside(x - 1, y) || !inside(x + 1, y) || !inside(x, y + 1) || !inside(x, y - 1)) continue;
-        const d = Math.hypot(x - deep.sx, y - deep.sy);
-        if (d < bestD) {
-          bestD = d;
-          best = { tx: x, ty: y };
-        }
-      }
-    }
+    const best = this.freeTile(deep.idx);
     this.chest = undefined;
     if (best) {
       const img = this.add.image(best.tx * TILE + TILE / 2, best.ty * TILE + TILE - 2, 'chest').setOrigin(0.5, 1);
@@ -713,6 +702,58 @@ export class IslandScene extends Phaser.Scene {
     this.pedestalItem = this.add.image(px, py - 14, treasureKey(this.islandIdx)).setOrigin(0.5, 1).setDepth(py + 1);
     this.tweens.add({ targets: this.pedestalItem, y: py - 17, duration: 900, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
     this.refreshTreasure();
+  }
+
+  /** 지역 한가운데에서 가장 가까운 빈 땅 (사방이 같은 지역의 땅이라 곰이 옆에 설 수 있는 칸) */
+  private freeTile(region: number): { tx: number; ty: number } | null {
+    const W = this.world;
+    const reg = W.regions[region];
+    const taken = new Set(W.decor.map((d) => `${d.tx},${d.ty}`));
+    for (const r of W.regions) taken.add(`${r.signX},${r.signY}`);
+    for (const f of W.fishing) taken.add(`${f.tx},${f.ty}`);
+    const inside = (x: number, y: number) =>
+      x >= 0 && y >= 0 && x < W.w && y < W.h && W.region[y * W.w + x] === region && W.terrain[y][x] !== T_SEA;
+    let best: { tx: number; ty: number } | null = null;
+    let bestD = Infinity;
+    for (let y = 1; y < W.h - 1; y++) {
+      for (let x = 1; x < W.w - 1; x++) {
+        if (!inside(x, y) || taken.has(`${x},${y}`) || this.blocked.has(`${x},${y}`)) continue;
+        if (!inside(x - 1, y) || !inside(x + 1, y) || !inside(x, y + 1) || !inside(x, y - 1)) continue;
+        const d = Math.hypot(x - reg.sx, y - reg.sy);
+        if (d < bestD) {
+          bestD = d;
+          best = { tx: x, ty: y };
+        }
+      }
+    }
+    return best;
+  }
+
+  // ───────────────────────── 섬 친구 ─────────────────────────
+
+  /** 이 섬에 사는 친구가 아직 이사 오지 않았으면, 자기 지역(섬 중간쯤)에 세워 둔다 */
+  private placeFriend() {
+    const r = RESIDENTS.find((v) => v.island === this.islandIdx);
+    if (!r || village.isJoined(r.id)) return;
+    const W = this.world;
+    const maxDepth = Math.max(...W.regions.map((g) => g.depth));
+    const want = Math.max(1, Math.round(maxDepth / 2));
+    const home = W.regions.find((g) => g.depth === want && g.idx !== this.chestRegion) ?? W.regions.find((g) => g.depth >= 1 && g.idx !== this.chestRegion);
+    const t = home && this.freeTile(home.idx);
+    if (!home || !t) return;
+    const b = new Bear(this, r.id, t.tx * TILE + TILE / 2, t.ty * TILE + TILE - 4, 38);
+    b.wild = true;
+    this.bears.push(b);
+    // 가까이 가면 말을 건다
+    this.time.addEvent({
+      delay: 4200,
+      loop: true,
+      callback: () => {
+        const pl = this.player;
+        if (!b.wild || !pl || !this.unlocked(home.idx)) return;
+        if (Math.hypot(pl.x - b.x, pl.y - b.y) < 260) b.emote('❗');
+      },
+    });
   }
 
   /** 찾았는지에 맞춰 상자와 전시대 모습을 바꾼다 */
@@ -967,7 +1008,7 @@ export class IslandScene extends Phaser.Scene {
     // 다른 가족이 조종 중인 곰과 같은 곰은 캠프에서 숨긴다 (아빠 곰이 둘이 되지 않게)
     const taken = new Set(here.map(([, p]) => p.bear));
     for (const b of this.bears) {
-      if (b.remote || b.resident || b === this.player) continue;
+      if (b.remote || b.resident || b.wild || b === this.player) continue;
       b.sprite.setVisible(!taken.has(b.id));
     }
   }
@@ -1090,9 +1131,18 @@ export class IslandScene extends Phaser.Scene {
     const r = RESIDENTS.find((v) => v.id === id);
     if (!r) return;
     if (this.bears.some((b) => b.resident && b.id === id)) return;
+    // 이 섬에 서 있던 친구라면 짐을 싸서 캠프로 간다
+    const wild = this.bears.find((b) => b.wild && b.id === id);
+    if (wild) {
+      this.fx.heart.explode(8, wild.x, wild.y - 30);
+      this.fx.puff.explode(8, wild.x, wild.y - 14);
+      this.bears = this.bears.filter((b) => b !== wild);
+      wild.wild = false;
+      wild.destroy();
+    }
     this.spawnResident(id, true);
     sfx.fanfare();
-    this.game.events.emit('celebrate', `🏠 새 주민 ${withJosa(r.name, '이', '가')} 이사 왔어요!\n캠프에서 만나 봐요`);
+    this.game.events.emit('celebrate', `🏠 ${withJosa(r.name, '이', '가')} 우리 마을로 이사 왔어요!\n캠프에서 만나 봐요`);
   }
 
   // ───────────────────────── 낚시 ─────────────────────────

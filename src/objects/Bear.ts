@@ -10,6 +10,8 @@ export class Bear {
   readonly id: string;
   /** 동물 주민이면 true */
   resident = false;
+  /** 아직 친구가 되지 않은 섬 친구 (자기 지역에 서 있다) */
+  wild = false;
   /** 다른 가족이 조종하는 곰이면 그 기기 id */
   remote: string | null = null;
   /** 머리 위 이름표 (다른 가족 곰) */

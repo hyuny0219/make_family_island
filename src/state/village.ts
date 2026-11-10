@@ -73,30 +73,30 @@ class Village extends Phaser.Events.EventEmitter {
   }
 
   private afterChange() {
-    // 점수가 기준을 넘으면 주민이 이사 온다 (한 번 온 주민은 떠나지 않는다)
-    const s = this.score();
-    const joinedNow: string[] = [];
-    for (const r of RESIDENTS) {
-      if (s >= r.score && !this.d.joined.includes(r.id)) {
-        this.d.joined.push(r.id);
-        joinedNow.push(r.id);
-        family.union('joined', r.id);
-        family.post(`🏠 새 주민 ${withJosa(r.name, '이', '가')} 이사 왔어요`);
-      }
-    }
     this.save();
     this.emit('changed');
-    joinedNow.forEach((id) => this.emit('resident-joined', id));
+  }
+
+  isJoined(id: string) {
+    return this.d.joined.includes(id);
+  }
+
+  /** 섬 친구가 우리 마을로 이사 온다 (한 번 온 친구는 떠나지 않는다) */
+  join(id: string) {
+    const r = RESIDENTS.find((v) => v.id === id);
+    if (!r || this.isJoined(id)) return;
+    this.d.joined.push(id);
+    family.union('joined', id);
+    family.post(`🏠 ${withJosa(r.name, '이', '가')} 우리 마을로 이사 왔어요`);
+    this.save();
+    this.emit('changed');
+    this.emit('resident-joined', id);
   }
 
   joined() {
     return RESIDENTS.filter((r) => this.d.joined.includes(r.id));
   }
 
-  /** 다음에 이사 올 주민 (없으면 null) */
-  nextResident() {
-    return RESIDENTS.find((r) => !this.d.joined.includes(r.id)) ?? null;
-  }
 
   hearts(id: string) {
     return this.d.hearts[id] ?? 0;

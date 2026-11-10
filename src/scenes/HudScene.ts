@@ -82,6 +82,7 @@ export class HudScene extends Phaser.Scene {
       ['treasure-found', this.onTreasureFound],
       ['sailing', this.onSailing],
       ['open-order', this.openOrder],
+      ['open-friend', this.openFriend],
       ['float', this.onFloat],
       ['region-enter', this.onRegionEnter],
       ['open-quest', this.openQuest],
@@ -541,11 +542,11 @@ export class HudScene extends Phaser.Scene {
     tray.add([bg, block]);
 
     const score = village.score();
-    const next = village.nextResident();
+    const next = RESIDENTS.filter((r) => !village.isJoined(r.id) && progress.canVisit(r.island)).sort((a, b) => a.score - b.score)[0] ?? null;
     tray.add(this.add.text(22, top + 14, `⭐ 마을 점수 ${score}`, { fontFamily: FONT, fontSize: '13px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0, 0.5));
     tray.add(
       this.add
-        .text(W - 22, top + 14, next ? `🏠 다음 주민까지 ${Math.max(0, next.score - score)}점` : '🏠 주민이 모두 모였어요!', { fontFamily: FONT, fontSize: '11px', color: '#e07a5f', fontStyle: 'bold' })
+        .text(W - 22, top + 14, next ? (score >= next.score ? `🏠 ${next.name}: 이사 올 준비 됐어요` : `🏠 ${next.name}까지 ${next.score - score}점`) : '🏠 친구가 모두 모였어요!', { fontFamily: FONT, fontSize: '11px', color: '#e07a5f', fontStyle: 'bold' })
         .setOrigin(1, 0.5),
     );
 
@@ -624,6 +625,37 @@ export class HudScene extends Phaser.Scene {
         this.celebrate(`💗 ${r.name} 호감도 ${h}\n선물: ${ITEMS[gift].name} ×${n}`);
       }
     });
+    btn.setPosition(0, PH / 2 - 36);
+    box.add(btn);
+  }
+
+  /** 섬 친구와 처음 만났을 때: 부탁을 들어주고 마을 점수가 되면 이사 온다 */
+  private openFriend(id: string) {
+    if (this.registry.get('modal')) return;
+    const r = RESIDENTS.find((v) => v.id === id);
+    if (!r || village.isJoined(id)) return;
+    const PW = Math.min(310, this.scale.width - 30);
+    const PH = 372;
+    const { box, close } = this.modal(PW, PH);
+    const top = -PH / 2;
+    box.add(this.add.image(-PW / 2 + 48, top + 50, `${id}_front`).setScale(2));
+    box.add(this.add.text(-PW / 2 + 92, top + 30, r.name, { fontFamily: FONT, fontSize: '20px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0, 0.5));
+    box.add(this.add.text(-PW / 2 + 92, top + 56, `${ISLANDS[r.island].emoji} ${ISLANDS[r.island].name}에 사는 친구`, { fontFamily: FONT, fontSize: '12px', color: '#e07a5f', fontStyle: 'bold' }).setOrigin(0, 0.5));
+    box.add(this.add.text(0, top + 116, `"${r.hello}"\n"${r.ask}"`, { fontFamily: FONT, fontSize: '13px', color: '#8a6d4b', align: 'center', wordWrap: { width: PW - 36 } }).setOrigin(0.5));
+    const { ok } = this.needList(box, r.need, top + 196, PW);
+    const score = village.score();
+    const scoreOk = score >= r.score;
+    box.add(
+      this.add
+        .text(0, top + 268, `${scoreOk ? '✅' : '⭐'} 마을 점수 ${Math.min(score, r.score)}/${r.score}${scoreOk ? '' : '  (꾸미기 탭에서 섬을 꾸며요)'}`, { fontFamily: FONT, fontSize: '12px', color: scoreOk ? '#5fae52' : '#a08a6a', fontStyle: 'bold' })
+        .setOrigin(0.5),
+    );
+    const can = ok && scoreOk;
+    const btn = this.button(can ? '🏠 우리 마을로 초대하기' : !ok ? '선물이 부족해요' : '마을 점수가 부족해요', can, () => {
+      this.spend(r.need);
+      close();
+      village.join(id);
+    }, 220);
     btn.setPosition(0, PH / 2 - 36);
     box.add(btn);
   }
