@@ -15,7 +15,7 @@ type Mode = 'merge' | 'craft';
 
 /**
  * 머지 탭: 개인 머지 보드 + 작업대.
- * - 머지: 같은 것 3개가 붙으면 다음 단계 1개 (5개 이상이면 2개)
+ * - 머지: 같은 것 3개가 붙으면 다음 단계 1개, 5개면 2개. 남는 것은 그대로 둔다 (4개 → 1개 + 1개 남음)
  * - 작업대: 서로 다른 재료를 모아 레시피대로 만들기
  */
 export class MergeScene extends Phaser.Scene {
@@ -209,8 +209,13 @@ export class MergeScene extends Phaser.Scene {
     }
     this.busy = true;
     const { x, y } = this.pos(idx);
-    const two = grp.length >= 5;
-    for (const gi of grp) {
+    // 5개 묶음은 2개, 3개 묶음은 1개가 된다. 남는 것(예: 4개 중 1개)은 쓰지 않고 그 자리에 둔다
+    const n = grp.length;
+    const outN = Math.floor(n / 5) * 2 + Math.floor((n % 5) / 3);
+    const left = (n % 5) % 3;
+    // grp는 놓은 자리에서 가까운 순서 → 먼 것부터 남긴다
+    const used = grp.slice(0, n - left);
+    for (const gi of used) {
       const sp = this.sprites[gi]!;
       this.sprites[gi] = null;
       this.cells[gi] = null;
@@ -218,15 +223,15 @@ export class MergeScene extends Phaser.Scene {
       this.tweens.add({ targets: sp, x, y, scale: ICON * 0.7, duration: 170, ease: 'Cubic.easeIn', onComplete: () => sp.destroy() });
     }
     this.time.delayedCall(190, () => {
-      this.put(idx, next, true);
-      if (two) this.put(grp.find((gi) => gi !== idx)!, next, true);
+      const outs = used.slice(0, outN);
+      for (const gi of outs) this.put(gi, next, true);
       this.spark.explode(12, x, y);
       sfx.merge();
       buzz(25);
       if (inventory.discover(next)) {
         this.game.events.emit('celebrate', `✨ 새로운 발견!\n${ITEMS[next].name}`);
       } else {
-        this.floatText(x, y - 24, two ? `${ITEMS[next].name} ×2!` : ITEMS[next].name);
+        this.floatText(x, y - 24, outN > 1 ? `${ITEMS[next].name} ×${outN}!` : ITEMS[next].name);
       }
       this.time.delayedCall(280, () => this.tryMerge(idx));
     });
