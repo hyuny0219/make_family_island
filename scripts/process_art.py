@@ -136,6 +136,66 @@ if __name__ == "__main__":
     slice_grid("slime.png", 3, 2, [[None, "slime_squash", None], [None, None, None]], fit=24)
     slice_grid("slime.png", 3, 2, [[None, None, "slime_king"], [None, None, None]], fit=28)
     slice_grid("slime.png", 3, 2, [[None, None, None], ["item_jelly_block", "item_jelly_lamp", None]], fit=22)
+    # 마을 짓기 (건물·소품) — 칸마다 크기가 달라 하나씩 자른다
+    BUILD = {
+        "build_a.png": [("house_red", 58), ("house_blue", 58), ("cabin", 58), ("stall", 50), ("windmill", 68), ("well", 34)],
+        "build_b.png": [("bench", 30), ("lamp", 40), ("mailbox", 30), ("signpost", 32), ("statue", 36), ("picnic", 36)],
+        "build_c.png": [("hedge", 26), ("gate", 36), ("swing", 46), ("flowerbed", 26), ("pond", 46), ("blossom", 40)],
+    }
+    for sheet, items in BUILD.items():
+        for i, (name, fit) in enumerate(items):
+            grid = [[None] * 3, [None] * 3]
+            grid[i // 3][i % 3] = f"build_{name}"
+            slice_grid(sheet, 3, 2, grid, fit=fit)
+
+    # 길 타일 (이어 붙여도 어색하지 않게 직접 그린다)
+    import random
+
+    def path_tile(name, base, dark, light, kind):
+        rnd = random.Random(name)
+        im = Image.new("RGB", (TILE, TILE), base)
+        px = im.load()
+        if kind == "dirt":
+            for _ in range(26):
+                x, y = rnd.randrange(TILE), rnd.randrange(TILE)
+                px[x, y] = dark if rnd.random() < 0.6 else light
+            for _ in range(3):
+                x, y = rnd.randrange(2, TILE - 3), rnd.randrange(2, TILE - 3)
+                for dx, dy in ((0, 0), (1, 0), (0, 1), (1, 1)):
+                    px[x + dx, y + dy] = dark
+        elif kind == "stone":
+            # 2x2 포석 + 줄눈
+            for y in range(TILE):
+                for x in range(TILE):
+                    row = y // 12
+                    off = 6 if row % 2 else 0
+                    gx = (x + off) % 12
+                    gy = y % 12
+                    if gx == 0 or gy == 0:
+                        px[x, y] = dark
+                    elif gx == 1 or gy == 1:
+                        px[x, y] = light
+            for _ in range(10):
+                px[rnd.randrange(TILE), rnd.randrange(TILE)] = dark
+        else:
+            # 나무 널빤지 (가로 4장)
+            for y in range(TILE):
+                for x in range(TILE):
+                    gy = y % 6
+                    if gy == 0:
+                        px[x, y] = dark
+                    elif gy == 1:
+                        px[x, y] = light
+            for row in range(4):
+                x = (7 + row * 11) % TILE
+                for gy in range(1, 6):
+                    px[x, row * 6 + gy] = dark
+        im.save(OUT / f"build_{name}.png")
+
+    path_tile("path_dirt", (222, 184, 135), (196, 155, 108), (236, 204, 160), "dirt")
+    path_tile("path_stone", (201, 201, 196), (160, 160, 158), (224, 224, 220), "stone")
+    path_tile("path_wood", (196, 142, 92), (150, 102, 62), (216, 166, 114), "wood")
+
     # 섬 친구 (섬마다 한 마리)
     slice_grid("friends_a.png", 3, 2, [["turtle_front", "turtle_side", "turtle_back"], ["mole_front", "mole_side", "mole_back"]], fit=35)
     slice_grid("friends_b.png", 3, 2, [["frog_front", "frog_side", "frog_back"], ["camel_front", "camel_side", "camel_back"]], fit=35)

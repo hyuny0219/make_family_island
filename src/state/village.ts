@@ -1,16 +1,23 @@
 import Phaser from 'phaser';
 import { ITEMS, type ItemId } from '../data/items';
-import { DECOR_POINTS, ORDER_BASIC, ORDER_CRAFTED, RESIDENTS } from '../data/village';
+import { ORDER_BASIC, ORDER_CRAFTED, RESIDENTS } from '../data/village';
+import { PIECES } from '../data/build';
 import { family } from '../sync/family';
 import { withJosa } from '../util/korean';
 
 const KEY = 'mfi.v1.village';
 
 export interface Placed {
-  id: ItemId;
+  /** data/build.ts 의 Piece id */
+  id: string;
+  /** 기준 칸 (왼쪽 아래) */
   tx: number;
   ty: number;
+  /** 좌우 뒤집기 */
+  f?: 1;
 }
+
+const wire = (p: Placed): Placed => (p.f ? { id: p.id, tx: p.tx, ty: p.ty, f: 1 } : { id: p.id, tx: p.tx, ty: p.ty });
 
 export interface Order {
   item: ItemId;
@@ -52,22 +59,22 @@ class Village extends Phaser.Events.EventEmitter {
   /** 모든 섬에 놓인 장식 점수의 합 */
   score() {
     let s = 0;
-    for (const list of Object.values(this.d.placed)) for (const p of list) s += DECOR_POINTS[p.id] ?? 0;
+    for (const list of Object.values(this.d.placed)) for (const p of list) s += PIECES[p.id]?.points ?? 0;
     return s;
   }
 
   place(island: number, p: Placed) {
     (this.d.placed[island] ??= []).push(p);
-    family.union(`placed.${island}`, { id: p.id, tx: p.tx, ty: p.ty });
+    family.union(`placed.${island}`, wire(p));
     this.afterChange();
   }
 
-  remove(island: number, tx: number, ty: number) {
+  remove(island: number, tx: number, ty: number, id: string) {
     const list = this.d.placed[island] ?? [];
-    const i = list.findIndex((p) => p.tx === tx && p.ty === ty);
+    const i = list.findIndex((p) => p.tx === tx && p.ty === ty && p.id === id);
     if (i < 0) return null;
     const [p] = list.splice(i, 1);
-    family.remove(`placed.${island}`, { id: p.id, tx: p.tx, ty: p.ty });
+    family.remove(`placed.${island}`, wire(p));
     this.afterChange();
     return p;
   }
@@ -138,14 +145,14 @@ class Village extends Phaser.Events.EventEmitter {
 
   exportDoc() {
     const placed: Record<string, Placed[]> = {};
-    for (const [k, v] of Object.entries(this.d.placed)) placed[k] = v.map((p) => ({ ...p }));
+    for (const [k, v] of Object.entries(this.d.placed)) placed[k] = v.map(wire);
     return { placed, joined: [...this.d.joined], hearts: { ...this.d.hearts }, orders: { ...this.d.orders }, nextAt: { ...this.d.nextAt } };
   }
 
   /** 가족 섬의 최신 상태로 맞추기. 달라졌으면 'changed'·'remote', 새 주민은 'resident-joined' */
   applyRemote(r: { placed?: Record<string, Placed[]>; joined?: string[]; hearts?: Record<string, number>; orders?: Record<string, Order>; nextAt?: Record<string, number> }) {
     const placed: Record<number, Placed[]> = {};
-    for (const [k, v] of Object.entries(r.placed ?? {})) placed[Number(k)] = v.filter((p) => p.id in ITEMS).map((p) => ({ id: p.id, tx: p.tx, ty: p.ty }));
+    for (const [k, v] of Object.entries(r.placed ?? {})) placed[Number(k)] = v.filter((p) => p.id in PIECES).map(wire);
     const next: Saved = { placed, joined: [...(r.joined ?? [])], hearts: { ...(r.hearts ?? {}) }, orders: { ...(r.orders ?? {}) }, nextAt: { ...(r.nextAt ?? {}) } };
     if (JSON.stringify(next) === JSON.stringify(this.d)) return;
     const before = new Set(this.d.joined);
