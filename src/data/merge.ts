@@ -9,6 +9,7 @@ export const CHAINS: ItemId[][] = [
   ['shell', 'pearl', 'necklace'],
   ['pinecone', 'wreath'],
   ['coal', 'lantern'],
+  ['jelly', 'jelly_block', 'jelly_lamp'],
 ];
 
 export const MERGE_NEXT: Partial<Record<ItemId, ItemId>> = {};

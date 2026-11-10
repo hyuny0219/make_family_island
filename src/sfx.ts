@@ -39,6 +39,10 @@ export const sfx = {
     setTimeout(() => tone(260, 0.08, 'triangle', 0.06, 180), 50);
   },
   knock: () => tone(140, 0.1, 'square', 0.08, 90),
+  boing: () => {
+    tone(300, 0.09, 'sine', 0.1, 620);
+    setTimeout(() => tone(520, 0.1, 'sine', 0.07, 300), 70);
+  },
   pop: () => tone(520, 0.12, 'sine', 0.1, 1040),
   step: () => tone(200, 0.03, 'triangle', 0.025),
   merge: () => {

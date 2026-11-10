@@ -132,6 +132,10 @@ if __name__ == "__main__":
         fit=22,
     )
     slice_grid("fishing.png", 4, 3, [[None] * 4, [None] * 4, ["sign", "chest", None, "bridge"]])
+    slice_grid("slime.png", 3, 2, [["slime", None, None], [None, None, None]], fit=20)
+    slice_grid("slime.png", 3, 2, [[None, "slime_squash", None], [None, None, None]], fit=24)
+    slice_grid("slime.png", 3, 2, [[None, None, "slime_king"], [None, None, None]], fit=28)
+    slice_grid("slime.png", 3, 2, [[None, None, None], ["item_jelly_block", "item_jelly_lamp", None]], fit=22)
     slice_grid("boats.png", 3, 2, [["dock", "boat_frame", "boat"], ["boat_side", "crate", "lighthouse"]])
     slice_grid(
         "items2.png", 4, 4,
@@ -153,3 +157,24 @@ if __name__ == "__main__":
         ],
     )
     slice_tiles()
+
+    # 슬라임 색 변형 (초록 → 분홍·파랑): 초록 계열 픽셀만 색상을 돌린다
+    import colorsys
+
+    def recolor(name: str, out: str, hue: float):
+        im = Image.open(OUT / f"{name}.png").convert("RGBA")
+        px = im.load()
+        for y in range(im.height):
+            for x in range(im.width):
+                r, g, b, a = px[x, y]
+                if a == 0:
+                    continue
+                h, s, v = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
+                if 0.17 < h < 0.45 and s > 0.2:
+                    r2, g2, b2 = colorsys.hsv_to_rgb(hue, s * 0.8, min(1, v * 1.08))
+                    px[x, y] = (round(r2 * 255), round(g2 * 255), round(b2 * 255), a)
+        im.save(OUT / f"{out}.png")
+
+    for base in ["slime", "slime_squash"]:
+        recolor(base, f"{base}_pink", 0.93)
+        recolor(base, f"{base}_blue", 0.56)

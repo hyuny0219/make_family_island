@@ -13,6 +13,8 @@ export const ITEMS = {
   flower: { name: '꽃' },
   bouquet: { name: '꽃다발' },
   jelly: { name: '젤리' },
+  jelly_block: { name: '젤리 블록' },
+  jelly_lamp: { name: '젤리 램프' },
   wood_pickaxe: { name: '나무 곡괭이' },
   stone_pickaxe: { name: '돌 곡괭이' },
   basket: { name: '바구니' },

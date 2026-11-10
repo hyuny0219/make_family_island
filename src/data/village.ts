@@ -6,6 +6,8 @@ export const DECOR_POINTS: Partial<Record<ItemId, number>> = {
   chair: 3,
   wall: 3,
   lantern: 3,
+  jelly_block: 2,
+  jelly_lamp: 5,
   wreath: 3,
   flowerpot: 4,
   table: 4,
@@ -38,8 +40,8 @@ export const RESIDENTS: Resident[] = [
 ];
 
 /** 주민 부탁에 나오는 물건 (호감도가 오르면 합친 물건도 부탁한다) */
-export const ORDER_BASIC: ItemId[] = ['twig', 'fruit', 'stone', 'flower', 'pinecone', 'shell', 'fish_small'];
-export const ORDER_CRAFTED: ItemId[] = ['log', 'brick', 'bouquet', 'juice', 'fish', 'wreath'];
+export const ORDER_BASIC: ItemId[] = ['twig', 'fruit', 'stone', 'flower', 'pinecone', 'shell', 'fish_small', 'jelly'];
+export const ORDER_CRAFTED: ItemId[] = ['log', 'brick', 'bouquet', 'juice', 'fish', 'wreath', 'jelly_block'];
 /** 부탁을 들어주면 받는 선물 */
 export const ORDER_GIFTS: ItemId[] = ['crystal', 'coal', 'fish_big', 'starfish', 'plank', 'pearl'];
 
