@@ -178,3 +178,59 @@ if __name__ == "__main__":
     for base in ["slime", "slime_squash"]:
         recolor(base, f"{base}_pink", 0.93)
         recolor(base, f"{base}_blue", 0.56)
+
+
+    # ───────── 섬 스킨 (6~10번 섬 전용 바닥·오브젝트) ─────────
+    # 바닥: 기본 타일셋의 풀/모래/바다를 색만 바꿔 만든다. (색상, 채도배율, 명도배율, 명도바닥)
+    SKINS = {
+        "mushroom": {"grass": (0.44, 0.80, 0.84, 0), "sand": (0.76, 0.55, 0.95, 0), "sea": (0.60, 0.85, 0.95, 0)},
+        "snow": {"grass": (0.58, 0.14, 0.30, 0.70), "sand": (0.57, 0.55, 0.95, 0), "sea": (0.56, 0.75, 0.95, 0)},
+        "desert": {"grass": (0.115, 0.85, 1.04, 0), "sand": (0.065, 1.35, 0.93, 0), "sea": None},
+        "volcano": {"grass": (0.04, 0.45, 0.50, 0), "sand": (0.02, 0.45, 0.36, 0), "sea": (0.03, 1.15, 1.02, 0)},
+        "cloud": {"grass": (0.43, 0.38, 1.06, 0), "sand": (0.93, 0.55, 1.03, 0), "sea": (0.55, 0.45, 1.12, 0)},
+    }
+    SKIN_OBJECTS = [["fruit_tree", "pine_tree", "bush"], ["flowers", "rock", "boulder"]]
+    SKIN_FIT = {"fruit_tree": 40, "pine_tree": 40, "bush": 28, "flowers": 26, "rock": 22, "boulder": 29}
+    base = Image.open(OUT / "tiles.png").convert("RGB")
+    C = TILE + 2
+    kinds = ["grass"] * 4 + ["sand"] * 4 + ["sea"] * 3
+    colors = {}
+    for skin, conf in SKINS.items():
+        im = base.copy()
+        px = im.load()
+        for i, kind in enumerate(kinds):
+            t = conf[kind]
+            if not t:
+                continue
+            hue, sm, vm, vfloor = t
+            for y in range(C):
+                for x in range(i * C, (i + 1) * C):
+                    r, g, b = px[x, y]
+                    h, s_, v = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
+                    r2, g2, b2 = colorsys.hsv_to_rgb(hue, min(1, s_ * sm), min(1, vfloor + v * vm))
+                    px[x, y] = (round(r2 * 255), round(g2 * 255), round(b2 * 255))
+        im.save(OUT / f"tiles_{skin}.png")
+
+        def avg(i):
+            a = np.array(im.crop((i * C + 1, 1, i * C + 1 + TILE, 1 + TILE))).reshape(-1, 3)
+            return np.median(a, axis=0)
+
+        gr, sa = avg(0), avg(4)
+        hexc = lambda c: "#%02x%02x%02x" % tuple(int(round(v)) for v in c)
+        colors[skin] = {"grass": hexc(gr), "grassLine": hexc(gr * 0.82), "sand": hexc(sa)}
+        sheet = f"skin_{skin}.png"
+        if (SRC / sheet).exists():
+            for r_ in range(2):
+                for c_ in range(3):
+                    name = SKIN_OBJECTS[r_][c_]
+                    grid = [[None] * 3, [None] * 3]
+                    grid[r_][c_] = f"{name}_{skin}"
+                    slice_grid(sheet, 3, 2, grid, fit=SKIN_FIT[name])
+    import json
+
+    gen = ROOT / "src" / "data" / "skinColors.ts"
+    gen.write_text(
+        "// scripts/process_art.py 가 만든 파일 — 직접 고치지 말 것\n"
+        "export const SKIN_COLORS: Record<string, { grass: string; grassLine: string; sand: string }> = "
+        + json.dumps(colors, indent=2) + ";\n"
+    )

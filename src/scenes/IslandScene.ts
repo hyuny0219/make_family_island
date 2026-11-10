@@ -86,15 +86,17 @@ export class IslandScene extends Phaser.Scene {
 
     // 바닥 + 경계
     const tm = this.make.tilemap({ data: W.tiles, tileWidth: TILE, tileHeight: TILE });
-    const ts = tm.addTilesetImage('tiles', 'tiles', TILE, TILE, 1, 2)!;
+    const skin = ISLANDS[this.islandIdx].skin;
+    const ts = tm.addTilesetImage('tiles', skin ? `tiles_${skin}` : 'tiles', TILE, TILE, 1, 2)!;
     tm.createLayer(0, ts, 0, 0)!.setDepth(-1000);
-    drawEdges(this, W.terrain);
+    drawEdges(this, W.terrain, skin);
 
     this.makeFx();
 
     // 오브젝트
     for (const d of W.decor) {
-      const tex = OBJECT_TEXTURE[d.kind] ?? d.kind;
+      const skinned = skin ? `${d.kind}_${skin}` : '';
+      const tex = skinned && this.textures.exists(skinned) ? skinned : OBJECT_TEXTURE[d.kind] ?? d.kind;
       const img = this.add.image(d.tx * TILE + TILE / 2, d.ty * TILE + TILE - 2, tex).setOrigin(0.5, 1) as DecorObj;
       img.decor = d;
       img.hitsLeft = GATHER[d.kind]?.hits ?? 0;
@@ -129,12 +131,6 @@ export class IslandScene extends Phaser.Scene {
     this.cloudTex = this.textures.createCanvas('clouds', W.w * CLOUD_PX, W.h * CLOUD_PX)!;
     this.add.image(0, 0, 'clouds').setOrigin(0).setScale(TILE / CLOUD_PX).setDepth(99980);
     this.refreshRegions(false);
-
-    // 섬 색감 (전용 아트 전까지 임시)
-    const tint = ISLANDS[this.islandIdx].tint;
-    if (tint !== undefined) {
-      this.add.rectangle(0, 0, W.w * TILE, W.h * TILE, tint).setOrigin(0).setDepth(99970).setBlendMode(Phaser.BlendModes.MULTIPLY);
-    }
 
     // 곰 가족
     const camp = { x: W.camp.tx * TILE + TILE / 2, y: (W.camp.ty + 2) * TILE + TILE / 2 };
