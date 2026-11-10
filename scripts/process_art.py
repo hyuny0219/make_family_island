@@ -136,6 +136,10 @@ if __name__ == "__main__":
     slice_grid("slime.png", 3, 2, [[None, "slime_squash", None], [None, None, None]], fit=24)
     slice_grid("slime.png", 3, 2, [[None, None, "slime_king"], [None, None, None]], fit=28)
     slice_grid("slime.png", 3, 2, [[None, None, None], ["item_jelly_block", "item_jelly_lamp", None]], fit=22)
+    slice_grid("treasure_a.png", 3, 2, [["treasure_0", "treasure_1", "treasure_2"], ["treasure_3", "treasure_4", "treasure_5"]], fit=24)
+    slice_grid("treasure_b.png", 3, 2, [["treasure_6", "treasure_7", "treasure_8"], ["treasure_9", None, None]], fit=24)
+    slice_grid("treasure_b.png", 3, 2, [[None, None, None], [None, "chest_open", None]], fit=38)
+    slice_grid("treasure_b.png", 3, 2, [[None, None, None], [None, None, "pedestal"]], fit=24)
     slice_grid("boats.png", 3, 2, [["dock", "boat_frame", "boat"], ["boat_side", "crate", "lighthouse"]])
     slice_grid(
         "items2.png", 4, 4,
