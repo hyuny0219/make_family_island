@@ -10,6 +10,7 @@ import { ISLANDS } from '../data/islands';
 import { BIOME_INFO } from '../data/biomes';
 import type { RegionInfo } from '../world/generate';
 import { settings, setSetting, resetAll } from '../state/settings';
+import { daily, DAILY_REWARDS } from '../state/daily';
 import { village } from '../state/village';
 import { family, type FeedItem, type SyncStatus } from '../sync/family';
 import { localDoc } from '../sync/bridge';
@@ -43,6 +44,8 @@ export class HudScene extends Phaser.Scene {
   private buildTray?: Phaser.GameObjects.Container;
   private feedBtn!: Phaser.GameObjects.Container;
   private emoteRow?: Phaser.GameObjects.Container;
+  private giftBtn!: Phaser.GameObjects.Container;
+  private giftDot!: Phaser.GameObjects.Arc;
   private tabNodes: { key: string; c: Phaser.GameObjects.Container; bg: Phaser.GameObjects.Graphics; enabled: boolean }[] = [];
   private sideBtns: Phaser.GameObjects.Container[] = [];
   private arrow!: Phaser.GameObjects.Container;
@@ -687,6 +690,13 @@ export class HudScene extends Phaser.Scene {
     });
     this.sideBtns.push(row as Phaser.GameObjects.Container);
     this.emoteRow = row;
+    // 매일 선물 (안 받았으면 빨간 점)
+    this.giftBtn = this.roundButton(30, HUD_TOP_H + 74, '🎁', () => {
+      if (this.registry.get('bear')) this.openDaily();
+    });
+    this.giftDot = this.add.circle(13, -13, 5, 0xe8604c).setStrokeStyle(1.5, 0xffffff);
+    this.giftBtn.add(this.giftDot);
+    this.giftDot.setVisible(daily.ready);
     // 가족 소식판 (가족 섬에 들어가 있을 때만 보인다)
     this.feedBtn = this.roundButton(W - 30, HUD_TOP_H + 118, '📰', () => this.openFeed());
     this.sideBtns.pop();
@@ -734,6 +744,54 @@ export class HudScene extends Phaser.Scene {
     this.arrow.setVisible(true).setPosition(cx, cy);
     this.arrowTip.setRotation(Math.atan2(g.y - cy, g.x - cx));
     this.arrowIcon.setText(g.kind === 'dock' ? '⛵' : '❗');
+  }
+
+  /** 매일 선물 달력 */
+  private openDaily() {
+    if (this.registry.get('modal')) return;
+    const PW = 300;
+    const PH = 312;
+    const { box, close } = this.modal(PW, PH);
+    const top = -PH / 2;
+    box.add(this.add.text(0, top + 30, '🎁 매일 선물', { fontFamily: FONT, fontSize: '20px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0.5));
+    box.add(this.add.text(0, top + 54, '하루에 한 번, 가족 모두 각자 받아요', { fontFamily: FONT, fontSize: '11px', color: '#a08a6a' }).setOrigin(0.5));
+    const ready = daily.ready;
+    const idx = daily.index;
+    const cells: Phaser.GameObjects.Container[] = [];
+    DAILY_REWARDS.forEach(([id, n], i) => {
+      const last = i === 6;
+      const cw = last ? 128 : 60;
+      const x = last ? 68 : -102 + (i % 4) * 68;
+      const y = top + 112 + Math.floor(i / 4) * 84;
+      const got = i < idx;
+      const now = ready && i === idx;
+      const c = this.add.container(x, y);
+      const g = this.add.graphics();
+      g.fillStyle(now ? 0xffe9a8 : got ? 0xe9e3d3 : 0xfff6df).fillRoundedRect(-cw / 2, -36, cw, 72, 12);
+      g.lineStyle(now ? 3 : 2, now ? 0xf2a93b : 0xe8d5a9).strokeRoundedRect(-cw / 2, -36, cw, 72, 12);
+      const day = this.add.text(0, -25, `${i + 1}일`, { fontFamily: FONT, fontSize: '10px', color: '#a08a6a', fontStyle: 'bold' }).setOrigin(0.5);
+      const icon = this.add.image(0, 0, itemKey(id)).setScale(last ? 1.6 : 1.3).setAlpha(got ? 0.35 : 1);
+      const num = this.add.text(0, 25, `×${n}`, { fontFamily: FONT, fontSize: '12px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0.5).setAlpha(got ? 0.4 : 1);
+      c.add([g, day, icon, num]);
+      if (got) c.add(this.add.text(0, 0, '✔', { fontSize: '22px', color: '#5fae52', fontStyle: 'bold' }).setOrigin(0.5));
+      if (now) this.tweens.add({ targets: icon, y: -3, duration: 420, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+      box.add(c);
+      cells.push(c);
+    });
+    const btn = this.button(ready ? '선물 받기' : '내일 또 만나요!', ready, () => {
+      const r = daily.claim();
+      if (!r) return;
+      const [id, n] = r;
+      inventory.add(id, n);
+      sfx.fanfare();
+      buzz(30);
+      this.giftDot.setVisible(false);
+      this.tweens.add({ targets: cells[idx], scale: { from: 1.25, to: 1 }, duration: 320, ease: 'Back.easeOut' });
+      close();
+      this.time.delayedCall(240, () => this.celebrate(`🎁 ${ITEMS[id].name} ×${n}`));
+    }, 200);
+    btn.setPosition(0, top + PH - 38);
+    box.add(btn);
   }
 
   private openSettings() {
@@ -1033,6 +1091,8 @@ export class HudScene extends Phaser.Scene {
         this.tweens.add({ targets: card, scale: 1.2, duration: 120, yoyo: true });
         this.game.events.emit('choose-bear', b.id);
         this.time.delayedCall(180, () => this.closeTitle(box, dim));
+        // 오늘 선물을 아직 안 받았으면 달력을 먼저 보여 준다
+        this.time.delayedCall(1100, () => daily.ready && this.openDaily());
       });
       box.add(card);
     });
