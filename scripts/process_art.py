@@ -196,6 +196,9 @@ if __name__ == "__main__":
     path_tile("path_stone", (201, 201, 196), (160, 160, 158), (224, 224, 220), "stone")
     path_tile("path_wood", (196, 142, 92), (150, 102, 62), (216, 166, 114), "wood")
 
+    # 조합으로 만드는 물건
+    slice_grid("combo.png", 3, 2, [["item_candy", "item_grilled_fish", "item_bait"], ["item_torch", "item_flower_crown", "item_firework"]], fit=22)
+
     # 섬 놀이 (섬마다 다른 놀이터)
     for i, (name, fit) in enumerate([("ice", 30), ("dig", 28), ("geode", 28), ("spring", 40), ("tramp", 36)]):
         grid = [[None] * 3, [None] * 3]

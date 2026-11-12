@@ -69,6 +69,7 @@ export const PIECE_LIST: Piece[] = [
   P('swing', '그네', 'plaza', 2, 1, { log: 3, twig: 4 }, 5, true),
   I('fountain', '분수', 'plaza'),
   I('lantern', '랜턴', 'plaza'),
+  I('torch', '횃불', 'plaza'),
   I('trophy', '황금 트로피', 'plaza'),
   // 자연
   P('flowerbed', '꽃밭', 'nature', 1, 1, { flower: 4 }, 2, false),

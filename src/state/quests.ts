@@ -54,6 +54,7 @@ export const DAILY_POOL: QuestDef[] = [
   { id: 'd_fish', text: '낚시 5번 성공하기', goal: { count: 'fish', n: 5 }, reward: ['fish_big', 1] },
   { id: 'd_slime', text: '슬라임 6마리 잡기', goal: { count: 'slime', n: 6 }, reward: ['jelly_block', 1] },
   { id: 'd_merge', text: '머지 10번 하기', goal: { count: 'merge', n: 10 }, reward: ['coal', 2] },
+  { id: 'd_combo', text: '조합 2번 하기', goal: { count: 'combo', n: 2 }, reward: ['crystal', 1] },
   { id: 'd_build', text: '마을에 5개 짓기', goal: { count: 'build', n: 5 }, reward: ['flower', 6] },
 ];
 export const DAILY_BONUS: [ItemId, number] = ['crystal', 2];
