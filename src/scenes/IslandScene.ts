@@ -72,6 +72,7 @@ export class IslandScene extends Phaser.Scene {
   private signs = new Map<number, Phaser.GameObjects.Container>();
   private spots: SpotObj[] = [];
   private cloudTex!: Phaser.Textures.CanvasTexture;
+  private cloudImg!: Phaser.GameObjects.Image;
   private boatImg?: Phaser.GameObjects.Image;
   private placedObjs = new Map<string, Phaser.GameObjects.Image>();
   /** 장식을 놓을 수 없는 칸 (원래 있던 나무·바위, 선착장 등) */
@@ -212,7 +213,7 @@ export class IslandScene extends Phaser.Scene {
     // 표지판 · 낚시터 · 구름
     if (this.textures.exists('clouds')) this.textures.remove('clouds');
     this.cloudTex = this.textures.createCanvas('clouds', W.w * CLOUD_PX, W.h * CLOUD_PX)!;
-    this.add.image(0, 0, 'clouds').setOrigin(0).setScale(TILE / CLOUD_PX).setDepth(99980);
+    this.cloudImg = this.add.image(0, 0, 'clouds').setOrigin(0).setScale(TILE / CLOUD_PX).setDepth(99980);
     this.refreshRegions(false);
 
     // 곰 가족
@@ -715,7 +716,7 @@ export class IslandScene extends Phaser.Scene {
     }
     if (this.player) {
       const r = this.regionAt(this.player.x, this.player.y);
-      if (r !== this.curRegion && r >= 0) {
+      if (r !== this.curRegion && r >= 0 && !this.room && !this.dungeon) {
         this.curRegion = r;
         this.game.events.emit('region-enter', this.world.regions[r]);
       }
@@ -1420,6 +1421,8 @@ export class IslandScene extends Phaser.Scene {
 
   /** 있는 곳이 바뀌었다 (던전·집에 드나들 때) */
   private zoneChanged() {
+    // 집 안·던전은 바다 한구석에 그리는데, 아직 열지 않은 구역의 구름이 그 위를 덮으면 온통 하얗게 보인다
+    this.cloudImg.setVisible(!this.room && !this.dungeon);
     this.zt = family.now();
     this.sendPresence();
     this.onPresence(family.others);
@@ -1841,7 +1844,9 @@ export class IslandScene extends Phaser.Scene {
     const cols = rm.w / TILE;
     const rows = rm.h / TILE;
     const key = `${tx},${ty}`;
-    const tool = (this.registry.get('buildTool') as string) ?? 'place';
+    const tool = (this.registry.get('buildTool') as string) ?? '';
+    // 도구를 고르지 않았다 → 탐험으로 돌아간다
+    if (!tool) return void this.game.events.emit('go-explore');
     const flash = (cells: [number, number][], ok: boolean) => this.flashCells(cells.map(([cx, cy]) => [cx + rm.x / TILE, cy + rm.y / TILE] as [number, number]), ok);
     if (tool !== 'place') {
       const target = rm.occ.get(key) ?? [...rm.imgs.values()].map((i) => (i as unknown as { placed: Placed }).placed).find((q) => PIECES[q.id]?.floor && tx >= q.tx && tx < q.tx + PIECES[q.id].w && ty <= q.ty && ty > q.ty - PIECES[q.id].h);
@@ -2673,10 +2678,19 @@ export class IslandScene extends Phaser.Scene {
     const tx = Math.floor(wp.x / TILE);
     const ty = Math.floor(wp.y / TILE);
     const key = `${tx},${ty}`;
-    const tool = (this.registry.get('buildTool') as string) ?? 'place';
+    const tool = (this.registry.get('buildTool') as string) ?? '';
     const cam = this.cameras.main;
     const float = (msg: string) => this.game.events.emit('float', msg, (wp.x - cam.worldView.x) * cam.zoom, (wp.y - 30 - cam.worldView.y) * cam.zoom);
 
+    if (!tool) {
+      // 도구를 고르지 않았다: 집을 누르면 들어가고, 그 밖에는 탐험으로 돌아간다
+      const h = this.placedOcc.get(key);
+      if (h && ENTERABLE.has(h.id)) {
+        sfx.pop();
+        return void this.enterHouse(h);
+      }
+      return void this.game.events.emit('go-explore');
+    }
     if (tool !== 'place') {
       // 물건이 먼저, 없으면 바닥
       const target = this.placedOcc.get(key) ?? (this.placedObjs.get(`f${key}`) as unknown as { placed: Placed } | undefined)?.placed;

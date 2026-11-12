@@ -115,6 +115,7 @@ export class HudScene extends Phaser.Scene {
       ['open-quest', this.openQuest],
       ['open-boat', this.openBoat],
       ['celebrate', this.celebrate],
+      ['go-explore', this.goExplore],
     ];
     on.forEach(([e, f]) => ge.on(e, f, this));
     inventory.on('changed', this.onInventoryChanged, this);
@@ -215,7 +216,9 @@ export class HudScene extends Phaser.Scene {
       const t0 = this.add.text(0, 0, inRoom ? '🚪 집에서 나가기' : '🚪 던전에서 나가기', { fontFamily: FONT, fontSize: '11px', color: '#ffffff', fontStyle: 'bold' }).setOrigin(0.5);
       const g0 = this.add.graphics();
       g0.fillStyle(inRoom ? 0x8a6d4b : 0x5a4d6b, 0.95).fillRoundedRect(-66, -12, 132, 24, 12);
-      const c0 = this.add.container(W0 / 2, HUD_TOP_H + 16, [g0, t0]).setDepth(5);
+      // 집에서 나가기는 손이 닿기 쉬운 아래쪽에 둔다 (던전은 싸우다 잘못 누르지 않게 위쪽)
+      if (inRoom) this.hideHint();
+      const c0 = this.add.container(W0 / 2, inRoom ? this.scale.height - HUD_BOTTOM_H - 22 : HUD_TOP_H + 16, [g0, t0]).setDepth(5);
       c0.setSize(132, 30).setInteractive({ useHandCursor: true });
       c0.on('pointerdown', () => {
         sfx.tap();
@@ -876,6 +879,11 @@ export class HudScene extends Phaser.Scene {
   }
 
   /** 탐험 ↔ 머지 ↔ 꾸미기 화면 전환 */
+  /** 꾸미기에서 도구 없이 화면을 눌렀다 → 탐험으로 */
+  private goExplore() {
+    if (this.view === 'build') this.setView('explore');
+  }
+
   private setView(v: View) {
     if (v === this.view || this.registry.get('modal') || !this.registry.get('bear')) return;
     if (this.registry.get('dungeon')) return void this.toast('던전에서는 먼저 나가야 해요');
@@ -894,10 +902,12 @@ export class HudScene extends Phaser.Scene {
     this.refreshFeedBtn();
     this.arrow.setVisible(false);
     this.hideHint();
+    // 꾸미기에 들어올 때는 도구를 꺼 둔다: 실수로 눌러서 지어지지 않게
+    if (v === 'build') this.registry.set('buildTool', '');
     this.refreshTabs();
     this.rebuildBuildTray();
     this.refreshQuestPill();
-    if (v === 'build') this.toast(this.registry.get('room') ? '🏠 가구를 골라 집 안을 꾸며 봐요' : '🏝️ 집·길·울타리를 골라 마을을 지어 봐요');
+    if (v === 'build') this.toast(this.registry.get('room') ? '🏠 아래에서 가구를 고르면 놓을 수 있어요' : '🏝️ 아래에서 지을 것을 고르면 지을 수 있어요');
   }
 
   /** 꾸미기 모드: 도구 · 종류 · 지을 것 고르기 + 마을 점수 */
@@ -944,11 +954,12 @@ export class HudScene extends Phaser.Scene {
     );
 
     // 2) 도구
-    const tool = (this.registry.get('buildTool') as string) ?? 'place';
+    const tool = (this.registry.get('buildTool') as string) ?? '';
     const flip = !!this.registry.get('buildFlip');
     const tw = 62;
     ([['place', '🔨 짓기'], ['move', '✋ 옮기기'], ['erase', '🧹 치우기']] as const).forEach(([id, label], i) => {
-      chip(20 + i * (tw + 4), top + 42, tw, label, tool === id, () => this.registry.set('buildTool', id), 11);
+      // 켜진 도구를 다시 누르면 꺼진다 (도구가 꺼져 있으면 화면을 눌러도 아무것도 지어지지 않는다)
+      chip(20 + i * (tw + 4), top + 42, tw, label, tool === id, () => this.registry.set('buildTool', tool === id ? '' : id), 11);
     });
     chip(W - 20 - 2 * 58 - 4, top + 42, 58, flip ? '↔ 뒤집힘' : '↔ 뒤집기', flip, () => this.registry.set('buildFlip', !flip), 11);
     chip(W - 20 - 58, top + 42, 58, '🔍 멀리', false, () => this.game.events.emit('build-zoom'), 11);
@@ -986,7 +997,7 @@ export class HudScene extends Phaser.Scene {
     shown.forEach((p, i) => {
       const x = x0 + i * slot + slot / 2;
       const y = top + 112;
-      const on = p.id === sel.id;
+      const on = p.id === sel.id && tool === 'place';
       const ok = canPay(p);
       const g = this.add.graphics();
       g.fillStyle(on ? 0xffd166 : 0xfde8b0).fillRoundedRect(x - 22, y - 22, 44, 44, 10);
@@ -1018,7 +1029,7 @@ export class HudScene extends Phaser.Scene {
       cx -= 26;
       tray.add([t, ic]);
     });
-    tray.add(this.add.text(W / 2, top + 167, inRoom ? '🏠 집 안 꾸미기 · 바닥을 톡 눌러 놓아요 · 치우면 재료를 돌려받아요' : '화면을 끌어서 둘러보고, 땅을 톡 눌러 지어요 · 집을 누르면 들어가요', { fontFamily: FONT, fontSize: '8px', color: '#a08a6a' }).setOrigin(0.5));
+    tray.add(this.add.text(W / 2, top + 167, !tool ? `아래에서 ${inRoom ? '가구' : '지을 것'}를 골라요 · 그냥 화면을 누르면 탐험으로 돌아가요` : inRoom ? '🏠 집 안 꾸미기 · 바닥을 톡 눌러 놓아요 · 치우면 재료를 돌려받아요' : '화면을 끌어서 둘러보고, 땅을 톡 눌러 지어요 · 집을 누르면 들어가요', { fontFamily: FONT, fontSize: '8px', color: '#a08a6a' }).setOrigin(0.5));
   }
 
   /** 주민의 부탁 */
