@@ -4,13 +4,15 @@ interface Settings {
   sound: boolean;
   vibrate: boolean;
   music: boolean;
+  /** 곰을 고를 때 전체 화면으로 바꾸기 (지원하는 브라우저만) */
+  fullscreen: boolean;
 }
 
 function load(): Settings {
   try {
-    return { sound: true, vibrate: true, music: true, ...(JSON.parse(localStorage.getItem(KEY) ?? '{}') as Partial<Settings>) };
+    return { sound: true, vibrate: true, music: true, fullscreen: true, ...(JSON.parse(localStorage.getItem(KEY) ?? '{}') as Partial<Settings>) };
   } catch {
-    return { sound: true, vibrate: true, music: true };
+    return { sound: true, vibrate: true, music: true, fullscreen: true };
   }
 }
 

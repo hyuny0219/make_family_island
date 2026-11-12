@@ -1,3 +1,4 @@
+import { quests } from '../state/quests';
 import Phaser from 'phaser';
 import { COLORS } from '../config';
 import { ITEMS, itemKey, type ItemId } from '../data/items';
@@ -227,6 +228,7 @@ export class MergeScene extends Phaser.Scene {
       for (const gi of outs) this.put(gi, next, true);
       this.spark.explode(12, x, y);
       sfx.merge();
+      quests.bump('merge');
       buzz(25);
       if (inventory.discover(next)) {
         this.game.events.emit('celebrate', `✨ 새로운 발견!\n${ITEMS[next].name}`);
