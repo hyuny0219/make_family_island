@@ -42,6 +42,8 @@ export const STORY: QuestDef[] = [
   { id: 's16', text: '마을 점수 100점 만들기', goal: { state: () => village.score(), n: 100 }, reward: ['crystal', 3] },
   { id: 's17', text: '보물 3개 모으기', goal: { state: () => progress.treasureCount, n: 3 }, reward: ['crystal', 3] },
   { id: 's18', text: '섬 친구 10마리 모두 모으기', goal: { state: () => village.joined().length, n: 10 }, reward: ['trophy', 2] },
+  { id: 's20', text: '몬스터 20마리 잡기', goal: { count: 'monster', n: 20 }, reward: ['crystal', 3] },
+  { id: 's21', text: '서로 다른 요리 조합 10번 하기', goal: { count: 'combo', n: 10 }, reward: ['crystal', 3] },
   { id: 's19', text: '보물 10개 모두 모으기', goal: { state: () => progress.treasureCount, n: 10 }, reward: ['trophy', 3] },
 ];
 
@@ -55,6 +57,8 @@ export const DAILY_POOL: QuestDef[] = [
   { id: 'd_slime', text: '슬라임 6마리 잡기', goal: { count: 'slime', n: 6 }, reward: ['jelly_block', 1] },
   { id: 'd_merge', text: '머지 10번 하기', goal: { count: 'merge', n: 10 }, reward: ['coal', 2] },
   { id: 'd_combo', text: '조합 2번 하기', goal: { count: 'combo', n: 2 }, reward: ['crystal', 1] },
+  { id: 'd_monster', text: '몬스터 5마리 잡기', goal: { count: 'monster', n: 5 }, reward: ['jam', 1] },
+  { id: 'd_eat', text: '요리 2번 먹기', goal: { count: 'eat', n: 2 }, reward: ['fruit', 8] },
   { id: 'd_build', text: '마을에 5개 짓기', goal: { count: 'build', n: 5 }, reward: ['flower', 6] },
 ];
 export const DAILY_BONUS: [ItemId, number] = ['crystal', 2];

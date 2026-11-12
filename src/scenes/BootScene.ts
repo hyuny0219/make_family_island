@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { COLORS } from '../config';
 import { BUILD_TEXTURES } from '../data/build';
+import { MONSTERS } from '../data/monsters';
 import { SKINS, SKIN_OBJECTS } from '../data/islands';
 import { BEARS, FACINGS, NO_LOAD, OBJECTS } from '../data/assets';
 import { ITEM_IDS, itemKey } from '../data/items';
@@ -31,6 +32,7 @@ export class BootScene extends Phaser.Scene {
     for (let i = 0; i < 10; i++) this.load.image(`treasure_${i}`, `treasure_${i}.png`);
     for (const k of ['chest_open', 'pedestal']) this.load.image(k, `${k}.png`);
     for (const k of ['play_dig', 'play_geode', 'play_ice', 'play_spring', 'play_tramp']) this.load.image(k, `${k}.png`);
+    for (const k of Object.keys(MONSTERS)) this.load.image(`mon_${k}`, `mon_${k}.png`);
     for (const t of BUILD_TEXTURES) this.load.image(t, `${t}.png`);
     for (const skin of SKINS) {
       this.load.spritesheet(`tiles_${skin}`, `tiles_${skin}.png`, { frameWidth: 24, frameHeight: 24, margin: 1, spacing: 2 });
