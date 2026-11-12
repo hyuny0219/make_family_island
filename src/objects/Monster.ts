@@ -22,12 +22,25 @@ export class Monster {
   dead = false;
   /** 태어난 뒤 지난 시간(초) */
   age = 0;
+  /** 함께 싸울 때 가족끼리 같은 몬스터를 가리키는 이름 */
+  id = '';
+  /** 종류 (MONSTERS의 id, 보스는 'boss')와 성질(1 사나움, 2 던전 부하) */
+  kind = '';
+  flags = 0;
+  /** 다른 기기가 움직이는 몬스터: 받은 위치로 따라간다 */
+  puppet = false;
+  net: { x: number; y: number } | null = null;
+  /** 마지막으로 문 상대와 문 횟수 */
+  biteDev = '';
+  bite = 0;
+  /** 이 시각까지는 받은 체력이 더 높아도 믿지 않는다 (방금 내가 때렸으니까) */
+  hpLock = 0;
   private readonly home: { x: number; y: number };
   private cooldown = 0.6;
   private stun = 0;
   private wander: { x: number; y: number } | null = null;
   private wait = 1;
-  private chasing = false;
+  chasing = false;
   private bob = Math.random() * 6;
 
   constructor(scene: Phaser.Scene, def: MonsterDef, x: number, y: number) {
@@ -91,6 +104,55 @@ export class Monster {
     this.mark?.setPosition(this.sprite.x, this.sprite.y - this.sprite.height - 4).setDepth(this.y + 1).setVisible(!this.chasing || Math.sin(this.bob) > 0);
     if (this.bar.visible) this.drawBar();
     return hitPlayer;
+  }
+
+  /** 다른 기기가 움직이는 몬스터: 받은 위치로 부드럽게 따라간다 */
+  updatePuppet(dt: number) {
+    if (this.dead) return;
+    this.age += dt;
+    this.bob += dt * (this.chasing ? 11 : 6);
+    if (this.net) {
+      const dx = this.net.x - this.x;
+      const dy = this.net.y - this.y;
+      const d = Math.hypot(dx, dy);
+      if (d > 90) {
+        this.x = this.net.x;
+        this.y = this.net.y;
+      } else if (d > 0.5) {
+        const k = Math.min(1, dt * 7);
+        this.x += dx * k;
+        this.y += dy * k;
+        if (Math.abs(dx) > 1) this.sprite.setFlipX(dx < 0);
+      }
+    }
+    const lift = Math.abs(Math.sin(this.bob)) * (this.chasing ? 5 : 3);
+    this.sprite.setPosition(Math.round(this.x), Math.round(this.y - lift)).setDepth(this.y);
+    this.mark?.setPosition(this.sprite.x, this.sprite.y - this.sprite.height - 4).setDepth(this.y + 1).setVisible(!this.chasing || Math.sin(this.bob) > 0);
+    if (this.bar.visible) this.drawBar();
+  }
+
+  /** 덥석 무는 몸짓 */
+  lunge() {
+    this.sprite.scene.tweens.add({ targets: this.sprite, scaleX: 1.25, scaleY: 0.8, duration: 80, yoyo: true });
+  }
+
+  /** 체력바를 처음부터 보여 준다 (보스) */
+  showBar() {
+    this.bar.setVisible(true);
+    this.drawBar();
+  }
+
+  /** 받은 체력으로 맞춘다 (줄었으면 깜빡인다) */
+  setHp(hp: number) {
+    if (hp === this.hp) return;
+    const less = hp < this.hp;
+    this.hp = hp;
+    this.bar.setVisible(true);
+    this.drawBar();
+    if (less && !this.dead) {
+      this.sprite.setTintFill(0xffffff);
+      this.sprite.scene.time.delayedCall(80, () => !this.dead && this.sprite.clearTint());
+    }
   }
 
   private stroll(dt: number, walkable: Walkable) {
