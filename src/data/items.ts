@@ -25,6 +25,7 @@ export const ITEMS = {
   sword: { name: '나무 검' },
   stone_sword: { name: '돌 검' },
   bomb: { name: '폭탄' },
+  boss_token: { name: '보스 증표' },
   fruit_salad: { name: '과일 샐러드' },
   fish_skewer: { name: '꼬치구이' },
   fish_steak: { name: '생선 스테이크' },

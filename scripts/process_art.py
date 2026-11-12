@@ -196,6 +196,20 @@ if __name__ == "__main__":
     path_tile("path_stone", (201, 201, 196), (160, 160, 158), (224, 224, 220), "stone")
     path_tile("path_wood", (196, 142, 92), (150, 102, 62), (216, 166, 114), "wood")
 
+    # 보스 · 던전 입구 · 보스 증표 · 변신 모자
+    for i in range(6):
+        grid = [[None] * 3, [None] * 3]
+        grid[i // 3][i % 3] = f"boss_{i}"
+        slice_grid("boss_a.png", 3, 2, grid, fit=58)
+    for i in range(4):
+        grid = [[None] * 3, [None] * 3]
+        grid[i // 3][i % 3] = f"boss_{6 + i}"
+        slice_grid("boss_b.png", 3, 2, grid, fit=58)
+    slice_grid("boss_b.png", 3, 2, [[None, None, None], [None, "dungeon_gate", None]], fit=44)
+    slice_grid("boss_b.png", 3, 2, [[None, None, None], [None, None, "item_boss_token"]], fit=22)
+    slice_grid("hat_a.png", 3, 2, [["hat_leaf", "hat_bee", "hat_wood"], ["hat_bubble", "hat_rock", "hat_poison"]], fit=20)
+    slice_grid("hat_b.png", 3, 2, [["hat_ice", "hat_sand", "hat_fire"], ["hat_thunder", None, None]], fit=20)
+
     # 몬스터 (곰보다 조금 작게) · 무기
     for i, (name, fit) in enumerate([("bee", 22), ("shroom", 26), ("crab", 26), ("bat", 26), ("snowman", 30), ("cactus", 30)]):
         grid = [[None] * 3, [None] * 3]
