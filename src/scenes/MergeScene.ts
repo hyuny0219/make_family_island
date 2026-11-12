@@ -9,8 +9,9 @@ import { sfx, buzz } from '../sfx';
 import { HUD_BOTTOM_H, HUD_TOP_H } from './HudScene';
 
 const FONT = '"Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif';
-const CELL = 50;
-const ICON = 2; // 아이콘 확대 배율
+// 보드 한 칸 크기와 아이콘 배율 — 화면 높이에 맞춰 create()에서 정한다 (아래 창고 줄이 두 줄 들어가게)
+let CELL = 50;
+let ICON = 2;
 
 type Mode = 'merge' | 'craft';
 
@@ -59,6 +60,9 @@ export class MergeScene extends Phaser.Scene {
     this.craftLayer = this.add.container(0, 0).setVisible(false);
 
     // ── 머지 보드 ──
+    const trayNeed = 28 + 2 * 44 + 4;
+    CELL = Phaser.Math.Clamp(Math.floor((H - HUD_BOTTOM_H - (HUD_TOP_H + 50) - 36 - trayNeed) / BOARD_ROWS), 38, 50);
+    ICON = Math.round((CELL / 25) * 4) / 4;
     this.x0 = (W - BOARD_COLS * CELL) / 2;
     this.y0 = HUD_TOP_H + 50;
     const bw = BOARD_COLS * CELL;
@@ -354,8 +358,8 @@ export class MergeScene extends Phaser.Scene {
     // 합칠 수 있는 것을 모두 보여 준다. 자리가 모자라면 옆으로 밀어서 넘긴다
     const items = inventory.owned().filter((o) => isMergeable(o.id) && MERGE_NEXT[o.id]);
     const availH = H - HUD_BOTTOM_H - top - 4;
-    const slot = Math.min(52, Math.max(40, availH - 30));
-    const rowsFit = Math.max(1, Math.floor((availH - 28) / slot));
+    const rowsFit = Math.max(1, Math.floor((availH - 28) / 44));
+    const slot = Math.min(52, Math.max(40, Math.floor((availH - 28) / rowsFit)));
     const cols = Math.max(1, Math.ceil(items.length / rowsFit));
     const rows = Math.min(rowsFit, Math.max(1, items.length));
     const th = Math.min(rows * slot + 30, availH);
@@ -388,8 +392,11 @@ export class MergeScene extends Phaser.Scene {
     tray.add(row);
     const pos: { id: ItemId; x: number; y: number }[] = [];
     items.forEach((o, i) => {
-      const x = x0 + Math.floor(i / rowsFit) * slot + slot / 2;
-      const y = top + 26 + (i % rowsFit) * slot + slot / 2;
+      // 다 들어가면 왼쪽→오른쪽 순서로, 넘치면 세로로 채워서 옆으로 민다
+      const col = scrolls ? Math.floor(i / rowsFit) : i % cols;
+      const rw = scrolls ? i % rowsFit : Math.floor(i / cols);
+      const x = x0 + col * slot + slot / 2;
+      const y = top + 26 + rw * slot + slot / 2;
       const bg = this.add.graphics();
       bg.fillStyle(0xfde8b0).fillRoundedRect(x - slot / 2 + 3, y - slot / 2 + 3, slot - 6, slot - 6, 10);
       const ic = this.add.image(x, y - 3, itemKey(o.id)).setScale(slot >= 48 ? 1.5 : 1.25);
