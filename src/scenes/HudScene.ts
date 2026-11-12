@@ -1,3 +1,4 @@
+import { quests, DAILY_BONUS, STORY, type QuestView } from '../state/quests';
 import Phaser from 'phaser';
 import { COLORS } from '../config';
 import { sfx, unlockAudio, buzz, refreshMusic } from '../sfx';
@@ -38,6 +39,13 @@ export class HudScene extends Phaser.Scene {
   private bagCount!: Phaser.GameObjects.Text;
   private bagBtn!: Phaser.GameObjects.Container;
   private strip?: Phaser.GameObjects.Container;
+  private stripZone?: Phaser.GameObjects.Rectangle;
+  private stripMask?: Phaser.GameObjects.Graphics;
+  private stripScroll = 0;
+  private stripArrows?: () => void;
+  private questPill?: Phaser.GameObjects.Container;
+  private questDot?: Phaser.GameObjects.Arc;
+  private resizeTimer?: Phaser.Time.TimerEvent;
   private topText!: Phaser.GameObjects.Text;
   private topBg!: Phaser.GameObjects.Graphics;
   private topBtn!: Phaser.GameObjects.Container;
@@ -60,9 +68,14 @@ export class HudScene extends Phaser.Scene {
     super('Hud');
   }
 
+  private laidW = 0;
+  private laidH = 0;
+
   create() {
     const W = this.scale.width;
     const H = this.scale.height;
+    this.laidW = W;
+    this.laidH = H;
 
     this.makeTopBar(W);
     this.makeBag(W);
@@ -71,7 +84,9 @@ export class HudScene extends Phaser.Scene {
     this.makeHint(W, H);
     this.makeSideButtons(W);
     this.makeArrow();
+    const prevView = (this.registry.get('bear') ? this.registry.get('view') : 'explore') as View | undefined;
     this.view = 'explore';
+    this.registry.set('modal', false);
     this.registry.set('view', 'explore');
     this.game.events.on('player-moved', this.hideHint, this);
     this.game.events.on('toast', this.toast, this);
@@ -108,7 +123,161 @@ export class HudScene extends Phaser.Scene {
       this.game.events.off('item-gained', this.onItemGained, this);
       inventory.off('changed', this.onInventoryChanged, this);
     });
-    this.makeTitle(W, H);
+    quests.on('changed', this.refreshQuestPill, this);
+    progress.on('region-unlocked', this.refreshQuestPill, this);
+    progress.on('treasure', this.refreshQuestPill, this);
+    progress.on('boat-built', this.refreshQuestPill, this);
+    this.scale.on('resize', this.onResize, this);
+    this.events.once('shutdown', () => {
+      quests.off('changed', this.refreshQuestPill, this);
+      progress.off('region-unlocked', this.refreshQuestPill, this);
+      progress.off('treasure', this.refreshQuestPill, this);
+      progress.off('boat-built', this.refreshQuestPill, this);
+      this.scale.off('resize', this.onResize, this);
+    });
+    if (this.registry.get('bear')) {
+      // 화면 크기가 바뀌어 다시 그리는 중: 곰 고르기는 건너뛰고 보던 화면으로 돌아간다
+      this.updateTopBar();
+      this.hideHint();
+      if (daily.ready && !this.registry.get('dailyShown')) {
+        this.registry.set('dailyShown', true);
+        this.time.delayedCall(900, () => this.openDaily());
+      }
+      this.refreshQuestPill();
+      if (prevView && prevView !== 'explore') this.setView(prevView);
+    } else {
+      this.makeTitle(W, H);
+    }
+  }
+
+  private toggleFullscreen() {
+    try {
+      if (this.scale.isFullscreen) this.scale.stopFullscreen();
+      else this.scale.startFullscreen();
+    } catch {
+      this.toast('이 브라우저는 전체 화면을 지원하지 않아요');
+    }
+  }
+
+  /** 화면 크기가 바뀌면(주소창 숨김, 전체 화면, 회전) 버튼들을 새 크기에 맞춰 다시 놓는다 */
+  private onResize() {
+    this.resizeTimer?.remove();
+    this.resizeTimer = this.time.delayedCall(180, () => {
+      if (this.scale.width === this.laidW && this.scale.height === this.laidH) return;
+      this.scene.restart();
+    });
+  }
+
+  private refreshQuestPill() {
+    this.questPill?.destroy();
+    this.questPill = undefined;
+    this.questDot?.setVisible(quests.claimable);
+    if (!this.registry.get('bear') || this.view !== 'explore') return;
+    const q = quests.story();
+    const dailyReady = quests.daily().some((d) => d.done && !d.claimed) || quests.bonusState() === 'ready';
+    let label: string;
+    let ready = false;
+    if (q?.done) {
+      label = `🎁 ${q.def.text} — 보상 받기!`;
+      ready = true;
+    } else if (dailyReady) {
+      label = '🎁 오늘의 퀘스트 보상 받기!';
+      ready = true;
+    } else if (q) {
+      label = `📜 ${q.def.text}  ${q.have}/${q.need}`;
+    } else {
+      return;
+    }
+    const W = this.scale.width;
+    const t = this.add.text(0, 0, label, { fontFamily: FONT, fontSize: '11px', color: ready ? '#ffffff' : COLORS.uiText, fontStyle: 'bold' }).setOrigin(0.5);
+    const w = Math.min(W - 108, t.width + 22);
+    if (t.width > w - 16) t.setScale((w - 16) / t.width);
+    const g = this.add.graphics();
+    g.fillStyle(0x000000, 0.12).fillRoundedRect(-w / 2, -11 + 2, w, 24, 12);
+    g.fillStyle(ready ? 0x8bd17c : COLORS.uiBg, 0.95).fillRoundedRect(-w / 2, -12, w, 24, 12);
+    if (!ready) g.lineStyle(1.5, 0xe8d5a9).strokeRoundedRect(-w / 2, -12, w, 24, 12);
+    const c = this.add.container(W / 2, HUD_TOP_H + 16, [g, t]).setDepth(5);
+    c.setSize(w, 30).setInteractive({ useHandCursor: true });
+    c.on('pointerdown', () => {
+      sfx.tap();
+      this.openQuestBook();
+    });
+    if (ready) this.tweens.add({ targets: c, scale: 1.05, duration: 500, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+    this.questPill = c;
+  }
+
+  /** 퀘스트 수첩: 모험 퀘스트(하나씩) + 오늘의 퀘스트(3개) */
+  private openQuestBook() {
+    if (this.registry.get('modal') || !this.registry.get('bear')) return;
+    const PW = Math.min(330, this.scale.width - 20);
+    const PH = 452;
+    const { box, close } = this.modal(PW, PH);
+    const top = -PH / 2;
+    const reopen = () => {
+      close();
+      this.time.delayedCall(230, () => this.openQuestBook());
+    };
+    const give = (r: [ItemId, number] | null) => {
+      if (!r) return;
+      inventory.add(r[0], r[1]);
+      sfx.fanfare();
+      buzz(30);
+      this.toast(`🎁 ${ITEMS[r[0]].name} ×${r[1]}`);
+      reopen();
+    };
+    const row = (y: number, q: QuestView, tag: string, onClaim: () => void, tip?: string) => {
+      const x = -PW / 2 + 14;
+      const w = PW - 28;
+      const g = this.add.graphics();
+      g.fillStyle(q.claimed ? 0xe9e3d3 : q.done ? 0xe3f4d7 : 0xfff6df).fillRoundedRect(x, y, w, 64, 14);
+      if (q.done && !q.claimed) g.lineStyle(2, 0x8bd17c).strokeRoundedRect(x, y, w, 64, 14);
+      box.add(g);
+      box.add(this.add.text(x + 12, y + 9, tag, { fontFamily: FONT, fontSize: '9px', color: '#e07a5f', fontStyle: 'bold' }));
+      box.add(this.add.text(x + 12, y + 22, q.def.text, { fontFamily: FONT, fontSize: '13px', color: COLORS.uiText, fontStyle: 'bold' }).setAlpha(q.claimed ? 0.5 : 1));
+      // 진행 막대
+      const bw = w - 110;
+      const bar = this.add.graphics();
+      bar.fillStyle(0xe8d5a9).fillRoundedRect(x + 12, y + 45, bw, 8, 4);
+      const f = q.need ? q.have / q.need : 0;
+      if (f > 0) bar.fillStyle(q.done ? 0x8bd17c : 0xf2a93b).fillRoundedRect(x + 12, y + 45, Math.max(8, bw * f), 8, 4);
+      box.add(bar);
+      box.add(this.add.text(x + 12 + bw + 6, y + 49, `${q.have}/${q.need}`, { fontFamily: FONT, fontSize: '10px', color: '#8a6d4b', fontStyle: 'bold' }).setOrigin(0, 0.5));
+      if (tip && !q.done) box.add(this.add.text(x + w - 12, y + 9, `💡 ${tip}`, { fontFamily: FONT, fontSize: '9px', color: '#a08a6a' }).setOrigin(1, 0));
+      // 보상 / 받기
+      const rx = x + w - 34;
+      if (q.claimed) {
+        box.add(this.add.text(rx, y + 38, '✔ 받음', { fontFamily: FONT, fontSize: '11px', color: '#5fae52', fontStyle: 'bold' }).setOrigin(0.5));
+      } else if (q.done) {
+        const btn = this.button('받기', true, onClaim, 58);
+        btn.setPosition(rx - 2, y + 40).setScale(0.8);
+        box.add(btn);
+      } else {
+        box.add(this.add.image(rx - 8, y + 40, itemKey(q.def.reward[0])).setScale(1.1));
+        box.add(this.add.text(rx + 6, y + 41, `×${q.def.reward[1]}`, { fontFamily: FONT, fontSize: '11px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0, 0.5));
+      }
+    };
+    box.add(this.add.text(0, top + 28, '📜 퀘스트 수첩', { fontFamily: FONT, fontSize: '20px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0.5));
+
+    // 모험 퀘스트
+    const st = quests.story();
+    box.add(this.add.text(-PW / 2 + 18, top + 56, `🧭 모험 퀘스트  ${Math.min(quests.storyIndex + 1, STORY.length)}/${STORY.length}`, { fontFamily: FONT, fontSize: '12px', color: '#8a6d4b', fontStyle: 'bold' }));
+    if (st) row(top + 74, st, '지금 할 일', () => give(quests.claimStory()), st.def.tip);
+    else box.add(this.add.text(0, top + 106, '🎉 모험 퀘스트를 모두 끝냈어요!', { fontFamily: FONT, fontSize: '13px', color: '#5fae52', fontStyle: 'bold' }).setOrigin(0.5));
+
+    // 오늘의 퀘스트
+    box.add(this.add.text(-PW / 2 + 18, top + 152, '☀️ 오늘의 퀘스트 (매일 바뀌어요)', { fontFamily: FONT, fontSize: '12px', color: '#8a6d4b', fontStyle: 'bold' }));
+    quests.daily().forEach((q, i) => row(top + 170 + i * 70, q, `오늘 ${i + 1}`, () => give(quests.claimDaily(q.def.id))));
+    const bs = quests.bonusState();
+    const by = top + 170 + 3 * 70 + 6;
+    const bg2 = this.add.graphics();
+    bg2.fillStyle(bs === 'ready' ? 0xffe9a8 : 0xf3ecd9).fillRoundedRect(-PW / 2 + 14, by, PW - 28, 44, 14);
+    box.add(bg2);
+    box.add(this.add.text(-PW / 2 + 26, by + 22, bs === 'claimed' ? '🎁 오늘 보너스를 받았어요' : `🎁 3개 모두 끝내면 보너스: ${ITEMS[DAILY_BONUS[0]].name} ×${DAILY_BONUS[1]}`, { fontFamily: FONT, fontSize: '11px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0, 0.5));
+    if (bs === 'ready') {
+      const btn = this.button('받기', true, () => give(quests.claimBonus()), 58);
+      btn.setPosition(PW / 2 - 50, by + 22).setScale(0.8);
+      box.add(btn);
+    }
   }
 
   private panel(x: number, y: number, w: number, h: number, r = 14) {
@@ -171,7 +340,10 @@ export class HudScene extends Phaser.Scene {
     g.lineStyle(3, 0xe8d5a9).strokeRoundedRect(-PW / 2, -PH / 2, PW, PH, 24);
     box.add(g);
     box.setScale(0.6).setAlpha(0);
-    this.tweens.add({ targets: box, scale: 1, alpha: 1, duration: 260, ease: 'Back.easeOut' });
+    // 작은 화면에서는 창을 줄여서 화면 밖으로 나가지 않게 한다
+    const fit = Math.min(1, (H - 24) / PH, (W - 12) / PW);
+    box.setScale(0.6 * fit);
+    this.tweens.add({ targets: box, scale: fit, alpha: 1, duration: 260, ease: 'Back.easeOut' });
     let closed = false;
     const close = () => {
       if (closed) return;
@@ -381,25 +553,29 @@ export class HudScene extends Phaser.Scene {
   }
 
   /** 상단 아이템 줄 — 가진 재료를 아이콘+개수로 (최대 7칸, 넘치면 +N) */
+  /** 위쪽 재료 줄 — 가진 것을 모두 보여 준다. 옆으로 밀어서 넘기고, 톡 누르면 창고가 열린다 */
   private rebuildStrip() {
     this.strip?.destroy();
+    this.stripZone?.destroy();
+    this.stripMask?.destroy();
     this.slotPos.clear();
     const owned = inventory.owned();
     if (owned.length === 0) return;
     const W = this.scale.width;
     const slotW = 44;
-    const max = Math.floor((W - 20) / slotW);
-    const shown = owned.slice(0, owned.length > max ? max - 1 : max);
-    const extra = owned.length - shown.length;
-    const n = shown.length + (extra > 0 ? 1 : 0);
-    const totalW = n * slotW;
-    const x0 = (W - totalW) / 2;
+    const viewW = W - 20;
+    const totalW = owned.length * slotW;
+    const fits = totalW <= viewW - 12;
+    const x0 = fits ? (W - totalW) / 2 : 16;
     const y = 72;
     const strip = this.add.container(0, 0);
     const bg = this.add.graphics();
-    bg.fillStyle(COLORS.uiBg, 0.92).fillRoundedRect(x0 - 6, y - 19, totalW + 12, 38, 14);
+    if (fits) bg.fillStyle(COLORS.uiBg, 0.92).fillRoundedRect(x0 - 6, y - 19, totalW + 12, 38, 14);
+    else bg.fillStyle(COLORS.uiBg, 0.92).fillRoundedRect(10, y - 19, viewW, 38, 14);
     strip.add(bg);
-    shown.forEach((o, i) => {
+    const row = this.add.container(0, 0);
+    strip.add(row);
+    owned.forEach((o, i) => {
       const cx = x0 + slotW * i + slotW / 2;
       const node = this.add.container(cx, y);
       const ic = this.add.image(0, -2, itemKey(o.id));
@@ -407,14 +583,60 @@ export class HudScene extends Phaser.Scene {
         .text(13, 11, String(o.count), { fontFamily: FONT, fontSize: '11px', color: COLORS.uiText, fontStyle: 'bold', stroke: '#fff8e7', strokeThickness: 3 })
         .setOrigin(1, 0.5);
       node.add([ic, ct]);
-      strip.add(node);
+      row.add(node);
       this.slotPos.set(o.id, { x: cx, y, node });
     });
-    if (extra > 0) {
-      const cx = x0 + slotW * shown.length + slotW / 2;
-      strip.add(this.add.text(cx, y, `+${extra}`, { fontFamily: FONT, fontSize: '13px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0.5));
-    }
     this.strip = strip;
+    const minX = fits ? 0 : viewW - 12 - totalW;
+    if (!fits) {
+      // 줄 밖으로 나간 것은 가린다
+      const mg = this.make.graphics({}, false);
+      mg.fillStyle(0xffffff).fillRoundedRect(12, y - 19, viewW - 4, 38, 12);
+      this.stripMask = mg;
+      row.setMask(mg.createGeometryMask());
+      this.stripScroll = Phaser.Math.Clamp(this.stripScroll, minX, 0);
+      row.x = this.stripScroll;
+      const more = this.add.text(W - 16, y, '›', { fontFamily: FONT, fontSize: '20px', color: '#c9a66b', fontStyle: 'bold' }).setOrigin(1, 0.55);
+      const less = this.add.text(16, y, '‹', { fontFamily: FONT, fontSize: '20px', color: '#c9a66b', fontStyle: 'bold' }).setOrigin(0, 0.55);
+      strip.add([more, less]);
+      const arrows = () => {
+        more.setVisible(row.x > minX + 4);
+        less.setVisible(row.x < -4);
+      };
+      arrows();
+      this.stripArrows = arrows;
+    } else {
+      this.stripScroll = 0;
+      this.stripArrows = undefined;
+    }
+    // 밀기 / 누르기
+    const zone = this.add.rectangle(W / 2, y, viewW, 40, 0, 0).setInteractive();
+    this.stripZone = zone;
+    let start: { px: number; rx: number; moved: boolean } | null = null;
+    zone.on('pointerdown', (p: Phaser.Input.Pointer) => {
+      start = { px: p.x, rx: row.x, moved: false };
+    });
+    zone.on('pointermove', (p: Phaser.Input.Pointer) => {
+      if (!start || !p.isDown) return;
+      if (Math.abs(p.x - start.px) > 8) start.moved = true;
+      if (start.moved && !fits) {
+        row.x = Phaser.Math.Clamp(start.rx + (p.x - start.px), minX, 0);
+        this.stripScroll = row.x;
+        this.stripArrows?.();
+      }
+    });
+    const end = () => {
+      const s0 = start;
+      start = null;
+      if (s0 && !s0.moved && !this.registry.get('modal') && this.registry.get('bear')) {
+        sfx.tap();
+        this.openStorage();
+      }
+    };
+    zone.on('pointerup', end);
+    zone.on('pointerout', () => {
+      start = null;
+    });
   }
 
   private onInventoryChanged(id?: ItemId, _count?: number, delta?: number) {
@@ -538,6 +760,7 @@ export class HudScene extends Phaser.Scene {
     this.hideHint();
     this.refreshTabs();
     this.rebuildBuildTray();
+    this.refreshQuestPill();
     if (v === 'build') this.toast('🏝️ 집·길·울타리를 골라 마을을 지어 봐요');
   }
 
@@ -685,6 +908,7 @@ export class HudScene extends Phaser.Scene {
     const btn = this.button(ok ? '🎁 가져다주기' : '재료가 부족해요', ok, () => {
       this.spend({ [order.item]: order.n });
       const h = village.completeOrder(id);
+      quests.bump('order');
       const gift = ORDER_GIFTS[Math.floor(Math.random() * ORDER_GIFTS.length)];
       const n = 1 + Math.floor(Math.random() * 2);
       inventory.add(gift, n);
@@ -797,6 +1021,10 @@ export class HudScene extends Phaser.Scene {
     });
     this.sideBtns.push(row as Phaser.GameObjects.Container);
     this.emoteRow = row;
+    // 퀘스트 수첩 (받을 보상이 있으면 빨간 점)
+    const qb = this.roundButton(30, HUD_TOP_H + 162, '📜', () => this.openQuestBook());
+    this.questDot = this.add.circle(13, -13, 5, 0xe8604c).setStrokeStyle(1.5, 0xffffff).setVisible(false);
+    qb.add(this.questDot);
     // 보물 도감
     this.roundButton(30, HUD_TOP_H + 118, '👑', () => {
       if (this.registry.get('bear')) this.openTreasures();
@@ -943,7 +1171,7 @@ export class HudScene extends Phaser.Scene {
   private openSettings() {
     if (this.registry.get('modal')) return;
     const PW = 280;
-    const PH = 372;
+    const PH = 432;
     const { box, close } = this.modal(PW, PH);
     const top = -PH / 2;
     box.add(this.add.text(0, top + 30, '⚙️ 설정', { fontFamily: FONT, fontSize: '20px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0.5));
@@ -968,6 +1196,25 @@ export class HudScene extends Phaser.Scene {
     toggle(top + 140, '🎵 배경음악', 'music');
     toggle(top + 186, '🔊 효과음', 'sound');
     toggle(top + 232, '📳 진동', 'vibrate');
+    // 전체 화면: 안드로이드·PC는 바로, 아이폰은 홈 화면에 추가해야 한다
+    const standalone = window.matchMedia('(display-mode: fullscreen), (display-mode: standalone)').matches || (navigator as { standalone?: boolean }).standalone === true;
+    const fsOk = this.scale.fullscreen.available;
+    const fsLabel = () => (this.scale.isFullscreen ? '⛶ 전체 화면 끄기' : '⛶ 전체 화면으로 보기');
+    if (standalone) {
+      box.add(this.add.text(0, top + 278, '⛶ 앱으로 실행 중 (전체 화면)', { fontFamily: FONT, fontSize: '12px', color: '#5fae52', fontStyle: 'bold' }).setOrigin(0.5));
+    } else if (fsOk) {
+      const fs = this.button(fsLabel(), true, () => {
+        setSetting('fullscreen', !this.scale.isFullscreen);
+        this.toggleFullscreen();
+        close();
+      }, 200);
+      fs.setPosition(0, top + 278);
+      (fs.list[0] as Phaser.GameObjects.Graphics).clear().fillStyle(0xf2a93b).fillRoundedRect(-100, -20, 200, 40, 20);
+      (fs.list[1] as Phaser.GameObjects.Text).setStroke('#b9781f', 3);
+      box.add(fs);
+    } else {
+      box.add(this.add.text(0, top + 278, '⛶ 전체 화면: 브라우저의 공유 버튼 →\n"홈 화면에 추가"로 설치하면 돼요', { fontFamily: FONT, fontSize: '11px', color: '#8a6d4b', fontStyle: 'bold', align: 'center' }).setOrigin(0.5));
+    }
     let armed = false;
     const reset = this.button('처음부터 다시 하기', true, () => {
       if (!armed) {
@@ -977,7 +1224,7 @@ export class HudScene extends Phaser.Scene {
       }
       resetAll();
     }, 200);
-    reset.setPosition(0, top + 298);
+    reset.setPosition(0, top + 340);
     (reset.list[0] as Phaser.GameObjects.Graphics).clear().fillStyle(0xe58f7b).fillRoundedRect(-100, -20, 200, 40, 20);
     box.add(reset);
     (reset.list[1] as Phaser.GameObjects.Text).setStroke('#b85c48', 3);
@@ -1236,9 +1483,16 @@ export class HudScene extends Phaser.Scene {
         buzz(20);
         this.tweens.add({ targets: card, scale: 1.2, duration: 120, yoyo: true });
         this.game.events.emit('choose-bear', b.id);
+        this.time.delayedCall(400, () => this.refreshQuestPill());
         this.time.delayedCall(180, () => this.closeTitle(box, dim));
         // 오늘 선물을 아직 안 받았으면 달력을 먼저 보여 준다
-        this.time.delayedCall(1100, () => daily.ready && this.openDaily());
+        this.time.delayedCall(1100, () => {
+          if (!daily.ready || this.registry.get('dailyShown')) return;
+          this.registry.set('dailyShown', true);
+          this.openDaily();
+        });
+        // 주소창 없이 넓게: 손가락이 닿은 이 순간에만 전체 화면을 켤 수 있다 (설정에서 끌 수 있음)
+        if (settings.fullscreen && this.scale.fullscreen.available && !this.scale.isFullscreen) this.toggleFullscreen();
       });
       box.add(card);
     });

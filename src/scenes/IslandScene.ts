@@ -1,3 +1,4 @@
+import { quests } from '../state/quests';
 import Phaser from 'phaser';
 import { PLAYER_SPEED, TILE, WORLD_ZOOM, COLORS } from '../config';
 import { BEARS, BLOCKING, OBJECT_TEXTURE, type BearId } from '../data/assets';
@@ -896,6 +897,7 @@ export class IslandScene extends Phaser.Scene {
     sfx.pop();
     buzz(s.king ? 40 : 20);
     s.pop();
+    quests.bump('slime');
     if (s.king) {
       this.toast('👑 왕슬라임을 잡았어요!');
       family.post('👑 왕슬라임을 잡았어요');
@@ -1235,6 +1237,7 @@ export class IslandScene extends Phaser.Scene {
     buzz(piece.floor ? 8 : 20);
     if (piece.points > 0) float(`⭐ +${piece.points}`);
     village.place(this.islandIdx, placed);
+    quests.bump('build');
   }
 
   private spawnResident(id: string, anim: boolean) {
@@ -1387,6 +1390,7 @@ export class IslandScene extends Phaser.Scene {
   private endFishing(caught: boolean, msg?: string) {
     const f = this.fishing!;
     this.fishing = null;
+    if (caught) quests.bump('fish');
     this.game.events.emit('fishing', false);
     f.mark?.destroy();
     this.tweens.killTweensOf(f.bobber);
@@ -1474,6 +1478,8 @@ export class IslandScene extends Phaser.Scene {
         icon.destroy();
         sfx.pop();
         inventory.add(id, 1);
+        quests.bump('gather');
+        quests.bump(`gather:${id}`);
         const cam = this.cameras.main;
         this.game.events.emit('item-gained', id, (pl.x - cam.worldView.x) * cam.zoom, (pl.y - 30 - cam.worldView.y) * cam.zoom);
       },

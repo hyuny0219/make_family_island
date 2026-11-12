@@ -1,3 +1,4 @@
+import { quests } from './state/quests';
 import { Slime } from './objects/Slime';
 import Phaser from 'phaser';
 import { GAME_HEIGHT, GAME_WIDTH, COLORS } from './config';
@@ -22,6 +23,7 @@ const game = new Phaser.Game({
   scale: {
     mode: Phaser.Scale.EXPAND,
     autoCenter: Phaser.Scale.CENTER_BOTH,
+    fullscreenTarget: 'game',
   },
   input: {
     activePointers: 2,
@@ -30,4 +32,4 @@ const game = new Phaser.Game({
 });
 
 // 디버그/테스트용 핸들
-Object.assign(window, { __game: game, __inv: inventory, __progress: progress, __village: village, __family: family, __Slime: Slime });
+Object.assign(window, { __game: game, __inv: inventory, __progress: progress, __village: village, __family: family, __Slime: Slime, __quests: quests });
