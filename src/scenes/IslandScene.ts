@@ -580,9 +580,12 @@ export class IslandScene extends Phaser.Scene {
       const wp0 = this.cameras.main.getWorldPoint(p.x, p.y);
       if (Math.abs(wp0.x - (rm.x + rm.w / 2)) < 22 && wp0.y > rm.y + rm.h - 20) return this.walkTo(rm.x + rm.w / 2, rm.y + rm.h - 8, { door: true });
     }
-    const houseHit = this.room ? undefined : tagged.find((o) => o.placed && ENTERABLE.has(o.placed.id));
-    if (houseHit && !monHit) {
-      const hp = houseHit.placed!;
+    // 집 그림을 눌렀거나, 집이 놓인 칸을 눌렀으면 들어간다
+    const wpH = this.cameras.main.getWorldPoint(p.x, p.y);
+    const onTile = this.placedOcc.get(`${Math.floor(wpH.x / TILE)},${Math.floor(wpH.y / TILE)}`);
+    const housePlaced = this.room ? undefined : tagged.find((o) => o.placed && ENTERABLE.has(o.placed.id))?.placed ?? (onTile && ENTERABLE.has(onTile.id) ? onTile : undefined);
+    if (housePlaced && !monHit) {
+      const hp = housePlaced;
       // 문은 집 아래쪽 가운데
       return this.walkTo((hp.tx + 1) * TILE, (hp.ty + 1) * TILE + 10, { house: hp });
     }
@@ -2335,6 +2338,8 @@ export class IslandScene extends Phaser.Scene {
     }
     img.setScale(piece.scale).setFlipX(!!p.f);
     (img as unknown as { placed: Placed }).placed = p;
+    // 집(들어가기)과 침대(잠자기)는 눌러서 쓴다
+    if (ENTERABLE.has(p.id) || p.id === 'bed') img.setInteractive({ useHandCursor: true });
     this.placedObjs.set(key, img);
     if (LIGHTS.has(p.id)) this.addGlow(img, 1);
     if (anim) {
