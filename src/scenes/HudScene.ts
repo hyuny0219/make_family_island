@@ -959,7 +959,10 @@ export class HudScene extends Phaser.Scene {
     const cats = BUILD_CATS.filter((c) => !!c.inside === inRoom);
     let cat = (this.registry.get('buildCat') as BuildCat) ?? cats[0].id;
     if (!cats.some((c) => c.id === cat)) cat = cats[0].id;
-    const cw = (W - 40 - (cats.length - 1) * 4) / cats.length;
+    // 집 안에서는 끝에 '집 밖으로' 단추를 둔다
+    const slots = cats.length + (inRoom ? 1 : 0);
+    const cw = (W - 40 - (slots - 1) * 4) / slots;
+    if (inRoom) chip(20 + cats.length * (cw + 4), top + 72, cw, '🚪 집 밖으로', false, () => this.game.events.emit('exit-house'), 11);
     cats.forEach((c, i) => {
       chip(20 + i * (cw + 4), top + 72, cw, c.label, c.id === cat, () => {
         this.registry.set('buildCat', c.id);
