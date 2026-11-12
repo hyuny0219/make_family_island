@@ -1,16 +1,24 @@
 import { itemKey, type ItemId } from './items';
 import { DECOR_BLOCKING, DECOR_POINTS } from './village';
 
-export type BuildCat = 'path' | 'house' | 'fence' | 'plaza' | 'nature' | 'furniture';
+export type BuildCat = 'path' | 'house' | 'fence' | 'plaza' | 'nature' | 'furniture' | 'deco';
 
-export const BUILD_CATS: { id: BuildCat; label: string }[] = [
+/** inside: 집 안에서만 놓는 종류 (나머지는 섬에 놓는다) */
+export const BUILD_CATS: { id: BuildCat; label: string; inside?: boolean }[] = [
   { id: 'path', label: '길' },
   { id: 'house', label: '집' },
   { id: 'fence', label: '울타리' },
   { id: 'plaza', label: '광장' },
   { id: 'nature', label: '자연' },
-  { id: 'furniture', label: '가구' },
+  { id: 'furniture', label: '가구', inside: true },
+  { id: 'deco', label: '실내 장식', inside: true },
 ];
+
+/** 들어가서 안을 꾸밀 수 있는 집 */
+export const ENTERABLE = new Set(['house_red', 'house_blue', 'cabin']);
+/** 밤에 주변을 밝히는 것 (그 둘레에는 몬스터가 나타나지 않는다) */
+export const LIGHTS = new Set(['torch', 'lamp', 'lantern', 'jelly_lamp']);
+export const houseKey = (island: number, tx: number, ty: number) => `h${island}_${tx}_${ty}`;
 
 /** 섬에 지을 수 있는 것 하나 */
 export interface Piece {
@@ -82,8 +90,21 @@ export const PIECE_LIST: Piece[] = [
   I('table', '탁자', 'furniture'),
   I('bed', '침대', 'furniture'),
   I('sofa', '소파', 'furniture'),
-  I('jelly_block', '젤리 블록', 'furniture'),
-  I('jelly_lamp', '젤리 램프', 'furniture'),
+  P('bookshelf', '책장', 'furniture', 1, 1, { plank: 3 }, 4, true),
+  P('wardrobe', '옷장', 'furniture', 1, 1, { plank: 4 }, 4, true),
+  P('stove', '부엌 화덕', 'furniture', 1, 1, { brick: 3, coal: 1 }, 4, true),
+  P('fireplace', '벽난로', 'furniture', 1, 1, { brick: 5, coal: 2 }, 6, true),
+  P('bathtub', '욕조', 'furniture', 2, 1, { stone: 6, shell: 2 }, 5, true),
+  P('piano', '피아노', 'furniture', 2, 1, { plank: 5, crystal: 1 }, 8, true),
+  P('toybox', '장난감 상자', 'furniture', 1, 1, { plank: 2, jelly: 2 }, 3, true),
+  // 실내 장식
+  P('rug', '둥근 깔개', 'deco', 2, 2, { flower: 3, twig: 3 }, 2, false, true),
+  P('floorlamp', '스탠드', 'deco', 1, 1, { stone: 2, coal: 1 }, 3, true),
+  P('plant', '큰 화분', 'deco', 1, 1, { flower: 2, twig: 2 }, 2, true),
+  P('picture', '그림 액자', 'deco', 1, 1, { plank: 1, flower: 1 }, 2, true),
+  P('window', '창문', 'deco', 1, 1, { plank: 2, shell: 1 }, 2, true),
+  I('jelly_block', '젤리 블록', 'deco'),
+  I('jelly_lamp', '젤리 램프', 'deco'),
 ];
 
 export const PIECES: Record<string, Piece> = Object.fromEntries(PIECE_LIST.map((p) => [p.id, p]));

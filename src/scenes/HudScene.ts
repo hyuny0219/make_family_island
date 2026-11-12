@@ -52,6 +52,7 @@ export class HudScene extends Phaser.Scene {
   private questDot?: Phaser.GameObjects.Arc;
   private resizeTimer?: Phaser.Time.TimerEvent;
   private statusBar?: Phaser.GameObjects.Container;
+  private shownNight = false;
   private topText!: Phaser.GameObjects.Text;
   private topBg!: Phaser.GameObjects.Graphics;
   private topBtn!: Phaser.GameObjects.Container;
@@ -137,7 +138,21 @@ export class HudScene extends Phaser.Scene {
     player.on('hurt', this.onHurt, this);
     abilities.on('changed', this.refreshStatus, this);
     this.registry.events.on('changedata-dungeon', this.refreshQuestPill, this);
-    this.time.addEvent({ delay: 1000, loop: true, callback: () => this.refreshStatus() });
+    this.registry.events.on('changedata-room', this.onRoomChange, this);
+    this.registry.events.on('changedata-night', this.updateTopBar, this);
+    this.time.addEvent({
+      delay: 1000,
+      loop: true,
+      callback: () => {
+        this.refreshStatus();
+        // 밤낮이 바뀌면 위쪽 섬 이름 옆 그림도 바꾼다
+        const night = !!this.registry.get('night');
+        if (night !== this.shownNight) {
+          this.shownNight = night;
+          this.updateTopBar();
+        }
+      },
+    });
     progress.on('region-unlocked', this.refreshQuestPill, this);
     progress.on('treasure', this.refreshQuestPill, this);
     progress.on('boat-built', this.refreshQuestPill, this);
@@ -148,6 +163,8 @@ export class HudScene extends Phaser.Scene {
       player.off('hurt', this.onHurt, this);
       abilities.off('changed', this.refreshStatus, this);
       this.registry.events.off('changedata-dungeon', this.refreshQuestPill, this);
+      this.registry.events.off('changedata-room', this.onRoomChange, this);
+      this.registry.events.off('changedata-night', this.updateTopBar, this);
       progress.off('region-unlocked', this.refreshQuestPill, this);
       progress.off('treasure', this.refreshQuestPill, this);
       progress.off('boat-built', this.refreshQuestPill, this);
@@ -192,16 +209,17 @@ export class HudScene extends Phaser.Scene {
     this.questPill = undefined;
     this.questDot?.setVisible(quests.claimable);
     if (!this.registry.get('bear') || this.view !== 'explore') return;
-    if (this.registry.get('dungeon')) {
+    if (this.registry.get('dungeon') || this.registry.get('room')) {
+      const inRoom = !!this.registry.get('room');
       const W0 = this.scale.width;
-      const t0 = this.add.text(0, 0, '🚪 던전에서 나가기', { fontFamily: FONT, fontSize: '11px', color: '#ffffff', fontStyle: 'bold' }).setOrigin(0.5);
+      const t0 = this.add.text(0, 0, inRoom ? '🚪 집에서 나가기' : '🚪 던전에서 나가기', { fontFamily: FONT, fontSize: '11px', color: '#ffffff', fontStyle: 'bold' }).setOrigin(0.5);
       const g0 = this.add.graphics();
-      g0.fillStyle(0x5a4d6b, 0.95).fillRoundedRect(-66, -12, 132, 24, 12);
+      g0.fillStyle(inRoom ? 0x8a6d4b : 0x5a4d6b, 0.95).fillRoundedRect(-66, -12, 132, 24, 12);
       const c0 = this.add.container(W0 / 2, HUD_TOP_H + 16, [g0, t0]).setDepth(5);
       c0.setSize(132, 30).setInteractive({ useHandCursor: true });
       c0.on('pointerdown', () => {
         sfx.tap();
-        this.game.events.emit('exit-dungeon');
+        this.game.events.emit(inRoom ? 'exit-house' : 'exit-dungeon');
       });
       this.questPill = c0;
       return;
@@ -339,7 +357,7 @@ export class HudScene extends Phaser.Scene {
   private updateTopBar() {
     const i = progress.current;
     const isl = ISLANDS[i];
-    this.topText.setText(`${isl.emoji} ${isl.name}  ${progress.unlockedCount(i)}/${isl.regions}`);
+    this.topText.setText(`${this.registry.get('night') ? '🌙' : isl.emoji} ${isl.name}  ${progress.unlockedCount(i)}/${isl.regions}`);
     const w = this.topText.width + 28;
     this.topBg.clear();
     this.topBg.fillStyle(0x000000, 0.15).fillRoundedRect(0, 3, w, 36, 18);
@@ -879,7 +897,7 @@ export class HudScene extends Phaser.Scene {
     this.refreshTabs();
     this.rebuildBuildTray();
     this.refreshQuestPill();
-    if (v === 'build') this.toast('🏝️ 집·길·울타리를 골라 마을을 지어 봐요');
+    if (v === 'build') this.toast(this.registry.get('room') ? '🏠 가구를 골라 집 안을 꾸며 봐요' : '🏝️ 집·길·울타리를 골라 마을을 지어 봐요');
   }
 
   /** 꾸미기 모드: 도구 · 종류 · 지을 것 고르기 + 마을 점수 */
@@ -936,10 +954,13 @@ export class HudScene extends Phaser.Scene {
     chip(W - 20 - 58, top + 42, 58, '🔍 멀리', false, () => this.game.events.emit('build-zoom'), 11);
 
     // 3) 종류
-    let cat = (this.registry.get('buildCat') as BuildCat) ?? 'path';
-    if (!BUILD_CATS.some((c) => c.id === cat)) cat = 'path';
-    const cw = (W - 40 - 5 * 4) / 6;
-    BUILD_CATS.forEach((c, i) => {
+    // 집 안에서는 가구·실내 장식만, 밖에서는 길·집·울타리…
+    const inRoom = !!this.registry.get('room');
+    const cats = BUILD_CATS.filter((c) => !!c.inside === inRoom);
+    let cat = (this.registry.get('buildCat') as BuildCat) ?? cats[0].id;
+    if (!cats.some((c) => c.id === cat)) cat = cats[0].id;
+    const cw = (W - 40 - (cats.length - 1) * 4) / cats.length;
+    cats.forEach((c, i) => {
       chip(20 + i * (cw + 4), top + 72, cw, c.label, c.id === cat, () => {
         this.registry.set('buildCat', c.id);
         this.registry.set('buildPage', 0);
@@ -994,7 +1015,7 @@ export class HudScene extends Phaser.Scene {
       cx -= 26;
       tray.add([t, ic]);
     });
-    tray.add(this.add.text(W / 2, top + 167, '화면을 끌어서 둘러보고, 땅을 톡 눌러 지어요 · 치우면 재료를 돌려받아요', { fontFamily: FONT, fontSize: '8px', color: '#a08a6a' }).setOrigin(0.5));
+    tray.add(this.add.text(W / 2, top + 167, inRoom ? '🏠 집 안 꾸미기 · 바닥을 톡 눌러 놓아요 · 치우면 재료를 돌려받아요' : '화면을 끌어서 둘러보고, 땅을 톡 눌러 지어요 · 집을 누르면 들어가요', { fontFamily: FONT, fontSize: '8px', color: '#a08a6a' }).setOrigin(0.5));
   }
 
   /** 주민의 부탁 */
@@ -1247,6 +1268,12 @@ export class HudScene extends Phaser.Scene {
       list.add(this.add.text(x + 48, y + 26, foodText(o.id), { fontFamily: FONT, fontSize: '10px', color: '#8a6d4b' }));
       list.add(this.add.text(x + PW - 44, y + 22, '먹기', { fontFamily: FONT, fontSize: '12px', color: '#5fae52', fontStyle: 'bold' }).setOrigin(1, 0.5));
     });
+  }
+
+  private onRoomChange() {
+    this.registry.set('buildPiece', null);
+    this.rebuildBuildTray();
+    this.refreshQuestPill();
   }
 
   /** 던전 입구 */

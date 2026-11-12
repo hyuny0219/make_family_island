@@ -26,7 +26,8 @@ export interface Order {
 
 interface Saved {
   /** 섬별로 놓인 장식 */
-  placed: Record<number, Placed[]>;
+  /** 섬 번호 또는 집 안 열쇠(h섬_tx_ty) → 놓인 것 */
+  placed: Record<string, Placed[]>;
   /** 이사 온 주민 */
   joined: string[];
   hearts: Record<string, number>;
@@ -52,7 +53,7 @@ class Village extends Phaser.Events.EventEmitter {
     }
   }
 
-  placedOn(island: number): readonly Placed[] {
+  placedOn(island: number | string): readonly Placed[] {
     return this.d.placed[island] ?? [];
   }
 
@@ -63,13 +64,13 @@ class Village extends Phaser.Events.EventEmitter {
     return s;
   }
 
-  place(island: number, p: Placed) {
+  place(island: number | string, p: Placed) {
     (this.d.placed[island] ??= []).push(p);
     family.union(`placed.${island}`, wire(p));
     this.afterChange();
   }
 
-  remove(island: number, tx: number, ty: number, id: string) {
+  remove(island: number | string, tx: number, ty: number, id: string) {
     const list = this.d.placed[island] ?? [];
     const i = list.findIndex((p) => p.tx === tx && p.ty === ty && p.id === id);
     if (i < 0) return null;
@@ -160,8 +161,8 @@ class Village extends Phaser.Events.EventEmitter {
 
   /** 가족 섬의 최신 상태로 맞추기. 달라졌으면 'changed'·'remote', 새 주민은 'resident-joined' */
   applyRemote(r: { placed?: Record<string, Placed[]>; joined?: string[]; hearts?: Record<string, number>; orders?: Record<string, Order>; nextAt?: Record<string, number> }) {
-    const placed: Record<number, Placed[]> = {};
-    for (const [k, v] of Object.entries(r.placed ?? {})) placed[Number(k)] = v.filter((p) => p.id in PIECES).map(wire);
+    const placed: Record<string, Placed[]> = {};
+    for (const [k, v] of Object.entries(r.placed ?? {})) placed[k] = v.filter((p) => p.id in PIECES).map(wire);
     const next: Saved = { placed, joined: [...(r.joined ?? [])], hearts: { ...(r.hearts ?? {}) }, orders: { ...(r.orders ?? {}) }, nextAt: { ...(r.nextAt ?? {}) } };
     if (JSON.stringify(next) === JSON.stringify(this.d)) return;
     const before = new Set(this.d.joined);
