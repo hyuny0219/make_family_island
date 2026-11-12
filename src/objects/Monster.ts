@@ -121,9 +121,9 @@ export class Monster {
   }
 
   /** 얼리기 */
-  freeze(sec: number) {
+  freeze(sec: number, tint = 0x9fd8ff) {
     this.stun = Math.max(this.stun, sec);
-    this.sprite.setTint(0x9fd8ff);
+    this.sprite.setTint(tint);
     this.sprite.scene.time.delayedCall(sec * 1000, () => !this.dead && this.sprite.clearTint());
   }
 

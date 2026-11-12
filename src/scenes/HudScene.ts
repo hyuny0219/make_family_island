@@ -135,6 +135,7 @@ export class HudScene extends Phaser.Scene {
     quests.on('changed', this.refreshQuestPill, this);
     player.on('changed', this.refreshStatus, this);
     player.on('hurt', this.onHurt, this);
+    abilities.on('changed', this.refreshStatus, this);
     this.registry.events.on('changedata-dungeon', this.refreshQuestPill, this);
     this.time.addEvent({ delay: 1000, loop: true, callback: () => this.refreshStatus() });
     progress.on('region-unlocked', this.refreshQuestPill, this);
@@ -145,6 +146,7 @@ export class HudScene extends Phaser.Scene {
       quests.off('changed', this.refreshQuestPill, this);
       player.off('changed', this.refreshStatus, this);
       player.off('hurt', this.onHurt, this);
+      abilities.off('changed', this.refreshStatus, this);
       this.registry.events.off('changedata-dungeon', this.refreshQuestPill, this);
       progress.off('region-unlocked', this.refreshQuestPill, this);
       progress.off('treasure', this.refreshQuestPill, this);
@@ -1171,6 +1173,27 @@ export class HudScene extends Phaser.Scene {
       this.openLunchbox();
     });
     c.add(lb);
+    // 변신 기술 버튼 (오른쪽 아래) — 쓰고 나면 다시 찰 때까지 어둡게, 남은 초를 보여 준다
+    const sk = abilities.skill();
+    if (sk) {
+      const W = this.scale.width;
+      const left = Math.max(0, ((this.registry.get('skillReady') as number) ?? 0) - this.game.scene.getScene('Island').time.now);
+      const sb = this.add.container(W - 12 - 12 - 26, -12);
+      const sg = this.add.graphics();
+      sg.fillStyle(0x000000, 0.16).fillCircle(0, 3, 26);
+      sg.fillStyle(left > 0 ? 0xb8b0a0 : 0xff8a5c).fillCircle(0, 0, 26);
+      sg.lineStyle(3, 0xffffff, 0.9).strokeCircle(0, 0, 26);
+      sb.add(sg);
+      sb.add(this.add.image(0, -5, hatKey(sk.id)).setScale(1.3).setAlpha(left > 0 ? 0.5 : 1));
+      sb.add(this.add.text(0, 14, left > 0 ? String(Math.ceil(left / 1000)) : sk.name, { fontFamily: FONT, fontSize: left > 0 ? '13px' : '8px', color: '#ffffff', fontStyle: 'bold', stroke: '#7a4a2a', strokeThickness: 3 }).setOrigin(0.5));
+      sb.setSize(56, 56).setInteractive({ useHandCursor: true });
+      sb.on('pointerdown', () => {
+        if (left > 0) return;
+        this.game.events.emit('use-skill');
+        this.time.delayedCall(30, () => this.refreshStatus());
+      });
+      c.add(sb);
+    }
     // 효과 아이콘 + 남은 초
     player.active().forEach(([k, sec], i) => {
       const x = bw + 112 + i * 40;
@@ -1264,7 +1287,7 @@ export class HudScene extends Phaser.Scene {
     if (this.registry.get('modal') || !this.registry.get('bear')) return;
     const H = this.scale.height;
     const PW = Math.min(330, this.scale.width - 20);
-    const rowH = 62;
+    const rowH = 70;
     const contentH = ABILITIES.length * rowH;
     const PH = Math.min(H - 70, 88 + contentH);
     const viewH = PH - 88;
@@ -1318,16 +1341,17 @@ export class HudScene extends Phaser.Scene {
         return;
       }
       list.add(this.add.text(x + 54, y + 8, `${ab.emoji} ${ab.names[lv - 1]}  ${'★'.repeat(lv)} ${lv}단계${worn ? ' · 변신 중' : ''}`, { fontFamily: FONT, fontSize: '13px', color: COLORS.uiText, fontStyle: 'bold' }));
-      list.add(this.add.text(x + 54, y + 28, ab.desc.replace('{n}', String(ab.n[lv - 1])), { fontFamily: FONT, fontSize: '10px', color: '#8a6d4b', wordWrap: { width: PW - 30 - 54 - 76 } }));
+      list.add(this.add.text(x + 54, y + 26, ab.desc.replace('{n}', String(ab.n[lv - 1])), { fontFamily: FONT, fontSize: '9px', color: '#8a6d4b' }));
+      list.add(this.add.text(x + 54, y + 39, `⚡ ${ab.skill.name}: ${ab.skill.desc.replace('{n}', String(ab.skill.n[lv - 1]))}`, { fontFamily: FONT, fontSize: '8px', color: '#e07a5f', fontStyle: 'bold', wordWrap: { width: PW - 30 - 54 - 76 } }));
       if (lv < 3) {
         const cost = UPGRADE_COST[lv - 1];
         const ok = canPay(cost);
         const ux = x + PW - 30 - 38;
         const ug = this.add.graphics();
-        ug.fillStyle(ok ? 0x8bd17c : 0xd8d2c4).fillRoundedRect(ux - 32, y + 9, 64, 39, 10);
+        ug.fillStyle(ok ? 0x8bd17c : 0xd8d2c4).fillRoundedRect(ux - 32, y + 13, 64, 39, 10);
         list.add(ug);
-        list.add(this.add.text(ux, y + 20, '강화', { fontFamily: FONT, fontSize: '12px', color: ok ? '#ffffff' : '#9a917f', fontStyle: 'bold' }).setOrigin(0.5));
-        list.add(this.add.text(ux, y + 37, `증표${cost.boss_token} 보석${cost.crystal}`, { fontFamily: FONT, fontSize: '8px', color: ok ? '#ffffff' : '#9a917f', fontStyle: 'bold' }).setOrigin(0.5));
+        list.add(this.add.text(ux, y + 24, '강화', { fontFamily: FONT, fontSize: '12px', color: ok ? '#ffffff' : '#9a917f', fontStyle: 'bold' }).setOrigin(0.5));
+        list.add(this.add.text(ux, y + 41, `증표${cost.boss_token} 보석${cost.crystal}`, { fontFamily: FONT, fontSize: '8px', color: ok ? '#ffffff' : '#9a917f', fontStyle: 'bold' }).setOrigin(0.5));
       } else {
         list.add(this.add.text(x + PW - 30 - 38, y + 28, '최고!', { fontFamily: FONT, fontSize: '12px', color: '#e07a5f', fontStyle: 'bold' }).setOrigin(0.5));
       }
