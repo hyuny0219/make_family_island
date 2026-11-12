@@ -143,6 +143,15 @@ class Village extends Phaser.Events.EventEmitter {
     return this.d.hearts[id];
   }
 
+  /** 선물을 줘서 호감도를 올린다 */
+  gift(id: string, n: number) {
+    this.d.hearts[id] = this.hearts(id) + n;
+    family.inc(`hearts.${id}`, n);
+    this.save();
+    this.emit('changed');
+    return this.d.hearts[id];
+  }
+
   exportDoc() {
     const placed: Record<string, Placed[]> = {};
     for (const [k, v] of Object.entries(this.d.placed)) placed[k] = v.map(wire);

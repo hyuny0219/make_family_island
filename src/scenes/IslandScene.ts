@@ -85,7 +85,7 @@ export class IslandScene extends Phaser.Scene {
   private slimeTimer = 3;
   private slimeTip = false;
   private myEmote: { e: string; et: number } | null = null;
-  private fishing: null | { spot: SpotObj; phase: 'wait' | 'bite'; t: number; bobber: Phaser.GameObjects.Image; mark?: Phaser.GameObjects.Text } = null;
+  private fishing: null | { spot: SpotObj; phase: 'wait' | 'bite'; t: number; bobber: Phaser.GameObjects.Image; mark?: Phaser.GameObjects.Text; bait?: boolean } = null;
   private fx!: Record<'leaf' | 'pebble' | 'sparkle' | 'ember' | 'heart' | 'dust' | 'splash' | 'puff', Phaser.GameObjects.Particles.ParticleEmitter>;
 
   constructor() {
@@ -194,6 +194,7 @@ export class IslandScene extends Phaser.Scene {
     ge.on('travel', this.onTravel, this);
     ge.on('go-home', this.goHome, this);
     ge.on('emote', this.onEmote, this);
+    ge.on('use-item', this.onUseItem, this);
     village.on('resident-joined', this.onResidentJoined, this);
     village.on('remote', this.syncPlaced, this);
     family.on('presence', this.onPresence, this);
@@ -207,6 +208,7 @@ export class IslandScene extends Phaser.Scene {
       ge.off('travel', this.onTravel, this);
       ge.off('go-home', this.goHome, this);
       ge.off('emote', this.onEmote, this);
+      ge.off('use-item', this.onUseItem, this);
       village.off('resident-joined', this.onResidentJoined, this);
       village.off('remote', this.syncPlaced, this);
       family.off('presence', this.onPresence, this);
@@ -930,6 +932,54 @@ export class IslandScene extends Phaser.Scene {
     });
   }
 
+  /** 창고에서 '쓰기'를 누른 물건 */
+  private onUseItem(id: ItemId) {
+    const pl = this.player;
+    if (!pl || this.flying || this.fishing || inventory.get(id) <= 0) return;
+    if (id === 'grilled_fish') {
+      inventory.add(id, -1);
+      this.springUntil = this.time.now + 60000;
+      pl.speed = PLAYER_SPEED * 1.6;
+      pl.emote('😋');
+      sfx.fanfare();
+      this.fx.heart.explode(5, pl.x, pl.y - 30);
+      this.toast('😋 냠냠! 60초 동안 발이 빨라져요');
+    } else if (id === 'candy') {
+      if (this.regionAt(pl.x, pl.y) <= 0) return void this.toast('🍭 캠프 밖 지역에서 써야 왕슬라임이 와요');
+      // 곰 근처 걸을 수 있는 곳에 왕슬라임이 나타난다
+      for (let i = 0; i < 24; i++) {
+        const a = Math.random() * Math.PI * 2;
+        const x = pl.x + Math.cos(a) * (50 + i * 3);
+        const y = pl.y + Math.sin(a) * (50 + i * 3);
+        if (this.regionAt(x, y) <= 0 || !this.unlocked(this.regionAt(x, y)) || !this.walkable(x, y)) continue;
+        inventory.add(id, -1);
+        this.slimes.push(new Slime(this, x, y, true, ''));
+        this.fx.puff.explode(10, x, y - 8);
+        this.fx.sparkle.explode(10, x, y - 12);
+        sfx.boing();
+        pl.emote('🍭');
+        this.toast('👑 달콤한 냄새를 맡고 왕슬라임이 왔어요!');
+        return;
+      }
+      this.toast('여기는 좁아요. 넓은 곳에서 써 봐요');
+    } else if (id === 'firework') {
+      inventory.add(id, -1);
+      pl.emote('🎆');
+      this.onEmote('🎆');
+      for (let i = 0; i < 6; i++) {
+        this.time.delayedCall(i * 260, () => {
+          const x = pl.x + Phaser.Math.Between(-70, 70);
+          const y = pl.y - Phaser.Math.Between(70, 150);
+          this.fx.sparkle.explode(22, x, y);
+          this.fx.heart.explode(4, x, y);
+          sfx.pop();
+          if (i % 2 === 0) buzz(20);
+        });
+      }
+      family.post('🎆 폭죽을 터뜨렸어요');
+    }
+  }
+
   /** 온천: 들어가 있으면 한동안 발이 빨라진다 */
   private updateSpring() {
     const pl = this.player;
@@ -938,7 +988,7 @@ export class IslandScene extends Phaser.Scene {
     if (this.springUntil && now > this.springUntil) {
       this.springUntil = 0;
       pl.speed = PLAYER_SPEED;
-      this.toast('온천 기운이 다했어요');
+      this.toast('빨라진 기운이 다했어요');
     }
     if (ISLAND_PLAY[this.islandIdx]?.kind !== 'spring') return;
     const tx = Math.floor(pl.x / TILE);
@@ -1553,9 +1603,12 @@ export class IslandScene extends Phaser.Scene {
         this.tweens.add({ targets: bobber, y: sy + 1, duration: 600, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
       },
     });
-    this.fishing = { spot, phase: 'wait', t: 1.6 + Math.random() * 2.4, bobber };
+    // 미끼가 있으면 저절로 하나 쓴다
+    const bait = inventory.get('bait') > 0;
+    if (bait) inventory.add('bait', -1);
+    this.fishing = { spot, phase: 'wait', t: bait ? 0.8 + Math.random() : 1.6 + Math.random() * 2.4, bobber, bait };
     this.game.events.emit('fishing', true);
-    this.toast('🎣 느낌표(!)가 뜨면 화면을 톡!');
+    this.toast(bait ? '🪱 미끼를 썼어요! 느낌표(!)가 뜨면 톡!' : '🎣 느낌표(!)가 뜨면 화면을 톡!');
   }
 
   private updateFishing(dt: number) {
@@ -1566,7 +1619,7 @@ export class IslandScene extends Phaser.Scene {
       if (Math.random() < dt * 1.2) this.tweens.add({ targets: f.bobber, y: f.bobber.y + 2, duration: 80, yoyo: true });
       if (f.t <= 0) {
         f.phase = 'bite';
-        f.t = inventory.get('rod') > 0 ? 2.2 : 1.4; // 아이들도 누를 수 있게 넉넉히 (낚싯대가 있으면 더 길게)
+        f.t = (inventory.get('rod') > 0 ? 2.2 : 1.4) + (f.bait ? 0.8 : 0); // 아이들도 누를 수 있게 넉넉히 (낚싯대가 있으면 더 길게)
         this.tweens.killTweensOf(f.bobber);
         this.tweens.add({ targets: f.bobber, y: f.spot.y + 4, duration: 120, yoyo: true, repeat: -1 });
         this.fx.splash.explode(8, f.spot.x, f.spot.y);
@@ -1607,8 +1660,8 @@ export class IslandScene extends Phaser.Scene {
     if (f.spot.ice) quests.bump('play');
     // 낚싯대가 있으면 꽝(장화)이 안 나오고 황금 물고기가 잘 나온다 (얼음낚시는 큰 물고기가 잘 잡힌다)
     const table = (f.spot.ice ? ICE_FISH : BIOME_INFO[biome].fish)
-      .filter(([id]) => !(hasRod && id === 'boot'))
-      .map(([id, w]) => [id, hasRod && id === 'fish_gold' ? w * 3 : w] as [ItemId, number]);
+      .filter(([id]) => !((hasRod || f.bait) && id === 'boot'))
+      .map(([id, w]) => [id, id === 'fish_gold' ? w * (hasRod ? 3 : 1) * (f.bait ? 3 : 1) : w] as [ItemId, number]);
     const total = table.reduce((s, [, w]) => s + w, 0);
     let r = Math.random() * total;
     let item: ItemId = table[0][0];

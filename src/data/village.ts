@@ -2,6 +2,7 @@ import type { ItemId } from './items';
 
 /** 섬에 놓을 수 있는 물건과 마을 점수 */
 export const DECOR_POINTS: Partial<Record<ItemId, number>> = {
+  torch: 2,
   fence: 2,
   chair: 3,
   wall: 3,

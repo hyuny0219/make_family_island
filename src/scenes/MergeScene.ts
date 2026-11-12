@@ -2,7 +2,7 @@ import { quests } from '../state/quests';
 import Phaser from 'phaser';
 import { COLORS } from '../config';
 import { ITEMS, itemKey, type ItemId } from '../data/items';
-import { MERGE_NEXT, RECIPES, isMergeable, type Recipe } from '../data/merge';
+import { COMBO_PARTS, MERGE_NEXT, RECIPES, comboOf, comboPartners, isMergeable, type Recipe } from '../data/merge';
 import { BOARD_COLS, BOARD_ROWS, loadBoard, saveBoard, type Cell } from '../state/board';
 import { inventory } from '../state/inventory';
 import { sfx, buzz } from '../sfx';
@@ -32,6 +32,7 @@ export class MergeScene extends Phaser.Scene {
   private tray?: Phaser.GameObjects.Container;
   private trayMask?: Phaser.GameObjects.Graphics;
   private trayScroll = 0;
+  private hints: Phaser.GameObjects.Graphics[] = [];
   private craftList?: Phaser.GameObjects.Container;
   private pills: Partial<Record<Mode, { bg: Phaser.GameObjects.Graphics; label: Phaser.GameObjects.Text }>> = {};
   private drag: null | { idx: number; sp: Phaser.GameObjects.Image; sx: number; sy: number; moved: boolean } = null;
@@ -78,9 +79,18 @@ export class MergeScene extends Phaser.Scene {
     this.mergeLayer.add(g);
     this.mergeLayer.add(
       this.add
-        .text(W / 2, this.y0 + bh + 20, '같은 것 3개를 붙이면 합체! · 톡 누르면 창고로', { fontFamily: FONT, fontSize: '11px', color: '#a08a6a' })
+        .text(W / 2 - 34, this.y0 + bh + 20, '같은 것 3개 = 합체 · 다른 것 겹치기 = 조합', { fontFamily: FONT, fontSize: '11px', color: '#a08a6a' })
         .setOrigin(0.5),
     );
+    const book = this.add
+      .text(W - 16, this.y0 + bh + 20, '📖 조합 수첩', { fontFamily: FONT, fontSize: '11px', color: '#e07a5f', fontStyle: 'bold', backgroundColor: '#fff8e7', padding: { x: 6, y: 4 } })
+      .setOrigin(1, 0.5)
+      .setInteractive({ useHandCursor: true });
+    book.on('pointerdown', () => {
+      sfx.tap();
+      this.game.events.emit('open-combos');
+    });
+    this.mergeLayer.add(book);
 
     this.cells = loadBoard();
     this.sprites = this.cells.map(() => null);
@@ -262,6 +272,23 @@ export class MergeScene extends Phaser.Scene {
     this.drag = { idx, sp, sx: p.x, sy: p.y, moved: false };
     sp.setDepth(50);
     this.tweens.add({ targets: sp, scale: ICON * 1.15, duration: 100 });
+    // 겹치면 조합되는 짝을 반짝여서 알려 준다
+    const partners = new Set(comboPartners(this.cells[idx]!));
+    this.hints = [];
+    this.cells.forEach((c, i) => {
+      const s2 = this.sprites[i];
+      if (!c || !s2 || i === idx || !partners.has(c)) return;
+      const { x, y } = this.pos(i);
+      const ring = this.add.graphics().setDepth(9);
+      ring.lineStyle(3, 0xf2a93b).strokeRoundedRect(x - CELL / 2 + 3, y - CELL / 2 + 3, CELL - 6, CELL - 6, 9);
+      this.tweens.add({ targets: ring, alpha: 0.3, duration: 350, yoyo: true, repeat: -1 });
+      this.hints.push(ring);
+    });
+  }
+
+  private clearHints() {
+    this.hints.forEach((h) => h.destroy());
+    this.hints = [];
   }
 
   private onMove(p: Phaser.Input.Pointer) {
@@ -277,6 +304,7 @@ export class MergeScene extends Phaser.Scene {
     const d = this.drag;
     if (!d) return;
     this.drag = null;
+    this.clearHints();
     const { idx, sp } = d;
     const id = this.cells[idx]!;
     sp.setDepth(10);
@@ -291,6 +319,34 @@ export class MergeScene extends Phaser.Scene {
       return this.store(idx, id);
     }
     if (target === idx) return this.snapBack(idx);
+
+    // 서로 다른 두 가지가 조합되는 짝이면 → 새로운 것으로
+    const combo = this.cells[target] ? comboOf(id, this.cells[target]!) : undefined;
+    if (combo && this.sprites[target]) {
+      const o = this.sprites[target]!;
+      const tp2 = this.pos(target);
+      this.sprites[idx] = null;
+      this.cells[idx] = null;
+      this.sprites[target] = null;
+      this.cells[target] = null;
+      this.busy = true;
+      sp.disableInteractive();
+      o.disableInteractive();
+      this.tweens.add({ targets: [sp, o], x: tp2.x, y: tp2.y, scale: ICON * 0.6, angle: 180, duration: 220, ease: 'Cubic.easeIn', onComplete: () => { sp.destroy(); o.destroy(); } });
+      this.time.delayedCall(240, () => {
+        this.put(target, combo.out, true);
+        this.spark.explode(16, tp2.x, tp2.y);
+        sfx.fanfare();
+        buzz(30);
+        quests.bump('combo');
+        saveBoard(this.cells);
+        if (inventory.discover(combo.out)) this.game.events.emit('celebrate', `✨ 새로운 조합!\n${ITEMS[combo.out].name}`);
+        else this.floatText(tp2.x, tp2.y - 24, ITEMS[combo.out].name);
+        this.game.events.emit('toast', `💡 ${ITEMS[combo.out].name}: ${combo.use}`);
+        this.busy = false;
+      });
+      return;
+    }
 
     // 빈 칸이면 이동, 다른 게 있으면 자리 바꾸기
     const other = this.sprites[target];
@@ -356,7 +412,7 @@ export class MergeScene extends Phaser.Scene {
     this.mergeLayer.add(tray);
 
     // 합칠 수 있는 것을 모두 보여 준다. 자리가 모자라면 옆으로 밀어서 넘긴다
-    const items = inventory.owned().filter((o) => isMergeable(o.id) && MERGE_NEXT[o.id]);
+    const items = inventory.owned().filter((o) => (isMergeable(o.id) && MERGE_NEXT[o.id]) || COMBO_PARTS.has(o.id));
     const availH = H - HUD_BOTTOM_H - top - 4;
     const rowsFit = Math.max(1, Math.floor((availH - 28) / 44));
     const slot = Math.min(52, Math.max(40, Math.floor((availH - 28) / rowsFit)));

@@ -17,6 +17,7 @@ import { village } from '../state/village';
 import { family, type FeedItem, type SyncStatus } from '../sync/family';
 import { localDoc } from '../sync/bridge';
 import { ORDER_GIFTS, RESIDENTS, TROPHY_HEARTS } from '../data/village';
+import { COMBOS, USABLE } from '../data/merge';
 import { BUILD_CATS, PIECES, PIECE_LIST, type BuildCat, type Piece } from '../data/build';
 import type { IslandScene } from './IslandScene';
 
@@ -98,6 +99,7 @@ export class HudScene extends Phaser.Scene {
       ['treasure-found', this.onTreasureFound],
       ['sailing', this.onSailing],
       ['open-order', this.openOrder],
+      ['open-combos', this.openCombos],
       ['build-refresh', this.rebuildBuildTray],
       ['open-friend', this.openFriend],
       ['float', this.onFloat],
@@ -677,7 +679,8 @@ export class HudScene extends Phaser.Scene {
     const footH = 40;
     const PH = Math.min(H - 70, headH + contentH + footH);
     const viewH = PH - headH - footH;
-    const { box } = this.modal(PW, PH);
+    const { box, close: closeStorage } = this.modal(PW, PH);
+    let useBtn: Phaser.GameObjects.Container | undefined;
     const fit = Math.min(1, (H - 24) / PH, (W - 12) / PW);
     const top = -PH / 2;
     const found = ITEM_IDS.filter((id) => inventory.discovered(id)).length;
@@ -764,6 +767,20 @@ export class HudScene extends Phaser.Scene {
       const known = inventory.discovered(id);
       sfx.tap();
       info.setText(known ? `${ITEMS[id].name} · ${inventory.get(id)}개` : '❓ 아직 못 찾았어요');
+      useBtn?.destroy();
+      useBtn = undefined;
+      if (USABLE.has(id) && inventory.get(id) > 0) {
+        info.setX(-44);
+        useBtn = this.button('쓰기', true, () => {
+          closeStorage();
+          if (this.view !== 'explore') return void this.toast('탐험 화면에서 쓸 수 있어요');
+          this.time.delayedCall(220, () => this.game.events.emit('use-item', id));
+        }, 76);
+        useBtn.setPosition(PW / 2 - 56, PH / 2 - 21).setScale(0.8);
+        box.add(useBtn);
+      } else {
+        info.setX(0);
+      }
       this.tweens.add({ targets: icons[i], scale: { from: 2.1, to: 1.6 }, duration: 220, ease: 'Back.easeOut' });
     });
     zone.on('pointerout', () => {
@@ -955,8 +972,23 @@ export class HudScene extends Phaser.Scene {
     const hearts = village.hearts(id);
     const order = village.order(id);
     const PW = Math.min(310, this.scale.width - 30);
-    const PH = order ? 340 : 230;
+    const crowns = inventory.get('flower_crown');
+    const PH = (order ? 340 : 230) + (crowns > 0 ? 50 : 0);
     const { box, close } = this.modal(PW, PH);
+    if (crowns > 0) {
+      // 꽃 왕관 선물: 부탁과 상관없이 호감도 +2
+      const gb = this.button(`🌼 꽃 왕관 선물하기 (+2💗) · ${crowns}개`, true, () => {
+        inventory.add('flower_crown', -1);
+        const h = village.gift(id, 2);
+        close();
+        sfx.fanfare();
+        this.celebrate(`💗 ${r.name}: "우와, 예뻐요!"\n호감도 ${h}`);
+      }, 240);
+      gb.setPosition(0, PH / 2 - 34).setScale(0.86);
+      (gb.list[0] as Phaser.GameObjects.Graphics).clear().fillStyle(0xf28fb1).fillRoundedRect(-120, -20, 240, 40, 20);
+      (gb.list[1] as Phaser.GameObjects.Text).setStroke('#c25f85', 3);
+      box.add(gb);
+    }
     const top = -PH / 2;
     box.add(this.add.image(-PW / 2 + 48, top + 50, `${id}_front`).setScale(2));
     box.add(this.add.text(-PW / 2 + 92, top + 30, r.name, { fontFamily: FONT, fontSize: '20px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0, 0.5));
@@ -989,8 +1021,36 @@ export class HudScene extends Phaser.Scene {
         this.celebrate(`💗 ${r.name} 호감도 ${h}\n선물: ${ITEMS[gift].name} ×${n}`);
       }
     });
-    btn.setPosition(0, PH / 2 - 36);
+    btn.setPosition(0, PH / 2 - 36 - (crowns > 0 ? 50 : 0));
     box.add(btn);
+  }
+
+  /** 조합 수첩: 보드에서 겹치면 되는 것들과 쓰임새 */
+  private openCombos() {
+    if (this.registry.get('modal')) return;
+    const PW = Math.min(330, this.scale.width - 20);
+    const PH = 96 + COMBOS.length * 58;
+    const { box } = this.modal(PW, PH);
+    const top = -PH / 2;
+    box.add(this.add.text(0, top + 28, '📖 조합 수첩', { fontFamily: FONT, fontSize: '20px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0.5));
+    box.add(this.add.text(0, top + 52, '머지 보드에서 서로 다른 두 가지를 겹쳐요', { fontFamily: FONT, fontSize: '11px', color: '#a08a6a' }).setOrigin(0.5));
+    COMBOS.forEach((c, i) => {
+      const y = top + 70 + i * 58;
+      const x = -PW / 2 + 14;
+      const made = inventory.discovered(c.out);
+      const g = this.add.graphics();
+      g.fillStyle(made ? 0xfff0c9 : 0xf3ecd9).fillRoundedRect(x, y, PW - 28, 52, 12);
+      box.add(g);
+      box.add(this.add.image(x + 24, y + 26, itemKey(c.a)).setScale(1.4));
+      box.add(this.add.text(x + 44, y + 26, '+', { fontFamily: FONT, fontSize: '14px', color: '#a08a6a', fontStyle: 'bold' }).setOrigin(0.5));
+      box.add(this.add.image(x + 64, y + 26, itemKey(c.b)).setScale(1.4));
+      box.add(this.add.text(x + 86, y + 26, '→', { fontFamily: FONT, fontSize: '14px', color: '#a08a6a', fontStyle: 'bold' }).setOrigin(0.5));
+      const out = this.add.image(x + 110, y + 26, itemKey(c.out)).setScale(1.6);
+      if (!made) out.setTintFill(0xcfc4ab);
+      box.add(out);
+      box.add(this.add.text(x + 132, y + 10, made ? ITEMS[c.out].name : '???', { fontFamily: FONT, fontSize: '13px', color: COLORS.uiText, fontStyle: 'bold' }));
+      box.add(this.add.text(x + 132, y + 29, c.use, { fontFamily: FONT, fontSize: '9px', color: '#8a6d4b', wordWrap: { width: PW - 28 - 140 } }));
+    });
   }
 
   /** 섬 친구와 처음 만났을 때: 부탁을 들어주고 마을 점수가 되면 이사 온다 */
