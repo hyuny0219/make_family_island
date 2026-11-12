@@ -9,8 +9,9 @@ import { sfx, buzz } from '../sfx';
 import { HUD_BOTTOM_H, HUD_TOP_H } from './HudScene';
 
 const FONT = '"Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif';
-const CELL = 50;
-const ICON = 2; // 아이콘 확대 배율
+// 보드 한 칸 크기와 아이콘 배율 — 화면 높이에 맞춰 create()에서 정한다 (아래 창고 줄이 두 줄 들어가게)
+let CELL = 50;
+let ICON = 2;
 
 type Mode = 'merge' | 'craft';
 
@@ -29,6 +30,8 @@ export class MergeScene extends Phaser.Scene {
   private mergeLayer!: Phaser.GameObjects.Container;
   private craftLayer!: Phaser.GameObjects.Container;
   private tray?: Phaser.GameObjects.Container;
+  private trayMask?: Phaser.GameObjects.Graphics;
+  private trayScroll = 0;
   private craftList?: Phaser.GameObjects.Container;
   private pills: Partial<Record<Mode, { bg: Phaser.GameObjects.Graphics; label: Phaser.GameObjects.Text }>> = {};
   private drag: null | { idx: number; sp: Phaser.GameObjects.Image; sx: number; sy: number; moved: boolean } = null;
@@ -57,6 +60,9 @@ export class MergeScene extends Phaser.Scene {
     this.craftLayer = this.add.container(0, 0).setVisible(false);
 
     // ── 머지 보드 ──
+    const trayNeed = 28 + 2 * 44 + 4;
+    CELL = Phaser.Math.Clamp(Math.floor((H - HUD_BOTTOM_H - (HUD_TOP_H + 50) - 36 - trayNeed) / BOARD_ROWS), 38, 50);
+    ICON = Math.round((CELL / 25) * 4) / 4;
     this.x0 = (W - BOARD_COLS * CELL) / 2;
     this.y0 = HUD_TOP_H + 50;
     const bw = BOARD_COLS * CELL;
@@ -349,19 +355,19 @@ export class MergeScene extends Phaser.Scene {
     this.tray = tray;
     this.mergeLayer.add(tray);
 
-    const items = inventory
-      .owned()
-      .filter((o) => isMergeable(o.id) && MERGE_NEXT[o.id])
-      .slice(0, 12);
-    const perRow = 6;
-    const slot = Math.min(54, (W - 24) / perRow);
-    const rows = Math.max(1, Math.ceil(items.length / perRow));
-    const th = Math.min(rows * slot + 30, H - HUD_BOTTOM_H - top - 4);
+    // 합칠 수 있는 것을 모두 보여 준다. 자리가 모자라면 옆으로 밀어서 넘긴다
+    const items = inventory.owned().filter((o) => isMergeable(o.id) && MERGE_NEXT[o.id]);
+    const availH = H - HUD_BOTTOM_H - top - 4;
+    const rowsFit = Math.max(1, Math.floor((availH - 28) / 44));
+    const slot = Math.min(52, Math.max(40, Math.floor((availH - 28) / rowsFit)));
+    const cols = Math.max(1, Math.ceil(items.length / rowsFit));
+    const rows = Math.min(rowsFit, Math.max(1, items.length));
+    const th = Math.min(rows * slot + 30, availH);
     const g = this.add.graphics();
     g.fillStyle(0xfff8e7).fillRoundedRect(8, top, W - 16, th, 16);
     g.lineStyle(2, 0xe8d5a9).strokeRoundedRect(8, top, W - 16, th, 16);
     tray.add(g);
-    tray.add(this.add.text(20, top + 13, '🧺 창고에서 꺼내기', { fontFamily: FONT, fontSize: '12px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0, 0.5));
+    tray.add(this.add.text(20, top + 13, `🧺 창고에서 꺼내기${items.length ? ` (${items.length}종)` : ''}`, { fontFamily: FONT, fontSize: '12px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0, 0.5));
 
     // 보드 정리 버튼
     const tidy = this.add
@@ -371,23 +377,80 @@ export class MergeScene extends Phaser.Scene {
     tidy.on('pointerdown', () => this.storeAll());
     tray.add(tidy);
 
+    this.trayMask?.destroy();
+    this.trayMask = undefined;
     if (items.length === 0) {
       tray.add(this.add.text(W / 2, top + 26 + slot / 2, '합칠 재료가 없어요. 탐험에서 모아 와요!', { fontFamily: FONT, fontSize: '12px', color: '#a08a6a' }).setOrigin(0.5));
       return;
     }
-    const x0 = (W - Math.min(items.length, perRow) * slot) / 2;
+    const viewW = W - 28;
+    const contentW = cols * slot;
+    const scrolls = contentW > viewW;
+    const x0 = scrolls ? 14 : (W - contentW) / 2;
+    const minX = scrolls ? viewW - contentW : 0;
+    const row = this.add.container(0, 0);
+    tray.add(row);
+    const pos: { id: ItemId; x: number; y: number }[] = [];
     items.forEach((o, i) => {
-      const x = x0 + (i % perRow) * slot + slot / 2;
-      const y = top + 26 + Math.floor(i / perRow) * slot + slot / 2;
+      // 다 들어가면 왼쪽→오른쪽 순서로, 넘치면 세로로 채워서 옆으로 민다
+      const col = scrolls ? Math.floor(i / rowsFit) : i % cols;
+      const rw = scrolls ? i % rowsFit : Math.floor(i / cols);
+      const x = x0 + col * slot + slot / 2;
+      const y = top + 26 + rw * slot + slot / 2;
       const bg = this.add.graphics();
       bg.fillStyle(0xfde8b0).fillRoundedRect(x - slot / 2 + 3, y - slot / 2 + 3, slot - 6, slot - 6, 10);
-      const ic = this.add.image(x, y - 3, itemKey(o.id)).setScale(1.5);
+      const ic = this.add.image(x, y - 3, itemKey(o.id)).setScale(slot >= 48 ? 1.5 : 1.25);
       const ct = this.add
         .text(x + slot / 2 - 6, y + slot / 2 - 9, String(o.count), { fontFamily: FONT, fontSize: '11px', color: COLORS.uiText, fontStyle: 'bold', stroke: '#fff8e7', strokeThickness: 3 })
         .setOrigin(1, 0.5);
-      const hit = this.add.rectangle(x, y, slot - 4, slot - 4, 0, 0).setInteractive({ useHandCursor: true });
-      hit.on('pointerdown', () => this.takeOut(o.id, x, y));
-      tray.add([bg, ic, ct, hit]);
+      row.add([bg, ic, ct]);
+      pos.push({ id: o.id, x, y });
+    });
+    let arrows = () => {};
+    if (scrolls) {
+      const mg = this.make.graphics({}, false);
+      mg.fillStyle(0xffffff).fillRect(14, top + 24, viewW, rows * slot + 4);
+      this.trayMask = mg;
+      row.setMask(mg.createGeometryMask());
+      this.trayScroll = Phaser.Math.Clamp(this.trayScroll, minX, 0);
+      row.x = this.trayScroll;
+      const cy = top + 26 + (rows * slot) / 2;
+      const more = this.add.text(W - 11, cy, '›', { fontFamily: FONT, fontSize: '24px', color: '#c9a66b', fontStyle: 'bold' }).setOrigin(1, 0.55);
+      const less = this.add.text(11, cy, '‹', { fontFamily: FONT, fontSize: '24px', color: '#c9a66b', fontStyle: 'bold' }).setOrigin(0, 0.55);
+      tray.add([more, less]);
+      arrows = () => {
+        more.setVisible(row.x > minX + 4);
+        less.setVisible(row.x < -4);
+      };
+      arrows();
+    } else {
+      this.trayScroll = 0;
+    }
+    // 밀면 넘기고, 톡 누르면 꺼낸다
+    const zone = this.add.rectangle(W / 2, top + 26 + (rows * slot) / 2, W - 16, rows * slot, 0, 0).setInteractive();
+    tray.add(zone);
+    let drag: { px: number; rx: number; moved: boolean } | null = null;
+    zone.on('pointerdown', (p: Phaser.Input.Pointer) => {
+      drag = { px: p.x, rx: row.x, moved: false };
+    });
+    zone.on('pointermove', (p: Phaser.Input.Pointer) => {
+      if (!drag || !p.isDown) return;
+      if (Math.abs(p.x - drag.px) > 8) drag.moved = true;
+      if (drag.moved && scrolls) {
+        row.x = Phaser.Math.Clamp(drag.rx + (p.x - drag.px), minX, 0);
+        this.trayScroll = row.x;
+        arrows();
+      }
+    });
+    zone.on('pointerup', (p: Phaser.Input.Pointer) => {
+      const d = drag;
+      drag = null;
+      if (!d || d.moved) return;
+      const hit = pos.find((c) => Math.abs(p.x - (c.x + row.x)) < slot / 2 && Math.abs(p.y - c.y) < slot / 2);
+      if (hit) this.takeOut(hit.id, hit.x + row.x, hit.y);
+    });
+    zone.on('pointerout', () => {
+      drag = null;
     });
   }
 
