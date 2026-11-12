@@ -1,3 +1,5 @@
+import { ABILITIES, BOSSES, hatKey } from '../data/abilities';
+import { abilities } from '../state/abilities';
 import { Monster } from '../objects/Monster';
 import { BIOME_MONSTER, MONSTERS, SKIN_MONSTER } from '../data/monsters';
 import { FOODS, foodText } from '../data/food';
@@ -5,6 +7,8 @@ import { player } from '../state/player';
 import { quests } from '../state/quests';
 import Phaser from 'phaser';
 import { PLAYER_SPEED, TILE, WORLD_ZOOM, COLORS } from '../config';
+
+const FONT = '"Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif';
 import { BEARS, BLOCKING, OBJECT_TEXTURE, type BearId } from '../data/assets';
 import { GATHER, rollDrops } from '../data/gathering';
 import { ITEMS, itemKey, type ItemId } from '../data/items';
@@ -40,7 +44,7 @@ const ISLAND_PLAY: Record<number, { kind: PlayKind; tex: string; tip: string; lo
 const ICE_FISH: [ItemId, number][] = [['fish_big', 5], ['fish', 3], ['fish_gold', 1]];
 type PlaySpot = { kind: PlayKind; img: Phaser.GameObjects.Image; tx: number; ty: number; region: number; hp: number; ready: boolean };
 
-type Hit = { monster?: Monster; sleep?: boolean; play?: PlaySpot; bear?: Bear; decor?: DecorObj; sign?: number; spot?: SpotObj; dock?: boolean; slime?: Slime; treasure?: boolean; pedestal?: boolean };
+type Hit = { gate?: boolean; monster?: Monster; sleep?: boolean; play?: PlaySpot; bear?: Bear; decor?: DecorObj; sign?: number; spot?: SpotObj; dock?: boolean; slime?: Slime; treasure?: boolean; pedestal?: boolean };
 
 /** 지역 분위기별 슬라임 색 (초록이 기본) */
 const SLIME_KIND: Record<string, '' | '_pink' | '_blue'> = { orchard: '', forest: '', rocky: '_blue', meadow: '_pink', beach: '_blue' };
@@ -81,6 +85,11 @@ export class IslandScene extends Phaser.Scene {
   private plays: PlaySpot[] = [];
   private flying = false;
   private monsters: Monster[] = [];
+  private gate?: Phaser.GameObjects.Image;
+  private hpBar?: Phaser.GameObjects.Graphics;
+  private hat?: Phaser.GameObjects.Image;
+  private thunderAcc = 0;
+  private dungeon: null | { x: number; y: number; w: number; h: number; back: { x: number; y: number }; objs: Phaser.GameObjects.GameObject[]; phase: 'wave' | 'boss' | 'clear'; boss?: Monster; slamT: number; called: boolean } = null;
   private monsterTimer = 6;
   private invulnUntil = 0;
   private autoTarget: Monster | null = null;
@@ -135,6 +144,7 @@ export class IslandScene extends Phaser.Scene {
     this.makeFx();
     this.placeTreasure();
     this.placePlays();
+    this.placeGate();
 
     // 오브젝트
     for (const d of W.decor) {
@@ -210,6 +220,8 @@ export class IslandScene extends Phaser.Scene {
     ge.on('emote', this.onEmote, this);
     ge.on('use-item', this.onUseItem, this);
     ge.on('sleep', this.onSleep, this);
+    ge.on('enter-dungeon', this.enterDungeon, this);
+    ge.on('exit-dungeon', this.exitDungeon, this);
     player.on('faint', this.onFaint, this);
     village.on('resident-joined', this.onResidentJoined, this);
     village.on('remote', this.syncPlaced, this);
@@ -226,6 +238,8 @@ export class IslandScene extends Phaser.Scene {
       ge.off('emote', this.onEmote, this);
       ge.off('use-item', this.onUseItem, this);
       ge.off('sleep', this.onSleep, this);
+      ge.off('enter-dungeon', this.enterDungeon, this);
+      ge.off('exit-dungeon', this.exitDungeon, this);
       player.off('faint', this.onFaint, this);
       village.off('resident-joined', this.onResidentJoined, this);
       village.off('remote', this.syncPlaced, this);
@@ -505,7 +519,7 @@ export class IslandScene extends Phaser.Scene {
     }
 
     const pl = this.player;
-    type Tagged = { monster?: Monster; placed?: Placed; play?: PlaySpot; treasure?: boolean; pedestal?: boolean; slime?: Slime; bear?: Bear; decor?: Decor; signRegion?: number; spot?: FishingSpot; isDock?: boolean };
+    type Tagged = { gate?: boolean; monster?: Monster; placed?: Placed; play?: PlaySpot; treasure?: boolean; pedestal?: boolean; slime?: Slime; bear?: Bear; decor?: Decor; signRegion?: number; spot?: FishingSpot; isDock?: boolean };
     const tagged = over as unknown as (Phaser.GameObjects.GameObject & Tagged)[];
 
     const sign = tagged.find((o) => o.signRegion !== undefined);
@@ -538,6 +552,10 @@ export class IslandScene extends Phaser.Scene {
     if (this.flying || this.resting) return;
     this.autoTarget = null;
     const monHit = tagged.map((o) => o.monster).find((m) => m && !m.dead);
+    if (!monHit && this.gate && tagged.some((o) => o.gate)) {
+      const side = pl.x <= this.gate.x ? -1 : 1;
+      return this.walkTo(this.gate.x + side * 26, this.gate.y - 2, { gate: true });
+    }
     const bed = tagged.find((o) => o.placed?.id === 'bed') as unknown as Phaser.GameObjects.Image | undefined;
     if (monHit) {
       this.autoTarget = monHit;
@@ -601,6 +619,8 @@ export class IslandScene extends Phaser.Scene {
   }
 
   private walkable = (wx: number, wy: number) => {
+    const dg = this.dungeon;
+    if (dg) return wx > dg.x + 6 && wx < dg.x + dg.w - 6 && wy > dg.y + 10 && wy < dg.y + dg.h - 4;
     const W = this.world;
     const tx = Math.floor(wx / TILE);
     const ty = Math.floor(wy / TILE);
@@ -645,6 +665,8 @@ export class IslandScene extends Phaser.Scene {
     if (this.fishing) this.updateFishing(dt);
     this.updateSlimes(dt);
     this.updateMonsters(dt);
+    this.updateDungeon(dt);
+    this.drawPlayerHud();
     this.updateSpring();
     // 내 위치를 가끔 다시 알린다 (걷는 중엔 2초, 서 있을 땐 30초마다 — 접속 중이라는 신호)
     this.presenceTimer -= dt;
@@ -687,6 +709,7 @@ export class IslandScene extends Phaser.Scene {
     if (hit.treasure) return this.openTreasure();
     if (hit.slime) return this.bopSlime(hit.slime);
     if (hit.monster) return this.attackMonster(hit.monster);
+    if (hit.gate) return this.game.events.emit('open-dungeon', this.islandIdx);
     if (hit.sleep) return this.game.events.emit('open-sleep');
     if (hit.bear) {
       const other = hit.bear;
@@ -747,6 +770,8 @@ export class IslandScene extends Phaser.Scene {
     }
     // 풍년 효과: 하나 더
     if (player.has('gather') && rule.perHit.length > 0) drops.push(Phaser.Utils.Array.GetRandom(rule.perHit)[0]);
+    // 변신(잎사귀): 확률로 하나 더
+    if (rule.perHit.length > 0 && Math.random() * 100 < abilities.power('leaf')) drops.push(Phaser.Utils.Array.GetRandom(rule.perHit)[0]);
     if (obj.hitsLeft <= 0) {
       drops.push(...rollDrops(rule.final));
       this.deplete(obj, rule.deplete, rule.regrowSec);
@@ -1050,7 +1075,7 @@ export class IslandScene extends Phaser.Scene {
   /** 한 번 때릴 때의 세기: 맨손 1, 나무 검 2, 돌 검 3, 힘 효과 +2 */
   private attackPower() {
     const weapon = inventory.get('stone_sword') > 0 ? 3 : inventory.get('sword') > 0 ? 2 : 1;
-    return weapon + (player.has('power') ? 2 : 0);
+    return weapon + (player.has('power') ? 2 : 0) + abilities.power('rock');
   }
 
   /** 몬스터는 캠프에서 두 지역 이상 떨어진 곳에만 나온다 (캠프 주변은 안전 지대) */
@@ -1061,7 +1086,16 @@ export class IslandScene extends Phaser.Scene {
     const safe = this.resting || this.flying || !!this.fishing;
     for (const m of this.monsters) {
       const r = this.regionAt(m.x, m.y);
-      const bit = m.update(dt, pl.x, pl.y, this.walkable, !safe && r >= 0);
+      const bit = m.update(dt, pl.x, pl.y, this.walkable, !safe && (r >= 0 || !!this.dungeon));
+      // 독
+      if (m.poisonT > 0 && !m.dead) {
+        m.poisonT -= dt;
+        m.poisonAcc += dt;
+        if (m.poisonAcc >= 1) {
+          m.poisonAcc = 0;
+          this.damageMonster(m, m.poisonDps, true);
+        }
+      }
       if (bit && now > this.invulnUntil && !safe) this.takeHit(m);
     }
     this.monsters = this.monsters.filter((m) => {
@@ -1085,6 +1119,24 @@ export class IslandScene extends Phaser.Scene {
         player.heal(2);
       }
     }
+    // 변신(번개): 가까운 몬스터에게 저절로 번개
+    const zap = abilities.power('thunder');
+    if (zap > 0 && !safe) {
+      this.thunderAcc += dt;
+      if (this.thunderAcc >= 1.5) {
+        const near = this.monsters.filter((m) => !m.dead && Math.hypot(m.x - pl.x, m.y - pl.y) < 95).sort((a, b) => Math.hypot(a.x - pl.x, a.y - pl.y) - Math.hypot(b.x - pl.x, b.y - pl.y))[0];
+        if (near) {
+          this.thunderAcc = 0;
+          const g = this.add.graphics().setDepth(99960);
+          g.lineStyle(2.5, 0xffe066).lineBetween(pl.x, pl.y - 30, (pl.x + near.x) / 2 + Phaser.Math.Between(-8, 8), (pl.y - 30 + near.y - 12) / 2);
+          g.lineBetween((pl.x + near.x) / 2 + Phaser.Math.Between(-8, 8), (pl.y - 30 + near.y - 12) / 2, near.x, near.y - 12);
+          this.tweens.add({ targets: g, alpha: 0, duration: 220, onComplete: () => g.destroy() });
+          sfx.tap();
+          this.damageMonster(near, zap, true);
+        }
+      }
+    }
+    if (this.dungeon) return;
     this.monsterTimer -= dt;
     if (this.monsterTimer > 0 || safe) return;
     this.monsterTimer = 6 + Math.random() * 5;
@@ -1107,9 +1159,20 @@ export class IslandScene extends Phaser.Scene {
   }
 
   /** 몬스터에게 맞았다 */
-  private takeHit(m: Monster) {
+  private takeHit(m: Monster, base = m.def.dmg) {
     const pl = this.player!;
-    const dmg = player.hurt(m.def.dmg);
+    // 변신(물방울): 확률로 막기
+    if (Math.random() * 100 < abilities.power('bubble')) {
+      this.invulnUntil = this.time.now + 600;
+      sfx.pop();
+      this.fx.splash.explode(8, pl.x, pl.y - 20);
+      const c0 = this.cameras.main;
+      return void this.game.events.emit('float', '막았다!', (pl.x - c0.worldView.x) * c0.zoom, (pl.y - 44 - c0.worldView.y) * c0.zoom);
+    }
+    const dmg = player.hurt(base * (1 - abilities.power('wood') / 100));
+    // 변신(선인장): 때린 몬스터가 아프다
+    const thorn = abilities.power('sand');
+    if (thorn > 0) this.time.delayedCall(60, () => !m.dead && this.damageMonster(m, thorn, true));
     this.invulnUntil = this.time.now + 800;
     sfx.knock();
     buzz(50);
@@ -1141,7 +1204,7 @@ export class IslandScene extends Phaser.Scene {
       return this.walkTo(m.x + side * 18, m.y, { monster: m });
     }
     const now = this.time.now;
-    if (now - this.lastHit >= 260) {
+    if (now - this.lastHit >= 260 / (1 + abilities.power('bee') / 100)) {
       this.lastHit = now;
       pl.face('side', m.x < pl.x);
       pl.jump(60);
@@ -1150,12 +1213,28 @@ export class IslandScene extends Phaser.Scene {
       this.damageMonster(m, this.attackPower());
     }
     // 한 번 누르면 잡을 때까지 계속 싸운다 (다른 곳을 누르면 그만둔다)
-    if (!m.dead) this.time.delayedCall(300, () => this.autoTarget === m && !m.dead && this.attackMonster(m));
+    if (!m.dead) this.time.delayedCall(abilities.power('bee') > 0 ? 170 : 300, () => this.autoTarget === m && !m.dead && this.attackMonster(m));
   }
 
-  private damageMonster(m: Monster, dmg: number) {
+  private damageMonster(m: Monster, dmg: number, extra = false) {
     const pl = this.player!;
+    if (m.dead) return;
     m.hit(dmg, pl.x, pl.y, this.walkable);
+    if (!extra) {
+      // 변신 능력의 덤 효과 (직접 때렸을 때만)
+      const ice = abilities.power('ice');
+      if (ice > 0 && m.hp > 0) m.freeze(m.def.boss ? ice / 2 : ice);
+      const poison = abilities.power('poison');
+      if (poison > 0) {
+        m.poisonT = 3;
+        m.poisonDps = poison;
+      }
+      const fire = abilities.power('fire');
+      if (fire > 0) {
+        this.fx.ember.explode(8, m.x, m.y - 10);
+        for (const o of [...this.monsters]) if (o !== m && !o.dead && Math.hypot(o.x - m.x, o.y - m.y) < 60) this.damageMonster(o, fire, true);
+      }
+    }
     const cam = this.cameras.main;
     this.game.events.emit('float', `${dmg}`, (m.x - cam.worldView.x) * cam.zoom, (m.y - 34 - cam.worldView.y) * cam.zoom);
     if (m.hp > 0) return;
@@ -1179,10 +1258,240 @@ export class IslandScene extends Phaser.Scene {
     m.pop();
     if (this.autoTarget === m) this.autoTarget = null;
     quests.bump('monster');
+    if (m.def.boss) this.onBossDown(m);
     if (m.def.shy) {
       this.toast('💰 보물 도깨비를 잡았어요!');
       family.post('💰 보물 도깨비를 잡았어요');
     }
+  }
+
+  // ───────────────────────── 머리 위 체력바 · 변신 모자 ─────────────────────────
+
+  private drawPlayerHud() {
+    const pl = this.player;
+    if (!pl) return;
+    const sp = pl.sprite;
+    const top = sp.y - sp.displayHeight;
+    // 변신 모자
+    const on = abilities.equipped;
+    if (on) {
+      const lv = abilities.level(on);
+      if (!this.hat) this.hat = this.add.image(0, 0, hatKey(on)).setOrigin(0.5, 1);
+      if (this.hat.texture.key !== hatKey(on)) this.hat.setTexture(hatKey(on));
+      this.hat.setVisible(sp.visible).setScale(0.9 + lv * 0.1).setPosition(sp.x, top + 9).setDepth(sp.depth + 0.5).setFlipX(sp.flipX);
+      // 진화할수록 반짝인다
+      if (lv >= 2 && Math.random() < (lv === 3 ? 0.08 : 0.03)) this.fx.sparkle.explode(1, sp.x + Phaser.Math.Between(-9, 9), top + Phaser.Math.Between(-6, 6));
+    } else if (this.hat) {
+      this.hat.destroy();
+      this.hat = undefined;
+    }
+    // 체력바 (숫자 없이 막대만)
+    if (!this.hpBar) this.hpBar = this.add.graphics().setDepth(99956);
+    const g = this.hpBar.clear();
+    const hp = player.hp;
+    const w = 26;
+    const x = Math.round(sp.x - w / 2);
+    const y = Math.round(top - (on ? 14 : 7));
+    g.fillStyle(0x4a3b2a, 0.85).fillRoundedRect(x - 1, y - 1, w + 2, 6, 3);
+    g.fillStyle(hp <= 30 ? 0xe8604c : hp <= 60 ? 0xf2a93b : 0x8bd17c).fillRoundedRect(x, y, Math.max(2, (w * hp) / 100), 4, 2);
+  }
+
+  // ───────────────────────── 보스 던전 ─────────────────────────
+
+  /** 던전 입구: 섬 안쪽 깊은 지역에 하나 (섬마다 늘 같은 자리) */
+  private placeGate() {
+    this.gate = undefined;
+    this.dungeon = null;
+    this.registry.set('dungeon', false);
+    this.hpBar = undefined;
+    this.hat = undefined;
+    const W = this.world;
+    const maxDepth = Math.max(...W.regions.map((g) => g.depth));
+    const friend = this.bears.find((b) => b.wild);
+    const friendRegion = friend ? this.regionAt(friend.x, friend.y) : -1;
+    const ok = (g: { idx: number }) => g.idx !== this.chestRegion && g.idx !== friendRegion;
+    const home = W.regions.find((g) => g.depth === Math.max(2, maxDepth - 1) && ok(g)) ?? W.regions.find((g) => g.depth >= 2 && ok(g));
+    const t = home && this.freeTile(home.idx);
+    if (!t) return;
+    const img = this.add.image(t.tx * TILE + TILE / 2, t.ty * TILE + TILE - 2, 'dungeon_gate').setOrigin(0.5, 1);
+    img.setDepth(img.y).setInteractive({ useHandCursor: true });
+    (img as unknown as { gate: boolean }).gate = true;
+    this.blocked.add(`${t.tx},${t.ty}`);
+    this.occupied.add(`${t.tx},${t.ty}`);
+    this.gate = img;
+  }
+
+  private themeMonster() {
+    const skin = ISLANDS[this.islandIdx].skin ?? '';
+    return MONSTERS[SKIN_MONSTER[skin] ?? ['bee', 'bee', 'shroom', 'crab', 'bat'][this.islandIdx] ?? 'bee'];
+  }
+
+  /** 던전에 들어간다: 바다 한구석에 지어 둔 방으로 옮겨 가서, 부하 → 보스 순서로 싸운다 */
+  private enterDungeon() {
+    const pl = this.player;
+    if (!pl || this.dungeon || this.resting || this.flying || this.fishing) return;
+    const W = this.world;
+    // 바다뿐인 구석을 찾는다
+    const RW = 22;
+    const RH = 26;
+    const corners: [number, number][] = [[0, 0], [W.w - RW, 0], [0, W.h - RH], [W.w - RW, W.h - RH]];
+    const sea = ([cx, cy]: [number, number]) => {
+      for (let y = cy; y < cy + RH; y++) for (let x = cx; x < cx + RW; x++) if (W.terrain[y][x] !== T_SEA) return false;
+      return true;
+    };
+    const [cx, cy] = corners.find(sea) ?? corners[0];
+    const ax = (cx + 4) * TILE;
+    const ay = (cy + 5) * TILE;
+    const aw = 14 * TILE;
+    const ah = 16 * TILE;
+    this.resting = true;
+    this.autoTarget = null;
+    pl.target = null;
+    this.pending = null;
+    const cam = this.cameras.main;
+    cam.fadeOut(450, 20, 14, 30);
+    this.time.delayedCall(600, () => {
+      this.monsters.forEach((m) => m.destroy());
+      this.monsters = [];
+      this.slimes.forEach((s) => s.destroy());
+      this.slimes = [];
+      const g = this.add.graphics().setDepth(-60);
+      g.fillStyle(0x1d1626).fillRect(cx * TILE, cy * TILE, RW * TILE, RH * TILE);
+      // 돌바닥
+      for (let ty = 0; ty < 16; ty++) for (let tx = 0; tx < 14; tx++) g.fillStyle((tx + ty) % 2 ? 0x5a4d6b : 0x63567a).fillRect(ax + tx * TILE, ay + ty * TILE, TILE, TILE);
+      g.fillStyle(0x3b3048).fillRect(ax - 8, ay - 22, aw + 16, 22);
+      g.lineStyle(4, 0x2a2135).strokeRect(ax - 2, ay - 2, aw + 4, ah + 4);
+      const torch1 = this.add.image(ax + 30, ay - 2, 'item_torch').setScale(1.5).setDepth(-50);
+      const torch2 = this.add.image(ax + aw - 30, ay - 2, 'item_torch').setScale(1.5).setDepth(-50);
+      const boss = BOSSES[this.islandIdx];
+      const title = this.add.text(ax + aw / 2, ay - 12, `☠ ${boss.name}의 던전`, { fontFamily: FONT, fontSize: '10px', color: '#e8d5a9', fontStyle: 'bold' }).setOrigin(0.5).setDepth(-50);
+      this.dungeon = { x: ax, y: ay, w: aw, h: ah, back: { x: pl.x, y: pl.y }, objs: [g, torch1, torch2, title], phase: 'wave', slamT: 4, called: false };
+      this.registry.set('dungeon', true);
+      pl.x = ax + aw / 2;
+      pl.y = ay + ah - 30;
+      cam.setBounds(cx * TILE, cy * TILE, RW * TILE, RH * TILE);
+      // 부하 두 마리
+      const def = this.themeMonster();
+      for (const dx of [-60, 60]) this.monsters.push(new Monster(this, { ...def, aggressive: true, sight: 500 }, ax + aw / 2 + dx, ay + 90));
+      cam.fadeIn(500, 20, 14, 30);
+      this.resting = false;
+      this.invulnUntil = this.time.now + 1500;
+      this.toast('⚔️ 부하를 물리치면 보스가 나타나요!');
+    });
+  }
+
+  private updateDungeon(dt: number) {
+    const dg = this.dungeon;
+    const pl = this.player;
+    if (!dg || !pl || this.resting) return;
+    if (dg.phase === 'wave' && this.monsters.every((m) => m.dead)) {
+      dg.phase = 'boss';
+      const def = BOSSES[this.islandIdx];
+      const b = new Monster(this, def, dg.x + dg.w / 2, dg.y + 80);
+      b.hit(0, pl.x, pl.y, this.walkable); // 체력바를 처음부터 보여 준다
+      this.monsters.push(b);
+      dg.boss = b;
+      this.cameras.main.shake(300, 0.008);
+      sfx.knock();
+      this.fx.puff.explode(16, b.x, b.y - 20);
+      this.game.events.emit('celebrate', `☠ ${def.name} 등장!\n붉은 원이 보이면 피해요`);
+      return;
+    }
+    const boss = dg.boss;
+    if (dg.phase !== 'boss' || !boss || boss.dead) return;
+    // 체력이 절반 아래로 내려가면 부하를 한 번 부른다
+    if (!dg.called && boss.hp <= boss.def.hp / 2) {
+      dg.called = true;
+      const def = this.themeMonster();
+      for (const dx of [-50, 50]) this.monsters.push(new Monster(this, { ...def, aggressive: true, sight: 500 }, boss.x + dx, boss.y + 10));
+      this.toast(`${boss.def.name}이(가) 부하를 불렀어요!`);
+    }
+    // 내려찍기: 곰이 서 있는 자리에 붉은 원 → 1초 뒤 쾅
+    dg.slamT -= dt;
+    if (dg.slamT > 0) return;
+    dg.slamT = 4.2;
+    const sx = pl.x;
+    const sy = pl.y - 4;
+    const R = 38;
+    const ring = this.add.graphics().setDepth(-40);
+    const t = { v: 0 };
+    this.tweens.add({
+      targets: t,
+      v: 1,
+      duration: 1000,
+      onUpdate: () => {
+        ring.clear();
+        ring.fillStyle(0xe8604c, 0.18 + t.v * 0.3).fillEllipse(sx, sy, R * 2, R * 1.3);
+        ring.lineStyle(2, 0xe8604c, 0.9).strokeEllipse(sx, sy, R * 2 * t.v, R * 1.3 * t.v);
+      },
+      onComplete: () => {
+        ring.destroy();
+        if (!this.dungeon || boss.dead) return;
+        this.cameras.main.shake(180, 0.01);
+        sfx.knock();
+        this.fx.dust.explode(14, sx, sy);
+        const p2 = this.player!;
+        if (Math.hypot(p2.x - sx, (p2.y - 4 - sy) * 1.5) < R && this.time.now > this.invulnUntil && !this.resting) this.takeHit(boss, Math.round(boss.def.dmg * 1.4));
+      },
+    });
+  }
+
+  private onBossDown(boss: Monster) {
+    const dg = this.dungeon;
+    if (!dg) return;
+    dg.phase = 'clear';
+    const island = this.islandIdx;
+    const ab = ABILITIES[island];
+    this.monsters.forEach((m) => m !== boss && !m.dead && m.pop());
+    this.cameras.main.shake(400, 0.01);
+    this.fx.sparkle.explode(30, boss.x, boss.y - 20);
+    const first = abilities.unlock(ab.id);
+    const tokens = first ? 3 : 2;
+    inventory.add('boss_token', tokens);
+    quests.bump('boss');
+    this.time.delayedCall(900, () => {
+      sfx.fanfare();
+      if (first) {
+        this.game.events.emit('celebrate', `🎉 ${boss.def.name}을(를) 물리쳤어요!\n${ab.emoji} 변신 '${ab.names[0]}'을(를) 얻었어요`);
+        family.post(`⚔️ ${ISLANDS[island].name}의 보스 '${boss.def.name}'을(를) 물리쳤어요`);
+      } else {
+        this.game.events.emit('celebrate', `🎉 ${boss.def.name}을(를) 또 물리쳤어요!\n보스 증표 ×${tokens}`);
+      }
+    });
+    this.time.delayedCall(4200, () => this.dungeon === dg && this.exitDungeon());
+  }
+
+  /** 던전 방을 치운다 (곰 위치는 건드리지 않는다) */
+  private leaveDungeon() {
+    const dg = this.dungeon;
+    if (!dg) return;
+    dg.objs.forEach((o) => o.destroy());
+    this.monsters.forEach((m) => m.destroy());
+    this.monsters = [];
+    this.dungeon = null;
+    this.registry.set('dungeon', false);
+    const W = this.world;
+    this.cameras.main.setBounds(0, 0, W.w * TILE, W.h * TILE);
+  }
+
+  /** 던전에서 나와 입구로 돌아간다 */
+  private exitDungeon() {
+    const dg = this.dungeon;
+    const pl = this.player;
+    if (!dg || !pl || this.resting) return;
+    this.resting = true;
+    const cam = this.cameras.main;
+    cam.fadeOut(400, 20, 14, 30);
+    this.time.delayedCall(550, () => {
+      const back = dg.back;
+      this.leaveDungeon();
+      pl.x = back.x;
+      pl.y = back.y;
+      pl.target = null;
+      cam.fadeIn(500, 20, 14, 30);
+      this.resting = false;
+      this.monsterTimer = 8;
+    });
   }
 
   /** 체력이 바닥났다: 캠프에서 깨어난다 (물건은 잃지 않는다) */
@@ -1200,6 +1509,7 @@ export class IslandScene extends Phaser.Scene {
     this.time.delayedCall(900, () => {
       this.monsters.forEach((m) => m.destroy());
       this.monsters = [];
+      this.leaveDungeon();
       pl.x = this.campPx.x;
       pl.y = this.campPx.y + 30;
       player.restore(50);
@@ -1214,6 +1524,7 @@ export class IslandScene extends Phaser.Scene {
   private onSleep() {
     const pl = this.player;
     if (!pl || this.resting || this.flying || this.fishing) return;
+    if (this.dungeon) return void this.toast('던전 안에서는 잘 수 없어요!');
     if (this.monsters.some((m) => !m.dead && !m.def.shy && Math.hypot(m.x - pl.x, m.y - pl.y) < 150)) return void this.toast('몬스터가 가까이 있어서 잘 수 없어요!');
     this.resting = true;
     pl.target = null;
@@ -1327,6 +1638,7 @@ export class IslandScene extends Phaser.Scene {
       }
       return true;
     });
+    if (this.dungeon) return;
     this.slimeTimer -= dt;
     if (this.slimeTimer > 0) return;
     this.slimeTimer = 5 + Math.random() * 4;

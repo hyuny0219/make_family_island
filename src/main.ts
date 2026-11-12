@@ -1,3 +1,4 @@
+import { abilities } from './state/abilities';
 import { player } from './state/player';
 import { Monster } from './objects/Monster';
 import { MONSTERS } from './data/monsters';
@@ -35,4 +36,4 @@ const game = new Phaser.Game({
 });
 
 // 디버그/테스트용 핸들
-Object.assign(window, { __game: game, __inv: inventory, __progress: progress, __village: village, __family: family, __Slime: Slime, __quests: quests, __Monster: Monster, __MONSTERS: MONSTERS, __player: player });
+Object.assign(window, { __game: game, __inv: inventory, __progress: progress, __village: village, __family: family, __Slime: Slime, __quests: quests, __Monster: Monster, __MONSTERS: MONSTERS, __player: player, __abilities: abilities });

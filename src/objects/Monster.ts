@@ -10,6 +10,11 @@ type Walkable = (x: number, y: number) => boolean;
 export class Monster {
   readonly sprite: Phaser.GameObjects.Image;
   private readonly bar: Phaser.GameObjects.Graphics;
+  private mark?: Phaser.GameObjects.Text;
+  /** 독: 남은 시간(초)과 초당 피해 */
+  poisonT = 0;
+  poisonDps = 0;
+  poisonAcc = 0;
   readonly def: MonsterDef;
   x: number;
   y: number;
@@ -31,7 +36,9 @@ export class Monster {
     this.y = y;
     this.hp = def.hp;
     this.home = { x, y };
-    this.sprite = scene.add.image(x, y, `mon_${def.id}`).setOrigin(0.5, 1).setScale(0);
+    this.sprite = scene.add.image(x, y, def.tex ?? `mon_${def.id}`).setOrigin(0.5, 1).setScale(0);
+    // 먼저 덤비는 몬스터는 머리 위에 빨간 표시가 있다
+    if (def.aggressive && !def.boss) this.mark = scene.add.text(x, y, '💢', { fontSize: '9px' }).setOrigin(0.5);
     this.sprite.setInteractive({ useHandCursor: true });
     (this.sprite as unknown as { monster: Monster }).monster = this;
     this.bar = scene.add.graphics().setVisible(false);
@@ -65,11 +72,11 @@ export class Monster {
       if (this.chasing) this.move((-dx / dist) * this.def.speed * dt, (-dy / dist) * this.def.speed * dt, walkable);
       else this.stroll(dt, walkable);
     } else {
-      if (!this.chasing && canSee && dist < 105) this.chasing = true;
-      if (this.chasing && (!canSee || dist > 200)) this.chasing = false;
+      if (!this.chasing && this.def.aggressive && canSee && dist < (this.def.sight ?? (this.def.boss ? 400 : 105))) this.chasing = true;
+      if (this.chasing && !this.def.boss && !this.def.sight && (!canSee || dist > 200)) this.chasing = false;
       if (this.chasing) {
         if (dist > 15) this.move((dx / dist) * this.def.speed * dt, (dy / dist) * this.def.speed * dt, walkable);
-        if (dist < 20 && this.cooldown <= 0) {
+        if (dist < (this.def.boss ? 30 : 20) && this.cooldown <= 0) {
           this.cooldown = 1.3;
           hitPlayer = true;
           // 덥석! 앞으로 살짝 튀어나온다
@@ -81,6 +88,7 @@ export class Monster {
     }
     const lift = Math.abs(Math.sin(this.bob)) * (this.chasing ? 5 : 3);
     this.sprite.setPosition(Math.round(this.x), Math.round(this.y - lift)).setDepth(this.y);
+    this.mark?.setPosition(this.sprite.x, this.sprite.y - this.sprite.height - 4).setDepth(this.y + 1).setVisible(!this.chasing || Math.sin(this.bob) > 0);
     if (this.bar.visible) this.drawBar();
     return hitPlayer;
   }
@@ -104,7 +112,7 @@ export class Monster {
   }
 
   private drawBar() {
-    const w = 22;
+    const w = this.def.boss ? 46 : 22;
     const x = Math.round(this.x - w / 2);
     const y = Math.round(this.y - this.sprite.height - 9);
     this.bar.clear().setDepth(99950);
@@ -112,16 +120,23 @@ export class Monster {
     this.bar.fillStyle(0xe8604c).fillRect(x, y, Math.max(0, (w * this.hp) / this.def.hp), 4);
   }
 
+  /** 얼리기 */
+  freeze(sec: number) {
+    this.stun = Math.max(this.stun, sec);
+    this.sprite.setTint(0x9fd8ff);
+    this.sprite.scene.time.delayedCall(sec * 1000, () => !this.dead && this.sprite.clearTint());
+  }
+
   /** 맞았다: 깜빡이고 뒤로 밀려난다 */
   hit(dmg: number, fromX: number, fromY: number, walkable: Walkable) {
     const scene = this.sprite.scene;
     this.hp -= dmg;
-    this.stun = 0.35;
+    this.stun = Math.max(this.stun, this.def.boss ? 0.12 : 0.35);
     this.chasing = !this.def.shy;
     this.sprite.setTintFill(0xffffff);
     scene.time.delayedCall(80, () => !this.dead && this.sprite.clearTint());
     const a = Math.atan2(this.y - fromY, this.x - fromX);
-    for (let i = 0; i < 4; i++) this.move(Math.cos(a) * 5, Math.sin(a) * 5, walkable);
+    if (!this.def.boss) for (let i = 0; i < 4; i++) this.move(Math.cos(a) * 5, Math.sin(a) * 5, walkable);
     this.bar.setVisible(true);
     this.drawBar();
   }
@@ -129,6 +144,7 @@ export class Monster {
   pop() {
     this.dead = true;
     this.bar.destroy();
+    this.mark?.destroy();
     this.sprite.disableInteractive();
     const s = this.sprite;
     s.scene.tweens.add({ targets: s, scaleX: 1.5, scaleY: 0, alpha: 0, duration: 200, ease: 'Cubic.easeIn', onComplete: () => s.destroy() });
@@ -137,6 +153,7 @@ export class Monster {
   destroy() {
     this.dead = true;
     this.bar.destroy();
+    this.mark?.destroy();
     this.sprite.destroy();
   }
 }

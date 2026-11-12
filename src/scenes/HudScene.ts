@@ -1,3 +1,5 @@
+import { ABILITIES, BOSSES, UPGRADE_COST, hatKey } from '../data/abilities';
+import { abilities } from '../state/abilities';
 import { BUFFS, FOODS, foodText } from '../data/food';
 import { player, MAX_HP } from '../state/player';
 import { quests, DAILY_BONUS, STORY, type QuestView } from '../state/quests';
@@ -104,6 +106,7 @@ export class HudScene extends Phaser.Scene {
       ['open-order', this.openOrder],
       ['open-combos', this.openCombos],
       ['open-sleep', this.openSleep],
+      ['open-dungeon', this.openDungeon],
       ['build-refresh', this.rebuildBuildTray],
       ['open-friend', this.openFriend],
       ['float', this.onFloat],
@@ -132,6 +135,7 @@ export class HudScene extends Phaser.Scene {
     quests.on('changed', this.refreshQuestPill, this);
     player.on('changed', this.refreshStatus, this);
     player.on('hurt', this.onHurt, this);
+    this.registry.events.on('changedata-dungeon', this.refreshQuestPill, this);
     this.time.addEvent({ delay: 1000, loop: true, callback: () => this.refreshStatus() });
     progress.on('region-unlocked', this.refreshQuestPill, this);
     progress.on('treasure', this.refreshQuestPill, this);
@@ -141,6 +145,7 @@ export class HudScene extends Phaser.Scene {
       quests.off('changed', this.refreshQuestPill, this);
       player.off('changed', this.refreshStatus, this);
       player.off('hurt', this.onHurt, this);
+      this.registry.events.off('changedata-dungeon', this.refreshQuestPill, this);
       progress.off('region-unlocked', this.refreshQuestPill, this);
       progress.off('treasure', this.refreshQuestPill, this);
       progress.off('boat-built', this.refreshQuestPill, this);
@@ -185,6 +190,20 @@ export class HudScene extends Phaser.Scene {
     this.questPill = undefined;
     this.questDot?.setVisible(quests.claimable);
     if (!this.registry.get('bear') || this.view !== 'explore') return;
+    if (this.registry.get('dungeon')) {
+      const W0 = this.scale.width;
+      const t0 = this.add.text(0, 0, '🚪 던전에서 나가기', { fontFamily: FONT, fontSize: '11px', color: '#ffffff', fontStyle: 'bold' }).setOrigin(0.5);
+      const g0 = this.add.graphics();
+      g0.fillStyle(0x5a4d6b, 0.95).fillRoundedRect(-66, -12, 132, 24, 12);
+      const c0 = this.add.container(W0 / 2, HUD_TOP_H + 16, [g0, t0]).setDepth(5);
+      c0.setSize(132, 30).setInteractive({ useHandCursor: true });
+      c0.on('pointerdown', () => {
+        sfx.tap();
+        this.game.events.emit('exit-dungeon');
+      });
+      this.questPill = c0;
+      return;
+    }
     const q = quests.story();
     const dailyReady = quests.daily().some((d) => d.done && !d.claimed) || quests.bonusState() === 'ready';
     let label: string;
@@ -839,6 +858,7 @@ export class HudScene extends Phaser.Scene {
   /** 탐험 ↔ 머지 ↔ 꾸미기 화면 전환 */
   private setView(v: View) {
     if (v === this.view || this.registry.get('modal') || !this.registry.get('bear')) return;
+    if (this.registry.get('dungeon')) return void this.toast('던전에서는 먼저 나가야 해요');
     const was = this.view;
     this.view = v;
     this.registry.set('view', v);
@@ -1135,25 +1155,17 @@ export class HudScene extends Phaser.Scene {
     const H = this.scale.height;
     const y = H - HUD_BOTTOM_H - 16;
     const c = this.add.container(12, y).setDepth(6);
-    const hp = player.hp;
-    const bw = 84;
-    const g = this.add.graphics();
-    g.fillStyle(0x000000, 0.14).fillRoundedRect(0, -11, bw + 60, 26, 13);
-    g.fillStyle(COLORS.uiBg, 0.95).fillRoundedRect(0, -13, bw + 60, 26, 13);
-    g.fillStyle(0xe8d5a9).fillRoundedRect(24, -5, bw, 10, 5);
-    const low = hp <= 30;
-    if (hp > 0) g.fillStyle(low ? 0xe8604c : hp <= 60 ? 0xf2a93b : 0x8bd17c).fillRoundedRect(24, -5, Math.max(8, (bw * hp) / MAX_HP), 10, 5);
-    c.add(g);
-    c.add(this.add.text(13, 0, '❤️', { fontSize: '12px' }).setOrigin(0.5));
-    c.add(this.add.text(24 + bw + 6, 0, String(hp), { fontFamily: FONT, fontSize: '11px', color: low ? '#d1495b' : COLORS.uiText, fontStyle: 'bold' }).setOrigin(0, 0.5));
-    // 도시락: 가진 음식 먹기
+    // 체력바는 곰 머리 위에 있다. 여기에는 도시락과 음식 효과만.
+    const low = player.hp <= 30;
+    const bw = -64;
     const foods = inventory.owned().filter((o) => FOODS[o.id]).length;
-    const lb = this.add.container(bw + 82, 0);
+    const lb = this.add.container(18, 0);
     const lg = this.add.graphics();
-    lg.fillStyle(0x000000, 0.14).fillCircle(0, 2, 15);
-    lg.fillStyle(foods ? 0xffd166 : COLORS.uiBg).fillCircle(0, 0, 15);
-    lb.add([lg, this.add.text(0, 0, '🍱', { fontSize: '15px' }).setOrigin(0.5)]);
-    lb.setSize(34, 34).setInteractive({ useHandCursor: true });
+    lg.fillStyle(0x000000, 0.14).fillCircle(0, 2, 17);
+    lg.fillStyle(foods ? 0xffd166 : COLORS.uiBg).fillCircle(0, 0, 17);
+    if (low && foods) lg.lineStyle(2.5, 0xe8604c).strokeCircle(0, 0, 17);
+    lb.add([lg, this.add.text(0, 0, '🍱', { fontSize: '17px' }).setOrigin(0.5)]);
+    lb.setSize(38, 38).setInteractive({ useHandCursor: true });
     lb.on('pointerdown', () => {
       sfx.tap();
       this.openLunchbox();
@@ -1168,7 +1180,6 @@ export class HudScene extends Phaser.Scene {
       c.add(this.add.text(x + 8, 0, BUFFS[k].emoji, { fontSize: '11px' }).setOrigin(0.5));
       c.add(this.add.text(x + 17, 0, String(sec), { fontFamily: FONT, fontSize: '10px', color: sec <= 10 ? '#d1495b' : COLORS.uiText, fontStyle: 'bold' }).setOrigin(0, 0.5));
     });
-    if (low) this.tweens.add({ targets: c, alpha: 0.6, duration: 400, yoyo: true, repeat: -1 });
     this.statusBar = c;
   }
 
@@ -1212,6 +1223,114 @@ export class HudScene extends Phaser.Scene {
       list.add(this.add.text(x + 48, y + 7, `${ITEMS[o.id].name}  ×${o.count}`, { fontFamily: FONT, fontSize: '13px', color: COLORS.uiText, fontStyle: 'bold' }));
       list.add(this.add.text(x + 48, y + 26, foodText(o.id), { fontFamily: FONT, fontSize: '10px', color: '#8a6d4b' }));
       list.add(this.add.text(x + PW - 44, y + 22, '먹기', { fontFamily: FONT, fontSize: '12px', color: '#5fae52', fontStyle: 'bold' }).setOrigin(1, 0.5));
+    });
+  }
+
+  /** 던전 입구 */
+  private openDungeon(island: number) {
+    if (this.registry.get('modal')) return;
+    const boss = BOSSES[island];
+    const ab = ABILITIES[island];
+    const got = abilities.level(ab.id) > 0;
+    const PW = 300;
+    const PH = 330;
+    const { box, close } = this.modal(PW, PH);
+    const top = -PH / 2;
+    box.add(this.add.text(0, top + 28, '☠ 보스 던전', { fontFamily: FONT, fontSize: '20px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0.5));
+    const bg = this.add.graphics();
+    bg.fillStyle(0x5a4d6b).fillRoundedRect(-PW / 2 + 20, top + 50, PW - 40, 96, 16);
+    box.add(bg);
+    box.add(this.add.image(-60, top + 100, boss.tex!).setScale(1.3));
+    box.add(this.add.text(10, top + 78, boss.name, { fontFamily: FONT, fontSize: '16px', color: '#ffffff', fontStyle: 'bold' }).setOrigin(0, 0.5));
+    box.add(this.add.text(10, top + 102, `체력 ${boss.hp} · 공격 ${boss.dmg}`, { fontFamily: FONT, fontSize: '11px', color: '#e8d5a9' }).setOrigin(0, 0.5));
+    box.add(this.add.text(10, top + 122, '붉은 원이 보이면 피해요!', { fontFamily: FONT, fontSize: '10px', color: '#f2a93b' }).setOrigin(0, 0.5));
+    box.add(this.add.image(-PW / 2 + 44, top + 180, hatKey(ab.id)).setScale(1.6));
+    box.add(
+      this.add
+        .text(-PW / 2 + 70, top + 180, got ? `✅ 변신 '${ab.names[0]}' 얻음\n다시 잡으면 보스 증표 ×2 (강화 재료)` : `처음 잡으면: ${ab.emoji} 변신 '${ab.names[0]}'\n${ab.desc.replace('{n}', String(ab.n[0]))}`, { fontFamily: FONT, fontSize: '11px', color: '#8a6d4b', fontStyle: 'bold', lineSpacing: 4 })
+        .setOrigin(0, 0.5),
+    );
+    box.add(this.add.text(0, top + 228, `❤️ 지금 체력 ${player.hp}/${MAX_HP} · 쓰러지면 캠프로 돌아가요`, { fontFamily: FONT, fontSize: '10px', color: player.hp < 60 ? '#d1495b' : '#a08a6a', fontStyle: 'bold' }).setOrigin(0.5));
+    const btn = this.button('⚔️ 들어가기', true, () => {
+      close();
+      this.time.delayedCall(200, () => this.game.events.emit('enter-dungeon'));
+    }, 200);
+    btn.setPosition(0, PH / 2 - 40);
+    box.add(btn);
+  }
+
+  /** 변신: 얻은 능력을 골라 입고, 보스 증표로 강화(진화)한다 */
+  private openAbilities() {
+    if (this.registry.get('modal') || !this.registry.get('bear')) return;
+    const H = this.scale.height;
+    const PW = Math.min(330, this.scale.width - 20);
+    const rowH = 62;
+    const contentH = ABILITIES.length * rowH;
+    const PH = Math.min(H - 70, 88 + contentH);
+    const viewH = PH - 88;
+    const { box, close } = this.modal(PW, PH);
+    const top = -PH / 2;
+    const reopen = () => {
+      close();
+      this.time.delayedCall(230, () => this.openAbilities());
+    };
+    const on = abilities.equipped;
+    box.add(this.add.text(0, top + 26, '🎩 변신', { fontFamily: FONT, fontSize: '20px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0.5));
+    box.add(this.add.text(0, top + 50, `보스를 잡으면 능력을 얻어요 · 보스 증표 ${inventory.get('boss_token')}개 · 보석 원석 ${inventory.get('crystal')}개`, { fontFamily: FONT, fontSize: '10px', color: '#e07a5f', fontStyle: 'bold' }).setOrigin(0.5));
+    const canPay = (cost: Partial<Record<ItemId, number>>) => (Object.entries(cost) as [ItemId, number][]).every(([id, n]) => inventory.get(id) >= n);
+    const list = this.scrollList(box, PW, PH, top + 70, viewH, contentH, (lx, ly) => {
+      const i = Math.floor(ly / rowH);
+      const ab = ABILITIES[i];
+      if (!ab) return;
+      const lv = abilities.level(ab.id);
+      if (lv === 0) return void this.toast(`🔒 ${ISLANDS[i].name}의 보스를 잡으면 얻어요`);
+      // 오른쪽 끝: 강화, 나머지: 입기/벗기
+      if (lx > PW / 2 - 78 && lv < 3) {
+        const cost = UPGRADE_COST[lv - 1];
+        if (!canPay(cost)) return void this.toast('보스 증표나 보석 원석이 부족해요');
+        this.spend(cost);
+        abilities.upgrade(ab.id);
+        sfx.fanfare();
+        buzz(40);
+        close();
+        this.time.delayedCall(240, () => this.celebrate(`✨ 진화!\n${ab.emoji} ${ab.names[lv - 1]} → ${ab.names[lv]}`));
+        return;
+      }
+      sfx.pop();
+      abilities.equip(on === ab.id ? null : ab.id);
+      reopen();
+    });
+    ABILITIES.forEach((ab, i) => {
+      const y = i * rowH;
+      const x = -PW / 2 + 14;
+      const lv = abilities.level(ab.id);
+      const worn = on === ab.id;
+      const g = this.add.graphics();
+      g.fillStyle(lv === 0 ? 0xf3ecd9 : worn ? 0xffe9a8 : 0xfff6df).fillRoundedRect(x, y, PW - 30, rowH - 5, 12);
+      if (worn) g.lineStyle(2, 0xf2a93b).strokeRoundedRect(x, y, PW - 30, rowH - 5, 12);
+      list.add(g);
+      const hat = this.add.image(x + 26, y + 30, hatKey(ab.id)).setScale(1.7);
+      if (lv === 0) hat.setTintFill(0xcfc4ab);
+      list.add(hat);
+      if (lv === 0) {
+        list.add(this.add.text(x + 54, y + 12, '???', { fontFamily: FONT, fontSize: '13px', color: '#b3a892', fontStyle: 'bold' }));
+        list.add(this.add.text(x + 54, y + 32, `🔒 ${ISLANDS[i].emoji} ${ISLANDS[i].name} 보스: ${BOSSES[i].name}`, { fontFamily: FONT, fontSize: '10px', color: '#a08a6a' }));
+        return;
+      }
+      list.add(this.add.text(x + 54, y + 8, `${ab.emoji} ${ab.names[lv - 1]}  ${'★'.repeat(lv)} ${lv}단계${worn ? ' · 변신 중' : ''}`, { fontFamily: FONT, fontSize: '13px', color: COLORS.uiText, fontStyle: 'bold' }));
+      list.add(this.add.text(x + 54, y + 28, ab.desc.replace('{n}', String(ab.n[lv - 1])), { fontFamily: FONT, fontSize: '10px', color: '#8a6d4b', wordWrap: { width: PW - 30 - 54 - 76 } }));
+      if (lv < 3) {
+        const cost = UPGRADE_COST[lv - 1];
+        const ok = canPay(cost);
+        const ux = x + PW - 30 - 38;
+        const ug = this.add.graphics();
+        ug.fillStyle(ok ? 0x8bd17c : 0xd8d2c4).fillRoundedRect(ux - 32, y + 9, 64, 39, 10);
+        list.add(ug);
+        list.add(this.add.text(ux, y + 20, '강화', { fontFamily: FONT, fontSize: '12px', color: ok ? '#ffffff' : '#9a917f', fontStyle: 'bold' }).setOrigin(0.5));
+        list.add(this.add.text(ux, y + 37, `증표${cost.boss_token} 보석${cost.crystal}`, { fontFamily: FONT, fontSize: '8px', color: ok ? '#ffffff' : '#9a917f', fontStyle: 'bold' }).setOrigin(0.5));
+      } else {
+        list.add(this.add.text(x + PW - 30 - 38, y + 28, '최고!', { fontFamily: FONT, fontSize: '12px', color: '#e07a5f', fontStyle: 'bold' }).setOrigin(0.5));
+      }
     });
   }
 
@@ -1328,6 +1447,8 @@ export class HudScene extends Phaser.Scene {
     });
     this.sideBtns.push(row as Phaser.GameObjects.Container);
     this.emoteRow = row;
+    // 변신 (보스를 잡아 얻은 능력)
+    this.roundButton(W - 30, HUD_TOP_H + 162, '🎩', () => this.openAbilities());
     // 퀘스트 수첩 (받을 보상이 있으면 빨간 점)
     const qb = this.roundButton(30, HUD_TOP_H + 162, '📜', () => this.openQuestBook());
     this.questDot = this.add.circle(13, -13, 5, 0xe8604c).setStrokeStyle(1.5, 0xffffff).setVisible(false);
