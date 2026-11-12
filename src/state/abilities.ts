@@ -49,6 +49,14 @@ class Abilities extends Phaser.Events.EventEmitter {
     return a ? a.n[this.level(id) - 1] : 0;
   }
 
+  /** 지금 변신 중인 능력의 기술과 단계별 숫자 (변신 중이 아니면 null) */
+  skill() {
+    const id = this.equipped;
+    const a = ABILITIES.find((v) => v.id === id);
+    if (!id || !a) return null;
+    return { id, ...a.skill, value: a.skill.n[this.level(id) - 1] };
+  }
+
   /** 보스를 처음 잡아 능력을 얻는다. 새로 얻었으면 true */
   unlock(id: string) {
     if (this.level(id) > 0) return false;

@@ -221,6 +221,7 @@ export class IslandScene extends Phaser.Scene {
     ge.on('use-item', this.onUseItem, this);
     ge.on('sleep', this.onSleep, this);
     ge.on('enter-dungeon', this.enterDungeon, this);
+    ge.on('use-skill', this.useSkill, this);
     ge.on('exit-dungeon', this.exitDungeon, this);
     player.on('faint', this.onFaint, this);
     village.on('resident-joined', this.onResidentJoined, this);
@@ -239,6 +240,7 @@ export class IslandScene extends Phaser.Scene {
       ge.off('use-item', this.onUseItem, this);
       ge.off('sleep', this.onSleep, this);
       ge.off('enter-dungeon', this.enterDungeon, this);
+      ge.off('use-skill', this.useSkill, this);
       ge.off('exit-dungeon', this.exitDungeon, this);
       player.off('faint', this.onFaint, this);
       village.off('resident-joined', this.onResidentJoined, this);
@@ -1294,6 +1296,130 @@ export class IslandScene extends Phaser.Scene {
     const y = Math.round(top - (on ? 14 : 7));
     g.fillStyle(0x4a3b2a, 0.85).fillRoundedRect(x - 1, y - 1, w + 2, 6, 3);
     g.fillStyle(hp <= 30 ? 0xe8604c : hp <= 60 ? 0xf2a93b : 0x8bd17c).fillRoundedRect(x, y, Math.max(2, (w * hp) / 100), 4, 2);
+  }
+
+  // ───────────────────────── 변신 기술 ─────────────────────────
+
+  /** 변신 중에 기술 버튼을 눌렀다 */
+  private useSkill() {
+    const pl = this.player;
+    const sk = abilities.skill();
+    if (!pl || !sk || this.resting || this.flying || this.fishing) return;
+    const now = this.time.now;
+    if (now < ((this.registry.get('skillReady') as number) ?? 0)) return;
+    this.registry.set('skillReady', now + sk.cd * 1000);
+    this.registry.set('skillCd', sk.cd * 1000);
+    const v = sk.value;
+    const near = (r: number) => this.monsters.filter((m) => !m.dead && Math.hypot(m.x - pl.x, m.y - pl.y) < r);
+    const ring = (r: number, color: number) => {
+      const g = this.add.graphics().setDepth(99958);
+      const t = { v: 0 };
+      this.tweens.add({
+        targets: t,
+        v: 1,
+        duration: 380,
+        ease: 'Cubic.easeOut',
+        onUpdate: () => g.clear().fillStyle(color, 0.25 * (1 - t.v)).fillEllipse(pl.x, pl.y - 6, r * 2 * t.v, r * 1.4 * t.v).lineStyle(3, color, 1 - t.v).strokeEllipse(pl.x, pl.y - 6, r * 2 * t.v, r * 1.4 * t.v),
+        onComplete: () => g.destroy(),
+      });
+    };
+    pl.jump(120);
+    sfx.fanfare();
+    buzz(40);
+    const cam = this.cameras.main;
+    this.game.events.emit('float', `${sk.name}!`, (pl.x - cam.worldView.x) * cam.zoom, (pl.y - 58 - cam.worldView.y) * cam.zoom);
+    switch (sk.id) {
+      case 'leaf':
+        ring(110, 0x8bd17c);
+        near(110).forEach((m) => m.freeze(v, 0xa8e07c));
+        player.heal(10);
+        this.fx.heart.explode(5, pl.x, pl.y - 30);
+        break;
+      case 'bee': {
+        const target = near(140).sort((a, b) => Math.hypot(a.x - pl.x, a.y - pl.y) - Math.hypot(b.x - pl.x, b.y - pl.y))[0];
+        if (!target) break;
+        for (let i = 0; i < v; i++) {
+          this.time.delayedCall(i * 110, () => {
+            if (target.dead) return;
+            this.fx.splash.explode(4, target.x + Phaser.Math.Between(-8, 8), target.y - 10);
+            sfx.tap();
+            this.damageMonster(target, this.attackPower(), true);
+          });
+        }
+        break;
+      }
+      case 'wood':
+        ring(46, 0xc9a66b);
+        this.invulnUntil = now + v * 1000;
+        pl.sprite.setTint(0xe8c98f);
+        this.time.delayedCall(v * 1000, () => pl.sprite.clearTint());
+        break;
+      case 'bubble':
+        ring(120, 0x7fd0ff);
+        this.fx.splash.explode(24, pl.x, pl.y - 10);
+        near(120).forEach((m) => {
+          // 여러 번 밀어서 멀리 보낸다
+          for (let i = 0; i < 3; i++) m.hit(0, pl.x, pl.y, this.walkable);
+          this.damageMonster(m, v, true);
+        });
+        break;
+      case 'rock':
+        ring(100, 0xa9a9a9);
+        cam.shake(260, 0.012);
+        this.fx.dust.explode(24, pl.x, pl.y);
+        near(100).forEach((m) => {
+          m.freeze(0.8, 0xffffff);
+          this.damageMonster(m, v, true);
+        });
+        break;
+      case 'poison':
+        ring(115, 0xb07cd8);
+        this.fx.puff.explode(20, pl.x, pl.y - 10);
+        near(115).forEach((m) => {
+          m.poisonT = 4;
+          m.poisonDps = Math.max(m.poisonDps, v);
+          m.sprite.setTint(0xc79be8);
+          this.time.delayedCall(4000, () => !m.dead && m.sprite.clearTint());
+        });
+        break;
+      case 'ice':
+        ring(125, 0x9fd8ff);
+        this.fx.sparkle.explode(24, pl.x, pl.y - 14);
+        near(125).forEach((m) => m.freeze(m.def.boss ? v / 2 : v));
+        break;
+      case 'sand':
+        for (let i = 0; i < 6; i++) {
+          this.time.delayedCall(i * 500, () => {
+            const p2 = this.player;
+            if (!p2 || this.resting) return;
+            ring(66, 0xe2c27a);
+            this.fx.dust.explode(10, p2.x, p2.y - 8);
+            this.monsters.filter((m) => !m.dead && Math.hypot(m.x - p2.x, m.y - p2.y) < 66).forEach((m) => this.damageMonster(m, v, true));
+          });
+        }
+        break;
+      case 'fire':
+        ring(90, 0xff8a3d);
+        cam.shake(200, 0.008);
+        this.fx.ember.explode(40, pl.x, pl.y - 10);
+        near(90).forEach((m) => this.damageMonster(m, v, true));
+        break;
+      case 'thunder': {
+        const targets = near(170).slice(0, 2 + abilities.level('thunder'));
+        cam.flash(120, 255, 255, 200);
+        targets.forEach((m, i) => {
+          this.time.delayedCall(i * 120, () => {
+            if (m.dead) return;
+            const g = this.add.graphics().setDepth(99960);
+            g.lineStyle(3, 0xffe066).lineBetween(m.x + 10, m.y - 150, m.x - 6, m.y - 80).lineBetween(m.x - 6, m.y - 80, m.x + 6, m.y - 60).lineBetween(m.x + 6, m.y - 60, m.x, m.y - 8);
+            this.tweens.add({ targets: g, alpha: 0, duration: 260, onComplete: () => g.destroy() });
+            sfx.knock();
+            this.damageMonster(m, v, true);
+          });
+        });
+        break;
+      }
+    }
   }
 
   // ───────────────────────── 보스 던전 ─────────────────────────
