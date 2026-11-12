@@ -1,3 +1,5 @@
+import { BUFFS, FOODS, foodText } from '../data/food';
+import { player, MAX_HP } from '../state/player';
 import { quests, DAILY_BONUS, STORY, type QuestView } from '../state/quests';
 import Phaser from 'phaser';
 import { COLORS } from '../config';
@@ -47,6 +49,7 @@ export class HudScene extends Phaser.Scene {
   private questPill?: Phaser.GameObjects.Container;
   private questDot?: Phaser.GameObjects.Arc;
   private resizeTimer?: Phaser.Time.TimerEvent;
+  private statusBar?: Phaser.GameObjects.Container;
   private topText!: Phaser.GameObjects.Text;
   private topBg!: Phaser.GameObjects.Graphics;
   private topBtn!: Phaser.GameObjects.Container;
@@ -100,6 +103,7 @@ export class HudScene extends Phaser.Scene {
       ['sailing', this.onSailing],
       ['open-order', this.openOrder],
       ['open-combos', this.openCombos],
+      ['open-sleep', this.openSleep],
       ['build-refresh', this.rebuildBuildTray],
       ['open-friend', this.openFriend],
       ['float', this.onFloat],
@@ -126,12 +130,17 @@ export class HudScene extends Phaser.Scene {
       inventory.off('changed', this.onInventoryChanged, this);
     });
     quests.on('changed', this.refreshQuestPill, this);
+    player.on('changed', this.refreshStatus, this);
+    player.on('hurt', this.onHurt, this);
+    this.time.addEvent({ delay: 1000, loop: true, callback: () => this.refreshStatus() });
     progress.on('region-unlocked', this.refreshQuestPill, this);
     progress.on('treasure', this.refreshQuestPill, this);
     progress.on('boat-built', this.refreshQuestPill, this);
     this.scale.on('resize', this.onResize, this);
     this.events.once('shutdown', () => {
       quests.off('changed', this.refreshQuestPill, this);
+      player.off('changed', this.refreshStatus, this);
+      player.off('hurt', this.onHurt, this);
       progress.off('region-unlocked', this.refreshQuestPill, this);
       progress.off('treasure', this.refreshQuestPill, this);
       progress.off('boat-built', this.refreshQuestPill, this);
@@ -171,6 +180,7 @@ export class HudScene extends Phaser.Scene {
   }
 
   private refreshQuestPill() {
+    this.refreshStatus();
     this.questPill?.destroy();
     this.questPill = undefined;
     this.questDot?.setVisible(quests.claimable);
@@ -769,9 +779,10 @@ export class HudScene extends Phaser.Scene {
       info.setText(known ? `${ITEMS[id].name} · ${inventory.get(id)}개` : '❓ 아직 못 찾았어요');
       useBtn?.destroy();
       useBtn = undefined;
-      if (USABLE.has(id) && inventory.get(id) > 0) {
+      if ((USABLE.has(id) || FOODS[id]) && inventory.get(id) > 0) {
         info.setX(-44);
-        useBtn = this.button('쓰기', true, () => {
+        if (FOODS[id]) info.setText(`${ITEMS[id].name} · ${foodText(id)}`);
+        useBtn = this.button(FOODS[id] ? '먹기' : '쓰기', true, () => {
           closeStorage();
           if (this.view !== 'explore') return void this.toast('탐험 화면에서 쓸 수 있어요');
           this.time.delayedCall(220, () => this.game.events.emit('use-item', id));
@@ -1025,32 +1036,200 @@ export class HudScene extends Phaser.Scene {
     box.add(btn);
   }
 
+  /**
+   * 창 안에 위아래로 미는 목록을 만든다. rows(list)로 내용을 그리고, 톡 누른 곳은 onTap(목록 안 좌표)으로 알려 준다.
+   */
+  private scrollList(box: Phaser.GameObjects.Container, PW: number, PH: number, gridTop: number, viewH: number, contentH: number, onTap: (x: number, y: number) => void) {
+    const W = this.scale.width;
+    const H = this.scale.height;
+    const fit = Math.min(1, (H - 24) / PH, (W - 12) / PW);
+    const list = this.add.container(0, gridTop);
+    box.add(list);
+    const mg = this.make.graphics({}, false);
+    mg.fillStyle(0xffffff).fillRect(W / 2 - (PW / 2) * fit, H / 2 + gridTop * fit, PW * fit, viewH * fit);
+    list.setMask(mg.createGeometryMask());
+    box.once('destroy', () => mg.destroy());
+    const maxScroll = Math.max(0, contentH - viewH);
+    const bar = this.add.graphics();
+    box.add(bar);
+    const drawBar = () => {
+      bar.clear();
+      if (maxScroll <= 0) return;
+      const bh = Math.max(24, (viewH * viewH) / contentH);
+      bar.fillStyle(0xe8d5a9).fillRoundedRect(PW / 2 - 9, gridTop + 2, 4, viewH - 4, 2);
+      bar.fillStyle(0xc9a66b).fillRoundedRect(PW / 2 - 9, gridTop + ((viewH - bh) * (gridTop - list.y)) / maxScroll, 4, bh, 2);
+    };
+    drawBar();
+    const zone = this.add.rectangle(0, gridTop + viewH / 2, PW - 8, viewH, 0, 0).setInteractive();
+    box.add(zone);
+    let drag: { py: number; ly: number; moved: boolean } | null = null;
+    zone.on('pointerdown', (p: Phaser.Input.Pointer, _x: number, _y: number, e: Phaser.Types.Input.EventData) => {
+      e.stopPropagation();
+      drag = { py: p.y, ly: list.y, moved: false };
+    });
+    zone.on('pointermove', (p: Phaser.Input.Pointer) => {
+      if (!drag || !p.isDown) return;
+      if (Math.abs(p.y - drag.py) > 8) drag.moved = true;
+      if (!drag.moved) return;
+      list.y = Phaser.Math.Clamp(drag.ly + (p.y - drag.py) / fit, gridTop - maxScroll, gridTop);
+      drawBar();
+    });
+    zone.on('pointerup', (p: Phaser.Input.Pointer) => {
+      const d = drag;
+      drag = null;
+      if (d && !d.moved) onTap((p.x - W / 2) / fit, (p.y - H / 2) / fit - list.y);
+    });
+    zone.on('pointerout', () => {
+      drag = null;
+    });
+    return list;
+  }
+
   /** 조합 수첩: 보드에서 겹치면 되는 것들과 쓰임새 */
   private openCombos() {
     if (this.registry.get('modal')) return;
+    const H = this.scale.height;
     const PW = Math.min(330, this.scale.width - 20);
-    const PH = 96 + COMBOS.length * 58;
+    const rowH = 54;
+    const contentH = COMBOS.length * rowH;
+    const PH = Math.min(H - 70, 84 + contentH);
+    const viewH = PH - 84;
     const { box } = this.modal(PW, PH);
     const top = -PH / 2;
-    box.add(this.add.text(0, top + 28, '📖 조합 수첩', { fontFamily: FONT, fontSize: '20px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0.5));
-    box.add(this.add.text(0, top + 52, '머지 보드에서 서로 다른 두 가지를 겹쳐요', { fontFamily: FONT, fontSize: '11px', color: '#a08a6a' }).setOrigin(0.5));
+    const made = COMBOS.filter((c) => inventory.discovered(c.out)).length;
+    box.add(this.add.text(0, top + 26, `📖 조합 수첩  ${made}/${COMBOS.length}`, { fontFamily: FONT, fontSize: '19px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0.5));
+    box.add(this.add.text(0, top + 50, '머지 보드에서 서로 다른 두 가지를 겹쳐요 · 밀어서 더 보기', { fontFamily: FONT, fontSize: '10px', color: '#a08a6a' }).setOrigin(0.5));
+    const list = this.scrollList(box, PW, PH, top + 68, viewH, contentH, () => {});
     COMBOS.forEach((c, i) => {
-      const y = top + 70 + i * 58;
+      const y = i * rowH;
       const x = -PW / 2 + 14;
-      const made = inventory.discovered(c.out);
+      const done = inventory.discovered(c.out);
       const g = this.add.graphics();
-      g.fillStyle(made ? 0xfff0c9 : 0xf3ecd9).fillRoundedRect(x, y, PW - 28, 52, 12);
-      box.add(g);
-      box.add(this.add.image(x + 24, y + 26, itemKey(c.a)).setScale(1.4));
-      box.add(this.add.text(x + 44, y + 26, '+', { fontFamily: FONT, fontSize: '14px', color: '#a08a6a', fontStyle: 'bold' }).setOrigin(0.5));
-      box.add(this.add.image(x + 64, y + 26, itemKey(c.b)).setScale(1.4));
-      box.add(this.add.text(x + 86, y + 26, '→', { fontFamily: FONT, fontSize: '14px', color: '#a08a6a', fontStyle: 'bold' }).setOrigin(0.5));
-      const out = this.add.image(x + 110, y + 26, itemKey(c.out)).setScale(1.6);
-      if (!made) out.setTintFill(0xcfc4ab);
-      box.add(out);
-      box.add(this.add.text(x + 132, y + 10, made ? ITEMS[c.out].name : '???', { fontFamily: FONT, fontSize: '13px', color: COLORS.uiText, fontStyle: 'bold' }));
-      box.add(this.add.text(x + 132, y + 29, c.use, { fontFamily: FONT, fontSize: '9px', color: '#8a6d4b', wordWrap: { width: PW - 28 - 140 } }));
+      g.fillStyle(done ? 0xfff0c9 : 0xf3ecd9).fillRoundedRect(x, y, PW - 30, rowH - 5, 12);
+      list.add(g);
+      // 재료를 아직 본 적 없으면 그림자로 (몬스터·다른 섬에서 나오는 것)
+      const part = (id: ItemId, px: number) => {
+        const im = this.add.image(px, y + 24, itemKey(id)).setScale(1.3);
+        if (!inventory.discovered(id)) im.setTintFill(0xcfc4ab);
+        list.add(im);
+      };
+      part(c.a, x + 22);
+      list.add(this.add.text(x + 41, y + 24, '+', { fontFamily: FONT, fontSize: '13px', color: '#a08a6a', fontStyle: 'bold' }).setOrigin(0.5));
+      part(c.b, x + 60);
+      list.add(this.add.text(x + 81, y + 24, '→', { fontFamily: FONT, fontSize: '13px', color: '#a08a6a', fontStyle: 'bold' }).setOrigin(0.5));
+      const out = this.add.image(x + 104, y + 24, itemKey(c.out)).setScale(1.5);
+      if (!done) out.setTintFill(0xcfc4ab);
+      list.add(out);
+      list.add(this.add.text(x + 124, y + 8, done ? ITEMS[c.out].name : '???', { fontFamily: FONT, fontSize: '13px', color: COLORS.uiText, fontStyle: 'bold' }));
+      list.add(this.add.text(x + 124, y + 27, c.use || foodText(c.out), { fontFamily: FONT, fontSize: '9px', color: '#8a6d4b', wordWrap: { width: PW - 30 - 132 } }));
     });
+  }
+
+  // ───────────────────────── 체력 · 음식 · 잠 ─────────────────────────
+
+  /** 왼쪽 아래: 체력 막대 + 걸려 있는 음식 효과 + 도시락 버튼 (탐험 화면에서만) */
+  private refreshStatus() {
+    this.statusBar?.destroy();
+    this.statusBar = undefined;
+    if (!this.registry.get('bear') || this.view !== 'explore') return;
+    const H = this.scale.height;
+    const y = H - HUD_BOTTOM_H - 16;
+    const c = this.add.container(12, y).setDepth(6);
+    const hp = player.hp;
+    const bw = 84;
+    const g = this.add.graphics();
+    g.fillStyle(0x000000, 0.14).fillRoundedRect(0, -11, bw + 60, 26, 13);
+    g.fillStyle(COLORS.uiBg, 0.95).fillRoundedRect(0, -13, bw + 60, 26, 13);
+    g.fillStyle(0xe8d5a9).fillRoundedRect(24, -5, bw, 10, 5);
+    const low = hp <= 30;
+    if (hp > 0) g.fillStyle(low ? 0xe8604c : hp <= 60 ? 0xf2a93b : 0x8bd17c).fillRoundedRect(24, -5, Math.max(8, (bw * hp) / MAX_HP), 10, 5);
+    c.add(g);
+    c.add(this.add.text(13, 0, '❤️', { fontSize: '12px' }).setOrigin(0.5));
+    c.add(this.add.text(24 + bw + 6, 0, String(hp), { fontFamily: FONT, fontSize: '11px', color: low ? '#d1495b' : COLORS.uiText, fontStyle: 'bold' }).setOrigin(0, 0.5));
+    // 도시락: 가진 음식 먹기
+    const foods = inventory.owned().filter((o) => FOODS[o.id]).length;
+    const lb = this.add.container(bw + 82, 0);
+    const lg = this.add.graphics();
+    lg.fillStyle(0x000000, 0.14).fillCircle(0, 2, 15);
+    lg.fillStyle(foods ? 0xffd166 : COLORS.uiBg).fillCircle(0, 0, 15);
+    lb.add([lg, this.add.text(0, 0, '🍱', { fontSize: '15px' }).setOrigin(0.5)]);
+    lb.setSize(34, 34).setInteractive({ useHandCursor: true });
+    lb.on('pointerdown', () => {
+      sfx.tap();
+      this.openLunchbox();
+    });
+    c.add(lb);
+    // 효과 아이콘 + 남은 초
+    player.active().forEach(([k, sec], i) => {
+      const x = bw + 112 + i * 40;
+      const bg = this.add.graphics();
+      bg.fillStyle(COLORS.uiBg, 0.95).fillRoundedRect(x - 2, -11, 38, 22, 11);
+      c.add(bg);
+      c.add(this.add.text(x + 8, 0, BUFFS[k].emoji, { fontSize: '11px' }).setOrigin(0.5));
+      c.add(this.add.text(x + 17, 0, String(sec), { fontFamily: FONT, fontSize: '10px', color: sec <= 10 ? '#d1495b' : COLORS.uiText, fontStyle: 'bold' }).setOrigin(0, 0.5));
+    });
+    if (low) this.tweens.add({ targets: c, alpha: 0.6, duration: 400, yoyo: true, repeat: -1 });
+    this.statusBar = c;
+  }
+
+  /** 맞았을 때 화면 가장자리가 붉게 번쩍인다 */
+  private onHurt() {
+    const r = this.add.rectangle(0, 0, this.scale.width, this.scale.height, 0xe8604c, 0.28).setOrigin(0).setDepth(250);
+    this.tweens.add({ targets: r, alpha: 0, duration: 320, onComplete: () => r.destroy() });
+  }
+
+  /** 도시락: 가진 음식 목록에서 골라 먹는다 */
+  private openLunchbox() {
+    if (this.registry.get('modal') || !this.registry.get('bear')) return;
+    const foods = inventory.owned().filter((o) => FOODS[o.id]).sort((a, b) => (FOODS[b.id]!.heal - FOODS[a.id]!.heal));
+    const H = this.scale.height;
+    const PW = Math.min(320, this.scale.width - 20);
+    const rowH = 50;
+    const contentH = Math.max(1, foods.length) * rowH;
+    const PH = Math.min(H - 90, 96 + contentH);
+    const viewH = PH - 96;
+    const { box, close } = this.modal(PW, PH);
+    const top = -PH / 2;
+    box.add(this.add.text(0, top + 26, '🍱 도시락', { fontFamily: FONT, fontSize: '20px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0.5));
+    box.add(this.add.text(0, top + 50, `❤️ 체력 ${player.hp}/${MAX_HP} · 음식을 눌러서 먹어요`, { fontFamily: FONT, fontSize: '11px', color: '#e07a5f', fontStyle: 'bold' }).setOrigin(0.5));
+    if (foods.length === 0) {
+      box.add(this.add.text(0, top + 96, '먹을 것이 없어요.\n과일을 따거나, 머지 탭에서 요리를 만들어요!', { fontFamily: FONT, fontSize: '12px', color: '#a08a6a', align: 'center' }).setOrigin(0.5));
+      return;
+    }
+    const list = this.scrollList(box, PW, PH, top + 68, viewH, contentH, (_x, ly) => {
+      const f = foods[Math.floor(ly / rowH)];
+      if (!f) return;
+      close();
+      this.time.delayedCall(200, () => this.game.events.emit('use-item', f.id));
+    });
+    foods.forEach((o, i) => {
+      const y = i * rowH;
+      const x = -PW / 2 + 14;
+      const g = this.add.graphics();
+      g.fillStyle(0xfff0c9).fillRoundedRect(x, y, PW - 30, rowH - 5, 12);
+      list.add(g);
+      list.add(this.add.image(x + 24, y + 22, itemKey(o.id)).setScale(1.5));
+      list.add(this.add.text(x + 48, y + 7, `${ITEMS[o.id].name}  ×${o.count}`, { fontFamily: FONT, fontSize: '13px', color: COLORS.uiText, fontStyle: 'bold' }));
+      list.add(this.add.text(x + 48, y + 26, foodText(o.id), { fontFamily: FONT, fontSize: '10px', color: '#8a6d4b' }));
+      list.add(this.add.text(x + PW - 44, y + 22, '먹기', { fontFamily: FONT, fontSize: '12px', color: '#5fae52', fontStyle: 'bold' }).setOrigin(1, 0.5));
+    });
+  }
+
+  /** 텐트·침대: 잠자기 */
+  private openSleep() {
+    if (this.registry.get('modal')) return;
+    const PW = 280;
+    const PH = 200;
+    const { box, close } = this.modal(PW, PH);
+    const top = -PH / 2;
+    box.add(this.add.text(0, top + 34, '💤 잠자기', { fontFamily: FONT, fontSize: '22px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0.5));
+    box.add(this.add.text(0, top + 82, player.hp >= MAX_HP ? '지금은 쌩쌩해요!\n그래도 한숨 잘까요?' : `❤️ 체력 ${player.hp}/${MAX_HP}\n푹 자면 체력이 가득 차요`, { fontFamily: FONT, fontSize: '13px', color: '#8a6d4b', align: 'center' }).setOrigin(0.5));
+    const btn = this.button('🛏️ 쿨쿨 자기', true, () => {
+      close();
+      this.time.delayedCall(200, () => this.game.events.emit('sleep'));
+    }, 190);
+    btn.setPosition(0, PH / 2 - 40);
+    box.add(btn);
   }
 
   /** 섬 친구와 처음 만났을 때: 부탁을 들어주고 마을 점수가 되면 이사 온다 */

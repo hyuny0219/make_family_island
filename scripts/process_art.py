@@ -196,6 +196,28 @@ if __name__ == "__main__":
     path_tile("path_stone", (201, 201, 196), (160, 160, 158), (224, 224, 220), "stone")
     path_tile("path_wood", (196, 142, 92), (150, 102, 62), (216, 166, 114), "wood")
 
+    # 몬스터 (곰보다 조금 작게) · 무기
+    for i, (name, fit) in enumerate([("bee", 22), ("shroom", 26), ("crab", 26), ("bat", 26), ("snowman", 30), ("cactus", 30)]):
+        grid = [[None] * 3, [None] * 3]
+        grid[i // 3][i % 3] = f"mon_{name}"
+        slice_grid("mon_a.png", 3, 2, grid, fit=fit)
+    for i, (name, fit) in enumerate([("fire", 28), ("thunder", 28), ("goblin", 28)]):
+        grid = [[None] * 3, [None] * 3]
+        grid[0][i] = f"mon_{name}"
+        slice_grid("mon_b.png", 3, 2, grid, fit=fit)
+    slice_grid("mon_b.png", 3, 2, [[None, None, None], ["item_sword", "item_stone_sword", "item_bomb"]], fit=22)
+    # 요리 재료와 음식
+    FOOD_SHEETS = {
+        "food_a.png": ["honey", "mushroom", "berry", "ice", "ember", "cotton"],
+        "food_b.png": ["cactus_fruit", "fruit_salad", "fish_skewer", "fish_steak", "jelly_drink", "nut_cookie"],
+        "food_c.png": ["crab_grill", "clam_soup", "star_jelly", "jelly_cake", "seafood_plate", "honey_fruit"],
+        "food_d.png": ["honey_tea", "honey_nuts", "honey_pie", "mushroom_grill", "mushroom_stew", "herb_salad"],
+        "food_e.png": ["berry_smoothie", "berry_tea", "berry_honey", "sherbet", "sashimi", "ice_jelly"],
+        "food_f.png": ["cactus_juice", "desert_tea", "fire_grill", "roasted_fruit", "cotton_candy", "cloud_pudding"],
+    }
+    for sheet, names in FOOD_SHEETS.items():
+        slice_grid(sheet, 3, 2, [[f"item_{n}" for n in names[:3]], [f"item_{n}" for n in names[3:]]], fit=22)
+
     # 조합으로 만드는 물건
     slice_grid("combo.png", 3, 2, [["item_candy", "item_grilled_fish", "item_bait"], ["item_torch", "item_flower_crown", "item_firework"]], fit=22)
 
