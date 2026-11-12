@@ -1301,7 +1301,15 @@ export class HudScene extends Phaser.Scene {
         .setOrigin(0, 0.5),
     );
     box.add(this.add.text(0, top + 228, `❤️ 지금 체력 ${player.hp}/${MAX_HP} · 쓰러지면 캠프로 돌아가요`, { fontFamily: FONT, fontSize: '10px', color: player.hp < 60 ? '#d1495b' : '#a08a6a', fontStyle: 'bold' }).setOrigin(0.5));
-    const btn = this.button('⚔️ 들어가기', true, () => {
+    // 가족이 이미 안에서 싸우고 있으면 알려 준다
+    const inside = Object.values(family.others).filter((p) => p.island === island && p.z === 'd');
+    if (inside.length) {
+      const names = [...new Set(inside.map((p) => BEARS.find((b) => b.id === p.bear)?.name ?? '가족'))].join(', ');
+      box.add(this.add.text(0, top + 248, `👨‍👩‍👧 ${names}이(가) 안에서 싸우는 중! 함께 잡으면 모두 보상을 받아요`, { fontFamily: FONT, fontSize: '10px', color: '#3d8a5f', fontStyle: 'bold', align: 'center', wordWrap: { width: PW - 40 } }).setOrigin(0.5));
+    } else if (Object.keys(family.others).length) {
+      box.add(this.add.text(0, top + 248, '👨‍👩‍👧 가족이 같이 들어오면 함께 싸울 수 있어요', { fontFamily: FONT, fontSize: '10px', color: '#a08a6a', fontStyle: 'bold' }).setOrigin(0.5));
+    }
+    const btn = this.button(inside.length ? '⚔️ 함께 싸우기' : '⚔️ 들어가기', true, () => {
       close();
       this.time.delayedCall(200, () => this.game.events.emit('enter-dungeon'));
     }, 200);

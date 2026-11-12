@@ -43,8 +43,38 @@ export interface Presence {
   /** 마지막 말풍선 이모지와 보낸 시각(ms) */
   e?: string;
   et?: number;
+  /** 있는 곳: ''(섬 밖), 'd'(던전), 'h…'(집 안) — 같은 곳에 있는 가족만 서로 보인다 */
+  z?: string;
+  /** 그곳에 들어간 시각(ms). 가장 먼저 들어간 기기가 몬스터를 움직인다 */
+  zt?: number;
   /** 보낸 시각(ms) */
   t: number;
+}
+
+/** 함께 싸우는 몬스터 한 마리 (presence/{code}/_battle/{zone}/mobs/{id}) */
+export interface MobNet {
+  /** 종류 (MONSTERS의 id, 보스는 'boss') */
+  k: string;
+  x: number;
+  y: number;
+  hp: number;
+  /** 최대 체력 */
+  mx: number;
+  /** 1: 사나움, 2: 던전 부하(멀리서도 쫓아온다) */
+  f?: number;
+  /** 쫓는 중 */
+  c?: 1;
+  /** 마지막으로 문 상대(기기)와 문 횟수 */
+  b?: [string, number];
+}
+
+/** 몬스터를 움직이지 않는 기기가 때린 것 (…/hits/{pushId}) */
+export interface HitNet {
+  m: string;
+  d: number;
+  by: string;
+  /** 얼리는 시간(초) */
+  fz?: number;
 }
 
 export type SyncStatus = 'off' | 'connecting' | 'online' | 'error';
@@ -100,6 +130,12 @@ class FamilySync extends Phaser.Events.EventEmitter {
   private presTimer: number | null = null;
   /** 같은 가족 섬에 접속해 있는 다른 기기들 */
   others: Record<string, Presence> = {};
+  private othersKey = '';
+  /** 서버 시계와 이 기기 시계의 차이(ms) — 기기마다 시계가 조금씩 달라도 순서를 똑같이 본다 */
+  private timeOffset = 0;
+  private batZone: string | null = null;
+  private batRef: import('firebase/database').DatabaseReference | null = null;
+  private batUnsubs: (() => void)[] = [];
 
   constructor() {
     super();
@@ -235,6 +271,9 @@ class FamilySync extends Phaser.Events.EventEmitter {
     this.stopPresence(false);
     const db = rt.getDatabase();
     this.presRef = rt.ref(db, `presence/${this.code}/${this.device}`);
+    rt.onValue(rt.ref(db, '.info/serverTimeOffset'), (snap) => {
+      this.timeOffset = Number(snap.val()) || 0;
+    });
     // 앱을 닫거나 연결이 끊기면 서버가 알아서 지운다
     void rt.onDisconnect(this.presRef).remove();
     this.presUnsub = rt.onValue(rt.ref(db, `presence/${this.code}`), (snap) => {
@@ -242,12 +281,66 @@ class FamilySync extends Phaser.Events.EventEmitter {
       const now = Date.now();
       const others: Record<string, Presence> = {};
       for (const [dev, p] of Object.entries(all)) {
-        if (dev !== this.device && p && now - p.t < PRESENCE_STALE) others[dev] = p;
+        // '_'로 시작하는 칸은 곰이 아니다 (함께 싸우는 몬스터 등)
+        if (dev[0] !== '_' && dev !== this.device && p && now - p.t < PRESENCE_STALE) others[dev] = p;
       }
+      // 몬스터 소식 때문에 자주 불리므로, 곰 위치가 바뀌었을 때만 알린다
+      const key = JSON.stringify(others);
+      if (key === this.othersKey) return;
+      this.othersKey = key;
       this.others = others;
       this.emit('presence', others);
     });
     if (this.presLast) this.sendPresence();
+    this.attachBattle();
+  }
+
+  // ───────── 함께 싸우기: 몬스터 상태 공유 (presence/{code}/_battle/{zone}) ─────────
+
+  /** 싸움터에 들어간다 (null이면 나온다). 'mobs'(Record<string, MobNet>)와 'hit'(HitNet, key) 이벤트가 온다 */
+  battleJoin(zone: string | null) {
+    if (zone === this.batZone) return;
+    this.batZone = zone;
+    this.attachBattle();
+  }
+
+  private attachBattle() {
+    this.batUnsubs.forEach((u) => u());
+    this.batUnsubs = [];
+    if (this.batRef && this.rt) void this.rt.onDisconnect(this.rt.child(this.batRef, 'mobs')).cancel().catch(() => undefined);
+    this.batRef = null;
+    if (!this.rt || !this.code || !this.batZone || !this.presRef) return;
+    const rt = this.rt;
+    const base = rt.ref(rt.getDatabase(), `presence/${this.code}/_battle/${this.batZone}`);
+    this.batRef = base;
+    this.batUnsubs.push(rt.onValue(rt.child(base, 'mobs'), (snap) => this.emit('mobs', (snap.val() ?? {}) as Record<string, MobNet>)));
+    this.batUnsubs.push(rt.onChildAdded(rt.child(base, 'hits'), (snap) => this.emit('hit', snap.val() as HitNet, snap.key)));
+  }
+
+  /** (몬스터를 움직이는 기기) 몬스터 상태를 올린다. null이면 싸움터를 비운다 */
+  battlePublish(mobs: Record<string, MobNet> | null) {
+    if (!this.batRef || !this.rt) return;
+    const ref = this.rt.child(this.batRef, 'mobs');
+    if (mobs) {
+      // 내가 갑자기 끊기면 서버가 지워서, 남은 가족이 이어받는다
+      void this.rt.onDisconnect(ref).remove();
+      void this.rt.set(ref, mobs).catch(() => undefined);
+    } else {
+      void this.rt.onDisconnect(ref).cancel().catch(() => undefined);
+      void this.rt.remove(this.batRef).catch(() => undefined);
+    }
+  }
+
+  /** (그 밖의 기기) 몬스터를 때렸다고 알린다 */
+  battleHit(hit: HitNet) {
+    if (!this.batRef || !this.rt) return;
+    void this.rt.push(this.rt.child(this.batRef, 'hits'), hit).catch(() => undefined);
+  }
+
+  /** (몬스터를 움직이는 기기) 처리한 타격을 지운다 */
+  battleAck(key: string | null) {
+    if (!this.batRef || !this.rt || !key) return;
+    void this.rt.remove(this.rt.child(this.batRef, `hits/${key}`)).catch(() => undefined);
   }
 
   private stopPresence(removeMine = true) {
@@ -257,8 +350,19 @@ class FamilySync extends Phaser.Events.EventEmitter {
     if (removeMine) this.presRef = null;
     if (this.presTimer !== null) window.clearTimeout(this.presTimer);
     this.presTimer = null;
+    if (removeMine) {
+      this.batUnsubs.forEach((u) => u());
+      this.batUnsubs = [];
+      this.batRef = null;
+    }
     this.others = {};
+    this.othersKey = '';
     this.emit('presence', this.others);
+  }
+
+  /** 서버 시계에 맞춘 지금 시각(ms) */
+  now() {
+    return Date.now() + this.timeOffset;
   }
 
   /** 내 곰 위치 알리기. 너무 자주 보내지 않게 0.25초에 한 번으로 묶는다 */
@@ -280,7 +384,7 @@ class FamilySync extends Phaser.Events.EventEmitter {
     this.presSentAt = Date.now();
     const p = this.presLast;
     const r = (n: number) => Math.round(n);
-    void this.rt.set(this.presRef, { bear: p.bear, island: p.island, x: r(p.x), y: r(p.y), tx: r(p.tx), ty: r(p.ty), ...(p.e ? { e: p.e, et: p.et ?? 0 } : {}), t: Date.now() }).catch(() => undefined);
+    void this.rt.set(this.presRef, { bear: p.bear, island: p.island, x: r(p.x), y: r(p.y), tx: r(p.tx), ty: r(p.ty), ...(p.e ? { e: p.e, et: p.et ?? 0 } : {}), ...(p.z ? { z: p.z } : {}), zt: p.zt ?? 0, t: Date.now() }).catch(() => undefined);
   }
 
   private handleFeed(feed: FeedItem[]) {
