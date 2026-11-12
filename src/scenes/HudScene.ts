@@ -662,44 +662,112 @@ export class HudScene extends Phaser.Scene {
   /** 가족 창고 + 도감: 못 찾은 것은 그림자로 보인다 */
   private openStorage() {
     if (this.registry.get('modal')) return;
-    const PW = Math.min(336, this.scale.width - 24);
-    const cols = 6;
-    const cell = (PW - 24) / cols;
-    const rows = Math.ceil(ITEM_IDS.length / cols);
-    const PH = 112 + rows * cell;
+    const W = this.scale.width;
+    const H = this.scale.height;
+    const PW = Math.min(336, W - 24);
+    const cols = 5;
+    const cell = (PW - 28) / cols;
+    const rowH = cell + 12;
+    // 가진 것 → 찾아 본 것 → 아직 못 찾은 것 순서
+    const rank = (id: ItemId) => (inventory.get(id) > 0 ? 0 : inventory.discovered(id) ? 1 : 2);
+    const ids = [...ITEM_IDS].sort((x, y) => rank(x) - rank(y));
+    const rows = Math.ceil(ids.length / cols);
+    const contentH = rows * rowH;
+    const headH = 64;
+    const footH = 40;
+    const PH = Math.min(H - 70, headH + contentH + footH);
+    const viewH = PH - headH - footH;
     const { box } = this.modal(PW, PH);
+    const fit = Math.min(1, (H - 24) / PH, (W - 12) / PW);
     const top = -PH / 2;
     const found = ITEM_IDS.filter((id) => inventory.discovered(id)).length;
-    box.add(this.add.text(0, top + 26, '🧺 가족 창고', { fontFamily: FONT, fontSize: '20px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0.5));
-    box.add(this.add.text(0, top + 50, `📖 도감 ${found}/${ITEM_IDS.length}`, { fontFamily: FONT, fontSize: '12px', color: '#e07a5f', fontStyle: 'bold' }).setOrigin(0.5));
-    const info = this.add.text(0, PH / 2 - 22, '눌러서 이름을 확인해요', { fontFamily: FONT, fontSize: '13px', color: '#8a6d4b', fontStyle: 'bold' }).setOrigin(0.5);
+    const kinds = ITEM_IDS.filter((id) => inventory.get(id) > 0).length;
+    box.add(this.add.text(0, top + 24, '🧺 가족 창고', { fontFamily: FONT, fontSize: '20px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0.5));
+    box.add(this.add.text(0, top + 48, `가진 것 ${kinds}종 · 📖 도감 ${found}/${ITEM_IDS.length}`, { fontFamily: FONT, fontSize: '12px', color: '#e07a5f', fontStyle: 'bold' }).setOrigin(0.5));
+    const maxScroll = Math.max(0, contentH - viewH);
+    const info = this.add.text(0, PH / 2 - 20, maxScroll > 0 ? '위아래로 밀어서 더 봐요 · 눌러서 개수 확인' : '눌러서 개수를 확인해요', { fontFamily: FONT, fontSize: '12px', color: '#8a6d4b', fontStyle: 'bold' }).setOrigin(0.5);
     box.add(info);
-    ITEM_IDS.forEach((id, i) => {
-      const cx = -PW / 2 + 12 + cell * (i % cols) + cell / 2;
-      const cy = top + 66 + cell * Math.floor(i / cols) + cell / 2;
+
+    // 스크롤되는 목록
+    const gridTop = top + headH;
+    const list = this.add.container(0, gridTop);
+    box.add(list);
+    const icons: Phaser.GameObjects.Image[] = [];
+    ids.forEach((id, i) => {
+      const cx = -PW / 2 + 14 + cell * (i % cols) + cell / 2;
+      const cy = rowH * Math.floor(i / cols) + rowH / 2;
       const known = inventory.discovered(id);
       const count = inventory.get(id);
       const sg = this.add.graphics();
-      sg.fillStyle(count > 0 ? 0xfde8b0 : 0xf3ecdb).fillRoundedRect(cx - cell / 2 + 3, cy - cell / 2 + 3, cell - 6, cell - 6, 10);
-      const ic = this.add.image(cx, cy - 3, itemKey(id)).setScale(1.5);
+      sg.fillStyle(count > 0 ? 0xfde8b0 : 0xf3ecdb).fillRoundedRect(cx - cell / 2 + 3, cy - rowH / 2 + 3, cell - 6, rowH - 6, 10);
+      const ic = this.add.image(cx, cy - 9, itemKey(id)).setScale(1.6);
       if (!known) ic.setTintFill(0xd5ccb8);
-      else if (count === 0) ic.setAlpha(0.55);
-      box.add([sg, ic]);
+      else if (count === 0) ic.setAlpha(0.5);
+      icons.push(ic);
+      const name = this.add
+        .text(cx, cy + rowH / 2 - 12, known ? ITEMS[id].name : '???', { fontFamily: FONT, fontSize: '9px', color: count > 0 ? COLORS.uiText : '#b3a892', fontStyle: 'bold' })
+        .setOrigin(0.5);
+      if (name.width > cell - 8) name.setScale((cell - 8) / name.width);
+      list.add([sg, ic, name]);
       if (count > 0) {
-        box.add(
+        list.add(
           this.add
-            .text(cx + cell / 2 - 6, cy + cell / 2 - 10, String(count), { fontFamily: FONT, fontSize: '11px', color: COLORS.uiText, fontStyle: 'bold', stroke: '#fff8e7', strokeThickness: 3 })
+            .text(cx + cell / 2 - 7, cy - rowH / 2 + 12, String(count), { fontFamily: FONT, fontSize: '11px', color: COLORS.uiText, fontStyle: 'bold', stroke: '#fff8e7', strokeThickness: 3 })
             .setOrigin(1, 0.5),
         );
       }
-      const hit = this.add.rectangle(cx, cy, cell - 4, cell - 4, 0, 0).setInteractive();
-      hit.on('pointerdown', (_p: Phaser.Input.Pointer, _x: number, _y: number, e: Phaser.Types.Input.EventData) => {
-        e.stopPropagation();
-        sfx.tap();
-        info.setText(known ? `${ITEMS[id].name} · ${count}개` : '❓ 아직 못 찾았어요');
-        this.tweens.add({ targets: ic, scale: { from: 1.9, to: 1.5 }, duration: 220, ease: 'Back.easeOut' });
-      });
-      box.add(hit);
+    });
+    // 목록 밖으로 나간 줄은 가린다
+    const mg = this.make.graphics({}, false);
+    mg.fillStyle(0xffffff).fillRect(W / 2 - (PW / 2) * fit, H / 2 + gridTop * fit, PW * fit, viewH * fit);
+    list.setMask(mg.createGeometryMask());
+    box.once('destroy', () => mg.destroy());
+    // 스크롤 막대
+    const bar = this.add.graphics();
+    box.add(bar);
+    const drawBar = () => {
+      bar.clear();
+      if (maxScroll <= 0) return;
+      const bh = Math.max(24, (viewH * viewH) / contentH);
+      const by = gridTop + ((viewH - bh) * (gridTop - list.y)) / maxScroll;
+      bar.fillStyle(0xe8d5a9).fillRoundedRect(PW / 2 - 9, gridTop + 2, 4, viewH - 4, 2);
+      bar.fillStyle(0xc9a66b).fillRoundedRect(PW / 2 - 9, by, 4, bh, 2);
+    };
+    drawBar();
+    // 밀면 스크롤, 톡 누르면 그 칸 정보
+    const zone = this.add.rectangle(0, gridTop + viewH / 2, PW - 8, viewH, 0, 0).setInteractive();
+    box.add(zone);
+    let drag: { py: number; ly: number; moved: boolean } | null = null;
+    zone.on('pointerdown', (p: Phaser.Input.Pointer, _x: number, _y: number, e: Phaser.Types.Input.EventData) => {
+      e.stopPropagation();
+      drag = { py: p.y, ly: list.y, moved: false };
+    });
+    zone.on('pointermove', (p: Phaser.Input.Pointer) => {
+      if (!drag || !p.isDown) return;
+      if (Math.abs(p.y - drag.py) > 8) drag.moved = true;
+      if (!drag.moved) return;
+      list.y = Phaser.Math.Clamp(drag.ly + (p.y - drag.py) / fit, gridTop - maxScroll, gridTop);
+      drawBar();
+    });
+    zone.on('pointerup', (p: Phaser.Input.Pointer) => {
+      const d = drag;
+      drag = null;
+      if (!d || d.moved) return;
+      // 누른 칸 찾기 (창 안 좌표로 바꿔서)
+      const lx = (p.x - W / 2) / fit + PW / 2 - 14;
+      const ly = (p.y - H / 2) / fit - list.y;
+      const col = Math.floor(lx / cell);
+      const row = Math.floor(ly / rowH);
+      const i = row * cols + col;
+      if (col < 0 || col >= cols || row < 0 || i >= ids.length) return;
+      const id = ids[i];
+      const known = inventory.discovered(id);
+      sfx.tap();
+      info.setText(known ? `${ITEMS[id].name} · ${inventory.get(id)}개` : '❓ 아직 못 찾았어요');
+      this.tweens.add({ targets: icons[i], scale: { from: 2.1, to: 1.6 }, duration: 220, ease: 'Back.easeOut' });
+    });
+    zone.on('pointerout', () => {
+      drag = null;
     });
   }
 
