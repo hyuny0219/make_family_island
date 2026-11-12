@@ -22,8 +22,21 @@ import { withJosa } from '../util/korean';
 import { HUD_BOTTOM_H, HUD_TOP_H } from './HudScene';
 
 type DecorObj = Phaser.GameObjects.Image & { decor: Decor; hitsLeft: number; resting: boolean; gone: boolean; region: number };
-type SpotObj = Phaser.GameObjects.Container & { spot: FishingSpot; active: boolean };
-type Hit = { bear?: Bear; decor?: DecorObj; sign?: number; spot?: SpotObj; dock?: boolean; slime?: Slime; treasure?: boolean; pedestal?: boolean };
+type SpotObj = (Phaser.GameObjects.Container | Phaser.GameObjects.Image) & { spot: FishingSpot; active: boolean; ice?: boolean };
+/** 섬마다 다른 놀이 */
+type PlayKind = 'dig' | 'geode' | 'ice' | 'spring' | 'tramp';
+const ISLAND_PLAY: Record<number, { kind: PlayKind; tex: string; tip: string; loot?: [ItemId, number][] }> = {
+  3: { kind: 'dig', tex: 'play_dig', tip: '🏖️ 조개 섬에는 X 표시가 있어요. 톡톡 파 보세요!', loot: [['shell', 5], ['starfish', 2], ['fish_small', 1], ['crystal', 0.6]] },
+  4: { kind: 'geode', tex: 'play_geode', tip: '⛏️ 바위 섬에는 보석 바위가 있어요. 톡톡 깨 보세요!', loot: [['coal', 4], ['stone', 3], ['crystal', 2.5]] },
+  6: { kind: 'ice', tex: 'play_ice', tip: '🎣 눈송이 섬에서는 얼음 구멍에서 낚시해요!' },
+  7: { kind: 'dig', tex: 'play_dig', tip: '🏜️ 모래바람 섬에는 X 표시가 있어요. 톡톡 파 보세요!', loot: [['stone', 3], ['coal', 3], ['brick', 1.5], ['crystal', 1]] },
+  8: { kind: 'spring', tex: 'play_spring', tip: '♨️ 불꽃 섬 온천에 들어가면 발이 빨라져요!' },
+  9: { kind: 'tramp', tex: 'play_tramp', tip: '☁️ 구름 섬 트램펄린을 타면 멀리 날아가요!' },
+};
+const ICE_FISH: [ItemId, number][] = [['fish_big', 5], ['fish', 3], ['fish_gold', 1]];
+type PlaySpot = { kind: PlayKind; img: Phaser.GameObjects.Image; tx: number; ty: number; region: number; hp: number; ready: boolean };
+
+type Hit = { play?: PlaySpot; bear?: Bear; decor?: DecorObj; sign?: number; spot?: SpotObj; dock?: boolean; slime?: Slime; treasure?: boolean; pedestal?: boolean };
 
 /** 지역 분위기별 슬라임 색 (초록이 기본) */
 const SLIME_KIND: Record<string, '' | '_pink' | '_blue'> = { orchard: '', forest: '', rocky: '_blue', meadow: '_pink', beach: '_blue' };
@@ -61,6 +74,9 @@ export class IslandScene extends Phaser.Scene {
   private remotes = new Map<string, Bear>();
   private presenceTimer = 0;
   private slimes: Slime[] = [];
+  private plays: PlaySpot[] = [];
+  private flying = false;
+  private springUntil = 0;
   private chest?: Phaser.GameObjects.Image;
   private chestRegion = -1;
   private pedestal?: Phaser.GameObjects.Image;
@@ -104,6 +120,7 @@ export class IslandScene extends Phaser.Scene {
 
     this.makeFx();
     this.placeTreasure();
+    this.placePlays();
 
     // 오브젝트
     for (const d of W.decor) {
@@ -468,7 +485,7 @@ export class IslandScene extends Phaser.Scene {
     }
 
     const pl = this.player;
-    type Tagged = { treasure?: boolean; pedestal?: boolean; slime?: Slime; bear?: Bear; decor?: Decor; signRegion?: number; spot?: FishingSpot; isDock?: boolean };
+    type Tagged = { play?: PlaySpot; treasure?: boolean; pedestal?: boolean; slime?: Slime; bear?: Bear; decor?: Decor; signRegion?: number; spot?: FishingSpot; isDock?: boolean };
     const tagged = over as unknown as (Phaser.GameObjects.GameObject & Tagged)[];
 
     const sign = tagged.find((o) => o.signRegion !== undefined);
@@ -497,7 +514,16 @@ export class IslandScene extends Phaser.Scene {
 
     const slimeHit = tagged.map((o) => o.slime).find((s) => s && !s.dead);
     const chest = this.chest;
-    if (chest && tagged.some((o) => o.treasure)) {
+    const play = tagged.map((o) => o.play).find((v) => v && v.ready);
+    if (this.flying) return;
+    if (play) {
+      if (play.kind === 'spring') {
+        this.walkTo(play.img.x, play.img.y - 6, null);
+      } else {
+        const side = pl.x <= play.img.x ? -1 : 1;
+        this.walkTo(play.img.x + side * 22, play.img.y - 2, { play });
+      }
+    } else if (chest && tagged.some((o) => o.treasure)) {
       const side = pl.x <= chest.x ? -1 : 1;
       this.walkTo(chest.x + side * 24, chest.y - 1, { treasure: true });
     } else if (this.pedestal && tagged.some((o) => o.pedestal)) {
@@ -559,6 +585,7 @@ export class IslandScene extends Phaser.Scene {
   update(_t: number, deltaMs: number) {
     const dt = Math.min(deltaMs / 1000, 0.05);
     for (const bear of this.bears) {
+      if (bear === this.player && this.flying) continue; // 날아가는 중에는 트램펄린이 움직인다
       const arrived = bear.step(dt, this.walkable);
       if (bear === this.player) {
         if (bear.moving) {
@@ -587,6 +614,7 @@ export class IslandScene extends Phaser.Scene {
     }
     if (this.fishing) this.updateFishing(dt);
     this.updateSlimes(dt);
+    this.updateSpring();
     // 내 위치를 가끔 다시 알린다 (걷는 중엔 2초, 서 있을 땐 30초마다 — 접속 중이라는 신호)
     this.presenceTimer -= dt;
     if (this.presenceTimer <= 0 && this.player) this.sendPresence();
@@ -622,6 +650,7 @@ export class IslandScene extends Phaser.Scene {
       return this.game.events.emit('open-boat', this.islandIdx);
     }
     if (hit.spot) return this.startFishing(hit.spot);
+    if (hit.play) return this.usePlay(hit.play);
     if (hit.pedestal) return this.game.events.emit('open-treasures');
     buzz(15);
     if (hit.treasure) return this.openTreasure();
@@ -750,6 +779,180 @@ export class IslandScene extends Phaser.Scene {
       }
     }
     return best;
+  }
+
+  // ───────────────────────── 섬 놀이 ─────────────────────────
+
+  /** 섬마다 다른 놀이터를 열린 지역 곳곳에 놓는다 (섬마다 늘 같은 자리) */
+  private placePlays() {
+    this.plays = [];
+    this.flying = false;
+    this.springUntil = 0;
+    const conf = ISLAND_PLAY[this.islandIdx];
+    if (!conf) return;
+    const W = this.world;
+    let seed = (this.islandIdx * 7919 + 13) >>> 0;
+    const rnd = () => {
+      seed = (seed * 1664525 + 1013904223) >>> 0;
+      return seed / 4294967296;
+    };
+    const taken = new Set(W.decor.map((d) => `${d.tx},${d.ty}`));
+    for (const r of W.regions) taken.add(`${r.signX},${r.signY}`);
+    for (const f of W.fishing) taken.add(`${f.tx},${f.ty}`);
+    const land = (x: number, y: number, region: number) =>
+      x >= 0 && y >= 0 && x < W.w && y < W.h && W.region[y * W.w + x] === region && W.terrain[y][x] !== T_SEA;
+    // 지역별 후보 칸 (사방이 같은 지역의 땅)
+    const cand = new Map<number, [number, number][]>();
+    for (let y = 1; y < W.h - 1; y++) {
+      for (let x = 1; x < W.w - 1; x++) {
+        const reg = W.region[y * W.w + x];
+        if (reg <= 0 || !land(x, y, reg) || taken.has(`${x},${y}`) || this.blocked.has(`${x},${y}`)) continue;
+        if (!land(x - 1, y, reg) || !land(x + 1, y, reg) || !land(x, y + 1, reg) || !land(x, y - 1, reg)) continue;
+        if (taken.has(`${x},${y + 1}`) || this.blocked.has(`${x},${y + 1}`)) continue;
+        (cand.get(reg) ?? cand.set(reg, []).get(reg)!).push([x, y]);
+      }
+    }
+    const chance = conf.kind === 'tramp' ? 0.55 : 0.45;
+    for (const reg of W.regions) {
+      const list = cand.get(reg.idx);
+      const roll = rnd();
+      const pick = rnd();
+      if (!list?.length || reg.depth < 1 || roll > chance) continue;
+      const [tx, ty] = list[Math.floor(pick * list.length)];
+      const img = this.add.image(tx * TILE + TILE / 2, ty * TILE + TILE - 2, conf.tex).setOrigin(0.5, 1);
+      img.setDepth(conf.kind === 'spring' || conf.kind === 'ice' ? -800 : img.y).setInteractive({ useHandCursor: true });
+      const spot: PlaySpot = { kind: conf.kind, img, tx, ty, region: reg.idx, hp: 3, ready: true };
+      (img as unknown as { play: PlaySpot }).play = spot;
+      this.occupied.add(`${tx},${ty}`);
+      if (conf.kind !== 'spring') this.blocked.add(`${tx},${ty}`);
+      if (conf.kind === 'ice') Object.assign(img, { spot: { tx, ty, region: reg.idx }, active: true, ice: true });
+      this.plays.push(spot);
+    }
+    // 이 섬에 처음 왔을 때 한 번 알려 준다
+    const key = `mfi.v1.playtip.${this.islandIdx}`;
+    try {
+      if (this.plays.length && !localStorage.getItem(key)) {
+        localStorage.setItem(key, '1');
+        this.time.delayedCall(3500, () => this.toast(conf.tip));
+      }
+    } catch {
+      /* noop */
+    }
+  }
+
+  private usePlay(p: PlaySpot) {
+    const pl = this.player!;
+    if (!p.ready) return;
+    const conf = ISLAND_PLAY[this.islandIdx];
+    pl.face('side', p.img.x < pl.x);
+    if (p.kind === 'ice') return this.startFishing(p.img as unknown as SpotObj);
+    if (p.kind === 'tramp') return this.bounce(p);
+    // 파기 · 깨기: 세 번 톡톡
+    const now = this.time.now;
+    if (now - this.lastHit < 200) return;
+    this.lastHit = now;
+    p.hp -= 1;
+    pl.jump(60);
+    p.kind === 'geode' ? sfx.tap() : sfx.rustle();
+    buzz(15);
+    this.fx.dust.explode(5, p.img.x, p.img.y - 6);
+    this.tweens.add({ targets: p.img, scaleX: 1.15, scaleY: 0.85, duration: 70, yoyo: true });
+    if (p.hp > 0) return;
+    const table = conf.loot ?? [];
+    const total = table.reduce((s, [, w]) => s + w, 0);
+    const n = Phaser.Math.Between(2, 3);
+    for (let i = 0; i < n; i++) {
+      let r = Math.random() * total;
+      let item = table[0][0];
+      for (const [id, w] of table) {
+        r -= w;
+        if (r <= 0) {
+          item = id;
+          break;
+        }
+      }
+      this.time.delayedCall(i * 90, () => this.spawnDrop(item, p.img.x, p.img.y - 10, p.img.y));
+    }
+    this.fx.sparkle.explode(8, p.img.x, p.img.y - 8);
+    sfx.pop();
+    quests.bump('play');
+    // 잠깐 사라졌다가 다시 생긴다
+    p.ready = false;
+    this.blocked.delete(`${p.tx},${p.ty}`);
+    this.tweens.add({ targets: p.img, alpha: 0, scale: 0.6, duration: 220 });
+    this.time.delayedCall(75000, () => {
+      if (!p.img.active) return;
+      p.hp = 3;
+      p.ready = true;
+      this.blocked.add(`${p.tx},${p.ty}`);
+      p.img.setScale(1);
+      this.tweens.add({ targets: p.img, alpha: 1, duration: 500 });
+    });
+  }
+
+  /** 구름 트램펄린: 열린 지역의 다음 트램펄린까지 날아간다 */
+  private bounce(p: PlaySpot) {
+    const pl = this.player!;
+    const pads = this.plays.filter((v) => v.kind === 'tramp' && this.unlocked(v.region));
+    const next = pads[(pads.indexOf(p) + 1) % pads.length];
+    const tx = next.img.x;
+    const ty = next.img.y + TILE - 4; // 트램펄린 바로 아래 칸에 내려앉는다
+    this.flying = true;
+    pl.target = null;
+    this.pending = null;
+    sfx.boing();
+    buzz(30);
+    this.tweens.add({ targets: p.img, scaleY: 0.6, duration: 90, yoyo: true });
+    const from = { x: pl.x, y: pl.y };
+    const dist = Math.hypot(tx - from.x, ty - from.y);
+    const t = { v: 0 };
+    const dur = Phaser.Math.Clamp(500 + dist * 1.6, 700, 2200);
+    pl.sprite.setDepth(99970);
+    this.tweens.add({
+      targets: t,
+      v: 1,
+      duration: dur,
+      ease: 'Sine.easeInOut',
+      onUpdate: () => {
+        pl.x = from.x + (tx - from.x) * t.v;
+        pl.y = from.y + (ty - from.y) * t.v;
+        pl.sprite.setPosition(Math.round(pl.x), Math.round(pl.y - Math.sin(t.v * Math.PI) * Math.min(90, 30 + dist * 0.15)));
+        pl.sprite.setAngle(Math.sin(t.v * Math.PI * 2) * 12);
+      },
+      onComplete: () => {
+        pl.sprite.setAngle(0);
+        this.flying = false;
+        this.fx.puff.explode(8, pl.x, pl.y - 4);
+        sfx.step();
+        quests.bump('play');
+        if (next === p) this.toast('☁️ 지역을 더 열면 다른 트램펄린으로 날아가요');
+      },
+    });
+  }
+
+  /** 온천: 들어가 있으면 한동안 발이 빨라진다 */
+  private updateSpring() {
+    const pl = this.player;
+    if (!pl || this.flying) return;
+    const now = this.time.now;
+    if (this.springUntil && now > this.springUntil) {
+      this.springUntil = 0;
+      pl.speed = PLAYER_SPEED;
+      this.toast('온천 기운이 다했어요');
+    }
+    if (ISLAND_PLAY[this.islandIdx]?.kind !== 'spring') return;
+    const tx = Math.floor(pl.x / TILE);
+    const ty = Math.floor((pl.y - 2) / TILE);
+    const s = this.plays.find((v) => v.tx === tx && v.ty === ty);
+    if (!s || this.springUntil - now > 40000) return;
+    const first = !this.springUntil;
+    this.springUntil = now + 45000;
+    pl.speed = PLAYER_SPEED * 1.6;
+    pl.emote('♨️');
+    this.fx.puff.explode(8, s.img.x, s.img.y - 10);
+    sfx.fanfare();
+    if (first) quests.bump('play');
+    this.toast('♨️ 뜨끈뜨끈! 45초 동안 발이 빨라져요');
   }
 
   // ───────────────────────── 섬 친구 ─────────────────────────
@@ -1401,8 +1604,9 @@ export class IslandScene extends Phaser.Scene {
     }
     const biome = this.world.regions[f.spot.spot.region].biome;
     const hasRod = inventory.get('rod') > 0;
-    // 낚싯대가 있으면 꽝(장화)이 안 나오고 황금 물고기가 잘 나온다
-    const table = BIOME_INFO[biome].fish
+    if (f.spot.ice) quests.bump('play');
+    // 낚싯대가 있으면 꽝(장화)이 안 나오고 황금 물고기가 잘 나온다 (얼음낚시는 큰 물고기가 잘 잡힌다)
+    const table = (f.spot.ice ? ICE_FISH : BIOME_INFO[biome].fish)
       .filter(([id]) => !(hasRod && id === 'boot'))
       .map(([id, w]) => [id, hasRod && id === 'fish_gold' ? w * 3 : w] as [ItemId, number]);
     const total = table.reduce((s, [, w]) => s + w, 0);

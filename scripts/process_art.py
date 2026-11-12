@@ -196,6 +196,12 @@ if __name__ == "__main__":
     path_tile("path_stone", (201, 201, 196), (160, 160, 158), (224, 224, 220), "stone")
     path_tile("path_wood", (196, 142, 92), (150, 102, 62), (216, 166, 114), "wood")
 
+    # 섬 놀이 (섬마다 다른 놀이터)
+    for i, (name, fit) in enumerate([("ice", 30), ("dig", 28), ("geode", 28), ("spring", 40), ("tramp", 36)]):
+        grid = [[None] * 3, [None] * 3]
+        grid[i // 3][i % 3] = f"play_{name}"
+        slice_grid("play.png", 3, 2, grid, fit=fit)
+
     # 섬 친구 (섬마다 한 마리)
     slice_grid("friends_a.png", 3, 2, [["turtle_front", "turtle_side", "turtle_back"], ["mole_front", "mole_side", "mole_back"]], fit=35)
     slice_grid("friends_b.png", 3, 2, [["frog_front", "frog_side", "frog_back"], ["camel_front", "camel_side", "camel_back"]], fit=35)
