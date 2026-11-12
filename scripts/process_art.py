@@ -196,6 +196,17 @@ if __name__ == "__main__":
     path_tile("path_stone", (201, 201, 196), (160, 160, 158), (224, 224, 220), "stone")
     path_tile("path_wood", (196, 142, 92), (150, 102, 62), (216, 166, 114), "wood")
 
+    # 집 안 가구
+    HOME = {
+        "home_a.png": [("rug", 46), ("bookshelf", 36), ("fireplace", 38), ("wardrobe", 38), ("stove", 32), ("bathtub", 44)],
+        "home_b.png": [("floorlamp", 38), ("plant", 34), ("toybox", 28), ("piano", 44), ("picture", 26), ("window", 28)],
+    }
+    for sheet, items in HOME.items():
+        for i, (name, fit) in enumerate(items):
+            grid = [[None] * 3, [None] * 3]
+            grid[i // 3][i % 3] = f"build_{name}"
+            slice_grid(sheet, 3, 2, grid, fit=fit)
+
     # 보스 · 던전 입구 · 보스 증표 · 변신 모자
     for i in range(6):
         grid = [[None] * 3, [None] * 3]
