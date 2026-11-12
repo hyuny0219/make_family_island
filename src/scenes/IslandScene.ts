@@ -1758,8 +1758,13 @@ export class IslandScene extends Phaser.Scene {
       // 문 앞 깔개
       g.fillStyle(0xd1495b).fillRoundedRect(rx + rw / 2 - 18, ry + rh - 12, 36, 10, 4);
       const out = this.add.text(rx + rw / 2, ry + rh + 12, '▼ 나가기', { fontFamily: FONT, fontSize: '9px', color: '#e8d5a9', fontStyle: 'bold' }).setOrigin(0.5).setDepth(-50);
-      this.room = { key: houseKey(this.islandIdx, h.tx, h.ty), x: rx, y: ry, w: rw, h: rh, back: { x: pl.x, y: pl.y + 4 }, objs: [g, out], imgs: new Map(), occ: new Map(), blocked: new Set() };
+      this.room = { key: houseKey(this.islandIdx, h.tx, h.ty), x: rx, y: ry, w: rw, h: rh, back: this.registry.get('view') === 'build' ? { x: (h.tx + 1) * TILE, y: (h.ty + 2) * TILE + 12 } : { x: pl.x, y: pl.y + 4 }, objs: [g, out], imgs: new Map(), occ: new Map(), blocked: new Set() };
       this.zoneChanged();
+      // 꾸미기 중에는 카메라가 곰을 따라가지 않으니, 방이 화면 위쪽에 오도록 직접 맞춘다 (아래는 꾸미기 창이 가린다)
+      if (this.registry.get('view') === 'build') {
+        cam.setZoom(WORLD_ZOOM);
+        cam.centerOn(rx + rw / 2, ry + rh / 2 + 70);
+      }
       this.registry.set('room', true);
       for (const p of village.placedOn(this.room.key)) this.addRoomPiece(p, false);
       pl.x = rx + rw / 2;
@@ -1929,6 +1934,7 @@ export class IslandScene extends Phaser.Scene {
       pl.x = back.x;
       pl.y = back.y;
       pl.target = null;
+      if (this.registry.get('view') === 'build') cam.centerOn(back.x, back.y - 40);
       cam.fadeIn(400, 40, 30, 20);
       this.resting = false;
     });
@@ -2697,6 +2703,12 @@ export class IslandScene extends Phaser.Scene {
       return;
     }
 
+    // 지어 둔 집을 누르면 꾸미기를 켠 채로 안으로 들어간다
+    const onHouse = this.placedOcc.get(key);
+    if (onHouse && ENTERABLE.has(onHouse.id)) {
+      sfx.pop();
+      return void this.enterHouse(onHouse);
+    }
     const piece = PIECES[this.registry.get('buildPiece') as string];
     if (!piece) return void this.toast('아래에서 지을 것을 먼저 골라요');
     if (piece.cat === 'furniture' || piece.cat === 'deco') return void this.toast('🏠 가구는 집 안에 들어가서 놓아요');
@@ -2730,6 +2742,7 @@ export class IslandScene extends Phaser.Scene {
     if (piece.points > 0) float(`⭐ +${piece.points}`);
     village.place(this.islandIdx, placed);
     quests.bump('build');
+    if (ENTERABLE.has(piece.id)) this.toast('🏠 지은 집을 톡 누르면 안으로 들어가요');
   }
 
   private spawnResident(id: string, anim: boolean) {
