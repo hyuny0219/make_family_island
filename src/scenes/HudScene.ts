@@ -15,7 +15,8 @@ import { TREASURES, treasureKey } from '../data/treasures';
 import { village } from '../state/village';
 import { family, type FeedItem, type SyncStatus } from '../sync/family';
 import { localDoc } from '../sync/bridge';
-import { DECOR_POINTS, ORDER_GIFTS, RESIDENTS, TROPHY_HEARTS, isPlaceable } from '../data/village';
+import { ORDER_GIFTS, RESIDENTS, TROPHY_HEARTS } from '../data/village';
+import { BUILD_CATS, PIECES, PIECE_LIST, type BuildCat, type Piece } from '../data/build';
 import type { IslandScene } from './IslandScene';
 
 export const HUD_TOP_H = 96;
@@ -82,6 +83,7 @@ export class HudScene extends Phaser.Scene {
       ['treasure-found', this.onTreasureFound],
       ['sailing', this.onSailing],
       ['open-order', this.openOrder],
+      ['build-refresh', this.rebuildBuildTray],
       ['open-friend', this.openFriend],
       ['float', this.onFloat],
       ['region-enter', this.onRegionEnter],
@@ -92,12 +94,14 @@ export class HudScene extends Phaser.Scene {
     on.forEach(([e, f]) => ge.on(e, f, this));
     inventory.on('changed', this.onInventoryChanged, this);
     village.on('changed', this.rebuildBuildTray, this);
+    inventory.on('changed', this.rebuildBuildTray, this);
     family.on('feed', this.onFeed, this);
     family.on('status', this.refreshFeedBtn, this);
     this.events.once('shutdown', () => {
       family.off('feed', this.onFeed, this);
       family.off('status', this.refreshFeedBtn, this);
       village.off('changed', this.rebuildBuildTray, this);
+      inventory.off('changed', this.rebuildBuildTray, this);
       on.forEach(([e, f]) => ge.off(e, f, this));
       this.game.events.off('player-moved', this.hideHint, this);
       this.game.events.off('toast', this.toast, this);
@@ -527,24 +531,24 @@ export class HudScene extends Phaser.Scene {
       this.scene.stop('Merge');
       this.scene.setVisible(true, 'Island');
     }
-    this.sideBtns.forEach((b) => b.setVisible(v !== 'merge'));
+    this.sideBtns.forEach((b) => b.setVisible(v === 'explore'));
     this.emoteRow?.setVisible(false);
     this.refreshFeedBtn();
     this.arrow.setVisible(false);
     this.hideHint();
     this.refreshTabs();
     this.rebuildBuildTray();
-    if (v === 'build') this.toast('🏝️ 물건을 고르고 땅을 톡! 놓인 물건을 누르면 다시 창고로');
+    if (v === 'build') this.toast('🏝️ 집·길·울타리를 골라 마을을 지어 봐요');
   }
 
-  /** 꾸미기 모드: 놓을 물건 고르는 줄 + 마을 점수 */
+  /** 꾸미기 모드: 도구 · 종류 · 지을 것 고르기 + 마을 점수 */
   private rebuildBuildTray() {
     this.buildTray?.destroy();
     this.buildTray = undefined;
     if (this.view !== 'build') return;
     const W = this.scale.width;
     const H = this.scale.height;
-    const h = 78;
+    const h = 176;
     const top = H - HUD_BOTTOM_H - h + 2;
     const tray = this.add.container(0, 0).setDepth(30);
     this.buildTray = tray;
@@ -552,51 +556,104 @@ export class HudScene extends Phaser.Scene {
     bg.fillStyle(0x000000, 0.15).fillRoundedRect(10, top + 3, W - 20, h, 16);
     bg.fillStyle(COLORS.uiBg, 0.97).fillRoundedRect(10, top, W - 20, h, 16);
     bg.lineStyle(2, 0xe8d5a9).strokeRoundedRect(10, top, W - 20, h, 16);
-    // 줄 전체가 터치를 받아서, 아래 섬으로 새지 않게 한다
+    // 판 전체가 터치를 받아서, 아래 섬으로 새지 않게 한다
     const block = this.add.rectangle(W / 2, top + h / 2, W - 20, h, 0, 0).setInteractive();
     tray.add([bg, block]);
+    const redraw = () => this.time.delayedCall(0, () => this.rebuildBuildTray());
+    const chip = (x: number, y: number, w: number, label: string, on: boolean, onTap: () => void, size = 12) => {
+      const g = this.add.graphics();
+      g.fillStyle(on ? 0xffd166 : 0xfde8b0).fillRoundedRect(x, y - 13, w, 26, 13);
+      if (on) g.lineStyle(2, 0xe07a5f).strokeRoundedRect(x, y - 13, w, 26, 13);
+      const t = this.add.text(x + w / 2, y, label, { fontFamily: FONT, fontSize: `${size}px`, color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0.5);
+      const hit = this.add.rectangle(x + w / 2, y, w, 30, 0, 0).setInteractive({ useHandCursor: true });
+      hit.on('pointerdown', () => {
+        sfx.tap();
+        onTap();
+        redraw();
+      });
+      tray.add([g, t, hit]);
+    };
 
+    // 1) 마을 점수
     const score = village.score();
     const next = RESIDENTS.filter((r) => !village.isJoined(r.id) && progress.canVisit(r.island)).sort((a, b) => a.score - b.score)[0] ?? null;
-    tray.add(this.add.text(22, top + 14, `⭐ 마을 점수 ${score}`, { fontFamily: FONT, fontSize: '13px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0, 0.5));
+    tray.add(this.add.text(22, top + 15, `⭐ 마을 점수 ${score}`, { fontFamily: FONT, fontSize: '13px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0, 0.5));
     tray.add(
       this.add
-        .text(W - 22, top + 14, next ? (score >= next.score ? `🏠 ${next.name}: 이사 올 준비 됐어요` : `🏠 ${next.name}까지 ${next.score - score}점`) : '🏠 친구가 모두 모였어요!', { fontFamily: FONT, fontSize: '11px', color: '#e07a5f', fontStyle: 'bold' })
+        .text(W - 22, top + 15, next ? (score >= next.score ? `🏠 ${next.name}: 이사 올 준비 됐어요` : `🏠 ${next.name}까지 ${next.score - score}점`) : '🏠 친구가 모두 모였어요!', { fontFamily: FONT, fontSize: '11px', color: '#e07a5f', fontStyle: 'bold' })
         .setOrigin(1, 0.5),
     );
 
-    const items = inventory.owned().filter((o) => isPlaceable(o.id)).slice(0, 7);
-    let sel = this.registry.get('buildItem') as ItemId | undefined;
-    if (!sel || !items.some((o) => o.id === sel)) {
-      sel = items[0]?.id;
-      this.registry.set('buildItem', sel);
+    // 2) 도구
+    const tool = (this.registry.get('buildTool') as string) ?? 'place';
+    const flip = !!this.registry.get('buildFlip');
+    const tw = 62;
+    ([['place', '🔨 짓기'], ['move', '✋ 옮기기'], ['erase', '🧹 치우기']] as const).forEach(([id, label], i) => {
+      chip(20 + i * (tw + 4), top + 42, tw, label, tool === id, () => this.registry.set('buildTool', id), 11);
+    });
+    chip(W - 20 - 2 * 58 - 4, top + 42, 58, flip ? '↔ 뒤집힘' : '↔ 뒤집기', flip, () => this.registry.set('buildFlip', !flip), 11);
+    chip(W - 20 - 58, top + 42, 58, '🔍 멀리', false, () => this.game.events.emit('build-zoom'), 11);
+
+    // 3) 종류
+    let cat = (this.registry.get('buildCat') as BuildCat) ?? 'path';
+    if (!BUILD_CATS.some((c) => c.id === cat)) cat = 'path';
+    const cw = (W - 40 - 5 * 4) / 6;
+    BUILD_CATS.forEach((c, i) => {
+      chip(20 + i * (cw + 4), top + 72, cw, c.label, c.id === cat, () => {
+        this.registry.set('buildCat', c.id);
+        this.registry.set('buildPage', 0);
+      }, 11);
+    });
+
+    // 4) 지을 것 (한 쪽에 6개)
+    const list = PIECE_LIST.filter((p) => p.cat === cat);
+    const pages = Math.ceil(list.length / 6);
+    const page = Math.min((this.registry.get('buildPage') as number) ?? 0, pages - 1);
+    const shown = list.slice(page * 6, page * 6 + 6);
+    let sel = PIECES[this.registry.get('buildPiece') as string];
+    if (!sel || sel.cat !== cat) {
+      sel = shown[0];
+      this.registry.set('buildPiece', sel.id);
     }
-    if (items.length === 0) {
-      tray.add(this.add.text(W / 2, top + 50, '놓을 물건이 없어요. 머지 탭에서 의자·화분 등을 만들어요!', { fontFamily: FONT, fontSize: '11px', color: '#a08a6a' }).setOrigin(0.5));
-      return;
-    }
-    const slot = 46;
-    const x0 = (W - items.length * slot) / 2;
-    items.forEach((o, i) => {
+    const canPay = (p: Piece) => (Object.entries(p.cost) as [ItemId, number][]).every(([id, n]) => inventory.get(id) >= n);
+    const slot = 48;
+    const x0 = 22;
+    shown.forEach((p, i) => {
       const x = x0 + i * slot + slot / 2;
-      const y = top + 51;
+      const y = top + 112;
+      const on = p.id === sel.id;
+      const ok = canPay(p);
       const g = this.add.graphics();
-      const on = o.id === sel;
-      g.fillStyle(on ? 0xffd166 : 0xfde8b0).fillRoundedRect(x - 21, y - 21, 42, 42, 10);
-      if (on) g.lineStyle(2.5, 0xe07a5f).strokeRoundedRect(x - 21, y - 21, 42, 42, 10);
-      const ic = this.add.image(x, y - 2, itemKey(o.id)).setScale(1.4);
-      const ct = this.add
-        .text(x + 18, y + 14, String(o.count), { fontFamily: FONT, fontSize: '11px', color: COLORS.uiText, fontStyle: 'bold', stroke: '#fff8e7', strokeThickness: 3 })
-        .setOrigin(1, 0.5);
-      const hit = this.add.rectangle(x, y, 44, 44, 0, 0).setInteractive({ useHandCursor: true });
+      g.fillStyle(on ? 0xffd166 : 0xfde8b0).fillRoundedRect(x - 22, y - 22, 44, 44, 10);
+      if (on) g.lineStyle(2.5, 0xe07a5f).strokeRoundedRect(x - 22, y - 22, 44, 44, 10);
+      const ic = this.add.image(x, y, p.tex);
+      ic.setScale(Math.min(36 / ic.width, 36 / ic.height, 1.5)).setAlpha(ok ? 1 : 0.45);
+      const hit = this.add.rectangle(x, y, 46, 46, 0, 0).setInteractive({ useHandCursor: true });
       hit.on('pointerdown', () => {
         sfx.tap();
-        this.registry.set('buildItem', o.id);
-        this.toast(`${ITEMS[o.id].name} · ⭐ ${DECOR_POINTS[o.id] ?? 0}점`);
-        this.time.delayedCall(0, () => this.rebuildBuildTray());
+        this.registry.set('buildPiece', p.id);
+        this.registry.set('buildTool', 'place');
+        redraw();
       });
-      tray.add([g, ic, ct, hit]);
+      tray.add([g, ic, hit]);
     });
+    if (pages > 1) {
+      chip(W - 20 - 28, top + 112, 28, page + 1 < pages ? '▶' : '◀', false, () => this.registry.set('buildPage', (page + 1) % pages), 12);
+    }
+
+    // 5) 고른 것: 이름 · 크기 · 점수 · 재료
+    const size = sel.w * sel.h > 1 ? ` · ${sel.w}×${sel.h}칸` : '';
+    tray.add(this.add.text(22, top + 150, `${sel.name}${size}${sel.points ? ` · ⭐${sel.points}` : ''}`, { fontFamily: FONT, fontSize: '12px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0, 0.5));
+    let cx = W - 22;
+    (Object.entries(sel.cost) as [ItemId, number][]).reverse().forEach(([id, n]) => {
+      const have = inventory.get(id);
+      const t = this.add.text(cx, top + 150, `${have}/${n}`, { fontFamily: FONT, fontSize: '12px', color: have >= n ? '#4f8f43' : '#d1495b', fontStyle: 'bold' }).setOrigin(1, 0.5);
+      cx -= t.width + 3;
+      const ic = this.add.image(cx - 9, top + 150, itemKey(id)).setScale(0.8);
+      cx -= 26;
+      tray.add([t, ic]);
+    });
+    tray.add(this.add.text(W / 2, top + 167, '화면을 끌어서 둘러보고, 땅을 톡 눌러 지어요 · 치우면 재료를 돌려받아요', { fontFamily: FONT, fontSize: '8px', color: '#a08a6a' }).setOrigin(0.5));
   }
 
   /** 주민의 부탁 */
