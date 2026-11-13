@@ -111,3 +111,39 @@ export const PIECES: Record<string, Piece> = Object.fromEntries(PIECE_LIST.map((
 
 /** 새로 그린 건물·소품 텍스처 (머지 물건 아이콘을 쓰는 것은 제외) */
 export const BUILD_TEXTURES = PIECE_LIST.filter((p) => p.tex.startsWith('build_')).map((p) => p.tex);
+
+
+/** 집 안의 생김새: 칸 수, 문이 있는 칸(맨 아랫줄), 바닥이 없는 곳([x, y, w, h]) */
+export interface RoomPlan {
+  cols: number;
+  rows: number;
+  door: number;
+  holes: [number, number, number, number][];
+}
+
+/** 집 종류마다 세 가지 생김새가 있고, 집이 놓인 자리에 따라 그중 하나로 정해진다 (가족 모두 같은 모양을 본다) */
+const ROOM_PLANS: Record<string, RoomPlan[]> = {
+  // 빨간 지붕 집: 아담한 방
+  house_red: [
+    { cols: 9, rows: 7, door: 4, holes: [] },
+    { cols: 9, rows: 8, door: 4, holes: [[0, 0, 3, 2]] },
+    { cols: 10, rows: 6, door: 5, holes: [] },
+  ],
+  // 파란 지붕 집: 옆으로 넓은 방
+  house_blue: [
+    { cols: 11, rows: 7, door: 5, holes: [] },
+    { cols: 11, rows: 8, door: 3, holes: [[7, 0, 4, 3]] },
+    { cols: 11, rows: 8, door: 5, holes: [[0, 0, 2, 2], [9, 0, 2, 2]] },
+  ],
+  // 통나무집: 안쪽으로 깊은 방
+  cabin: [
+    { cols: 7, rows: 9, door: 3, holes: [] },
+    { cols: 8, rows: 9, door: 5, holes: [[0, 6, 3, 3]] },
+    { cols: 8, rows: 9, door: 4, holes: [[5, 0, 3, 3]] },
+  ],
+};
+
+export function roomPlan(id: string, tx: number, ty: number): RoomPlan {
+  const list = ROOM_PLANS[id] ?? ROOM_PLANS.house_red;
+  return list[(tx * 7 + ty * 13) % list.length];
+}
