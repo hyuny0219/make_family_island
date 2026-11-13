@@ -37,3 +37,14 @@ const game = new Phaser.Game({
 
 // 디버그/테스트용 핸들
 Object.assign(window, { __game: game, __inv: inventory, __progress: progress, __village: village, __family: family, __Slime: Slime, __quests: quests, __Monster: Monster, __MONSTERS: MONSTERS, __player: player, __abilities: abilities });
+
+// 새 버전이 받아지면 바로 새로 고친다. (그대로 두면 앱을 한 번 더 껐다 켜야 새 버전이 보인다)
+if ('serviceWorker' in navigator) {
+  const had = !!navigator.serviceWorker.controller;
+  let reloaded = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!had || reloaded) return;
+    reloaded = true;
+    location.reload();
+  });
+}

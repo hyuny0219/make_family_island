@@ -1730,7 +1730,7 @@ export class HudScene extends Phaser.Scene {
     box.add(reset);
     (reset.list[1] as Phaser.GameObjects.Text).setStroke('#b85c48', 3);
     box.add(this.add.text(0, PH / 2 - 26, '모은 재료와 열린 지역이 모두 지워져요', { fontFamily: FONT, fontSize: '10px', color: '#a08a6a' }).setOrigin(0.5));
-    box.add(this.add.text(0, PH / 2 - 12, `v0.8 · ${__BUILD_LABEL__.slice(0, 14)}`, { fontFamily: FONT, fontSize: '9px', color: '#c4b79c' }).setOrigin(0.5));
+    box.add(this.add.text(0, PH / 2 - 12, `버전: ${__BUILD_TIME__} · ${__BUILD_LABEL__.slice(0, 12)}`, { fontFamily: FONT, fontSize: '9px', color: '#c4b79c' }).setOrigin(0.5));
   }
 
   // ───────────────────────── 가족 섬 (동기화) ─────────────────────────
