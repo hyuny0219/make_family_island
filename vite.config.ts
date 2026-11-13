@@ -13,6 +13,8 @@ export default defineConfig({
   },
   define: {
     __BUILD_LABEL__: JSON.stringify(process.env.BUILD_LABEL ?? 'local'),
+    // 설정 창에 보이는 버전: 만든 시각(한국 시간). 새 버전이 떴는지 눈으로 확인할 수 있게
+    __BUILD_TIME__: JSON.stringify(new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date())),
   },
   plugins: [
     VitePWA({

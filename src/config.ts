@@ -32,4 +32,5 @@ export const COLORS = {
 
 declare global {
   const __BUILD_LABEL__: string;
+  const __BUILD_TIME__: string;
 }
