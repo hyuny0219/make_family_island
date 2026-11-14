@@ -49,6 +49,7 @@ export class HudScene extends Phaser.Scene {
   private stripScroll = 0;
   private stripArrows?: () => void;
   private questPill?: Phaser.GameObjects.Container;
+  private homePill?: Phaser.GameObjects.Container;
   private questDot?: Phaser.GameObjects.Arc;
   private resizeTimer?: Phaser.Time.TimerEvent;
   private statusBar?: Phaser.GameObjects.Container;
@@ -120,6 +121,7 @@ export class HudScene extends Phaser.Scene {
     on.forEach(([e, f]) => ge.on(e, f, this));
     inventory.on('changed', this.onInventoryChanged, this);
     village.on('changed', this.rebuildBuildTray, this);
+    village.on('changed', this.refreshQuestPill, this);
     inventory.on('changed', this.rebuildBuildTray, this);
     family.on('feed', this.onFeed, this);
     family.on('status', this.refreshFeedBtn, this);
@@ -127,6 +129,7 @@ export class HudScene extends Phaser.Scene {
       family.off('feed', this.onFeed, this);
       family.off('status', this.refreshFeedBtn, this);
       village.off('changed', this.rebuildBuildTray, this);
+      village.off('changed', this.refreshQuestPill, this);
       inventory.off('changed', this.rebuildBuildTray, this);
       on.forEach(([e, f]) => ge.off(e, f, this));
       this.game.events.off('player-moved', this.hideHint, this);
@@ -208,6 +211,8 @@ export class HudScene extends Phaser.Scene {
     this.refreshStatus();
     this.questPill?.destroy();
     this.questPill = undefined;
+    this.homePill?.destroy();
+    this.homePill = undefined;
     this.questDot?.setVisible(quests.claimable);
     if (!this.registry.get('bear') || this.view !== 'explore') return;
     if (this.registry.get('dungeon') || this.registry.get('room')) {
@@ -225,6 +230,22 @@ export class HudScene extends Phaser.Scene {
         this.game.events.emit(inRoom ? 'exit-house' : 'exit-dungeon');
       });
       this.questPill = c0;
+      if (inRoom) {
+        // 이 집에 누가 사는지 / 주민 초대하기
+        const key = this.registry.get('roomKey') as string;
+        const who = RESIDENTS.find((r) => r.id === village.residentOf(key));
+        const t1 = this.add.text(0, 0, who ? `🏠 ${who.name}의 집 · 아늑함 ⭐${village.comfort(key)}` : '🏠 주민 초대하기', { fontFamily: FONT, fontSize: '11px', color: '#ffffff', fontStyle: 'bold' }).setOrigin(0.5);
+        const w1 = Math.max(132, t1.width + 24);
+        const g1 = this.add.graphics();
+        g1.fillStyle(who ? 0x3d8a5f : 0xe07a5f, 0.95).fillRoundedRect(-w1 / 2, -12, w1, 24, 12);
+        const c1 = this.add.container(W0 / 2, this.scale.height - HUD_BOTTOM_H - 52, [g1, t1]).setDepth(5);
+        c1.setSize(w1, 30).setInteractive({ useHandCursor: true });
+        c1.on('pointerdown', () => {
+          sfx.tap();
+          this.openHome(key);
+        });
+        this.homePill = c1;
+      }
       return;
     }
     const q = quests.story();
@@ -1033,6 +1054,47 @@ export class HudScene extends Phaser.Scene {
   }
 
   /** 주민의 부탁 */
+  /** 이 집에 살 주민을 고른다 */
+  private openHome(key: string) {
+    if (this.registry.get('modal')) return;
+    const list = village.joined();
+    const PW = Math.min(310, this.scale.width - 30);
+    const ROW = 46;
+    const PH = 128 + Math.max(1, list.length) * ROW;
+    const { box, close } = this.modal(PW, PH);
+    const top = -PH / 2;
+    box.add(this.add.text(0, top + 28, '🏠 이 집에 누가 살까요?', { fontFamily: FONT, fontSize: '17px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0.5));
+    const comfort = village.comfort(key);
+    box.add(
+      this.add
+        .text(0, top + 56, `아늑함 ⭐${comfort} · 가구를 놓을수록 올라가요\n⭐15부터는 부탁을 들어줄 때 호감도를 1 더 받아요`, { fontFamily: FONT, fontSize: '10px', color: '#8a6d4b', align: 'center', lineSpacing: 3 })
+        .setOrigin(0.5),
+    );
+    if (!list.length) {
+      box.add(this.add.text(0, top + 104, '아직 이사 온 주민이 없어요.\n섬에서 친구를 사귀고 마을 점수를 올려 보세요', { fontFamily: FONT, fontSize: '12px', color: '#a08a6a', align: 'center', lineSpacing: 4 }).setOrigin(0.5));
+      return;
+    }
+    list.forEach((r, i) => {
+      const y = top + 100 + i * ROW;
+      const here = village.homeOf(r.id) === key;
+      const home = village.homeOf(r.id);
+      const g = this.add.graphics();
+      g.fillStyle(here ? 0xdff2e1 : 0xfff3d6).fillRoundedRect(-PW / 2 + 14, y - 20, PW - 28, 40, 12);
+      box.add(g);
+      box.add(this.add.image(-PW / 2 + 38, y + 2, `${r.id}_front`).setScale(1.1));
+      box.add(this.add.text(-PW / 2 + 62, y - 8, r.name, { fontFamily: FONT, fontSize: '13px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0, 0.5));
+      box.add(this.add.text(-PW / 2 + 62, y + 9, here ? '이 집에 살아요' : home ? '다른 집에 살아요' : '아직 집이 없어요', { fontFamily: FONT, fontSize: '10px', color: here ? '#3d8a5f' : '#a08a6a', fontStyle: 'bold' }).setOrigin(0, 0.5));
+      const b = this.button(here ? '내보내기' : '살게 하기', true, () => {
+        village.setHome(r.id, here ? null : key);
+        close();
+        sfx.fanfare();
+        this.toast(here ? `${r.name}: "캠프에서 지낼게요!"` : `🏠 ${r.name}: "와, 내 집이다! 고마워요!"`);
+      }, 96);
+      b.setPosition(PW / 2 - 66, y).setScale(0.72);
+      box.add(b);
+    });
+  }
+
   private openOrder(id: string) {
     if (this.registry.get('modal')) return;
     const r = RESIDENTS.find((v) => v.id === id);
@@ -1075,18 +1137,22 @@ export class HudScene extends Phaser.Scene {
     const { ok } = this.needList(box, { [order.item]: order.n }, top + 186, PW);
     const btn = this.button(ok ? '🎁 가져다주기' : '재료가 부족해요', ok, () => {
       this.spend({ [order.item]: order.n });
-      const h = village.completeOrder(id);
+      let h = village.completeOrder(id);
+      // 아늑한 집에 사는 주민은 더 기뻐한다
+      const homeKey = village.homeOf(id);
+      const cozy = !!homeKey && village.comfort(homeKey) >= 15;
+      if (cozy) h = village.gift(id, 1);
       quests.bump('order');
       const gift = ORDER_GIFTS[Math.floor(Math.random() * ORDER_GIFTS.length)];
       const n = 1 + Math.floor(Math.random() * 2);
       inventory.add(gift, n);
       close();
       sfx.fanfare();
-      if (h === TROPHY_HEARTS) {
+      if (h >= TROPHY_HEARTS && hearts < TROPHY_HEARTS) {
         inventory.add('trophy', 1);
         this.celebrate(`🏆 ${r.name}의 단짝이 됐어요!\n황금 트로피를 받았어요`);
       } else {
-        this.celebrate(`💗 ${r.name} 호감도 ${h}\n선물: ${ITEMS[gift].name} ×${n}`);
+        this.celebrate(`💗 ${r.name} 호감도 ${h}${cozy ? ' (아늑한 집 +1)' : ''}\n선물: ${ITEMS[gift].name} ×${n}`);
       }
     });
     btn.setPosition(0, PH / 2 - 36 - (crowns > 0 ? 50 : 0));
