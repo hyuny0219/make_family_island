@@ -37,6 +37,10 @@ type SpotObj = (Phaser.GameObjects.Container | Phaser.GameObjects.Image) & { spo
 /** 섬마다 다른 놀이 */
 type PlayKind = 'dig' | 'geode' | 'ice' | 'spring' | 'tramp';
 const ISLAND_PLAY: Record<number, { kind: PlayKind; tex: string; tip: string; loot?: [ItemId, number][] }> = {
+  0: { kind: 'geode', tex: 'play_hive', tip: '🍯 곰돌이 섬에는 꿀통이 있어요. 톡톡 두드려 보세요!', loot: [['honey', 5], ['fruit', 3], ['flower', 2]] },
+  1: { kind: 'dig', tex: 'play_bud', tip: '🌷 꽃향기 섬에는 커다란 꽃봉오리가 있어요. 톡톡 건드려 보세요!', loot: [['flower', 5], ['honey', 2], ['cotton', 1.5], ['crystal', 0.4]] },
+  2: { kind: 'dig', tex: 'play_log', tip: '🪵 솔방울 섬에는 속이 빈 통나무가 있어요. 톡톡 뒤져 보세요!', loot: [['pinecone', 5], ['mushroom', 3], ['twig', 3], ['log', 1.5]] },
+  5: { kind: 'tramp', tex: 'play_shroom', tip: '🍄 버섯 섬의 통통 버섯에 올라타면 멀리 날아가요!' },
   3: { kind: 'dig', tex: 'play_dig', tip: '🏖️ 조개 섬에는 X 표시가 있어요. 톡톡 파 보세요!', loot: [['shell', 5], ['starfish', 2], ['fish_small', 1], ['crystal', 0.6]] },
   4: { kind: 'geode', tex: 'play_geode', tip: '⛏️ 바위 섬에는 보석 바위가 있어요. 톡톡 깨 보세요!', loot: [['coal', 4], ['stone', 3], ['crystal', 2.5]] },
   6: { kind: 'ice', tex: 'play_ice', tip: '🎣 눈송이 섬에서는 얼음 구멍에서 낚시해요!' },
@@ -552,6 +556,15 @@ export class IslandScene extends Phaser.Scene {
     this.cameras.main.startFollow(bear.sprite, true, 0.12, 0.12, 0, 20);
     this.sendPresence();
     this.onPresence(family.others);
+    // 따라오는 곰이 무엇을 도와주는지 한 번 알려 준다
+    try {
+      if (!localStorage.getItem('mfi.v1.followtip')) {
+        localStorage.setItem('mfi.v1.followtip', '1');
+        this.time.delayedCall(6000, () => this.game.events.emit('celebrate', '🐻 나머지 곰들이 따라와서 도와줘요\n아빠: 같이 싸움 · 엄마: 체력 채움\n첫째: 재료 찾기 · 막내: 응원'));
+      }
+    } catch {
+      /* noop */
+    }
   }
 
   private onPointerDown(p: Phaser.Input.Pointer, over: Phaser.GameObjects.GameObject[]) {
@@ -750,6 +763,8 @@ export class IslandScene extends Phaser.Scene {
    */
   private updateFollower(bear: Bear, dt: number) {
     const pl = this.player!;
+    // 따라오는 곰은 눌리지 않는다: 곰 뒤에 있는 나무·놀이·몬스터를 누를 수 있어야 한다
+    if (bear.sprite.input?.enabled) bear.sprite.disableInteractive();
     // 집 안·던전에는 따라 들어오지 않고 밖에서 기다린다
     if (!bear.sprite.visible || this.room || this.dungeon || this.flying) {
       bear.target = null;
@@ -946,9 +961,7 @@ export class IslandScene extends Phaser.Scene {
       pl.jump(90);
       sfx.pop();
       this.fx.heart.explode(3, (pl.x + other.x) / 2, Math.min(pl.y, other.y) - 34);
-      // 따라다니는 가족 곰을 누르면 무엇을 도와주는지 알려 준다
-      const HELP: Record<string, string> = { dad: '🐻 아빠 곰: 몬스터를 같이 때려 줘요', mom: '💗 엄마 곰: 다치면 체력을 채워 줘요', kid: '✨ 첫째 곰: 가끔 재료를 찾아와요', baby: '📣 막내 곰: 응원해서 발이 빨라져요' };
-      if (!other.remote && HELP[other.id]) this.toast(HELP[other.id]);
+
       this.npcTimers.set(other, 2.5);
       return;
     }
@@ -1093,6 +1106,8 @@ export class IslandScene extends Phaser.Scene {
       const pick = rnd();
       if (!list?.length || reg.depth < 1 || roll > chance) continue;
       const [tx, ty] = list[Math.floor(pick * list.length)];
+      // 가족이 이미 무언가 지어 둔 자리에는 놓지 않는다
+      if (this.placedOcc.has(`${tx},${ty}`) || this.placedOcc.has(`${tx},${ty + 1}`)) continue;
       const img = this.add.image(tx * TILE + TILE / 2, ty * TILE + TILE - 2, conf.tex).setOrigin(0.5, 1);
       img.setDepth(conf.kind === 'spring' || conf.kind === 'ice' ? -800 : img.y).setInteractive({ useHandCursor: true });
       const spot: PlaySpot = { kind: conf.kind, img, tx, ty, region: reg.idx, hp: 3, ready: true };

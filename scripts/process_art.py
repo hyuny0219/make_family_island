@@ -252,6 +252,12 @@ if __name__ == "__main__":
         grid[i // 3][i % 3] = f"play_{name}"
         slice_grid("play.png", 3, 2, grid, fit=fit)
 
+    # 섬 놀이 2 (곰돌이·꽃향기·솔방울·버섯 섬)
+    for i, (name, fit) in enumerate([("hive", 32), ("bud", 30), ("log", 36), ("shroom", 36)]):
+        grid = [[None] * 3, [None] * 3]
+        grid[i // 3][i % 3] = f"play_{name}"
+        slice_grid("play2.png", 3, 2, grid, fit=fit)
+
     # 섬 친구 (섬마다 한 마리)
     slice_grid("friends_a.png", 3, 2, [["turtle_front", "turtle_side", "turtle_back"], ["mole_front", "mole_side", "mole_back"]], fit=35)
     slice_grid("friends_b.png", 3, 2, [["frog_front", "frog_side", "frog_back"], ["camel_front", "camel_side", "camel_back"]], fit=35)
