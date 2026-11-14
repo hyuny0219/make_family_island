@@ -1054,6 +1054,54 @@ export class HudScene extends Phaser.Scene {
   }
 
   /** 주민의 부탁 */
+  /** 섬 지도: 섬 전체와 가족·집·보물·던전의 자리를 본다 */
+  private openMap() {
+    if (this.registry.get('modal')) return;
+    const data = (this.scene.get('Island') as IslandScene).mapData();
+    const PW = Math.min(340, this.scale.width - 16);
+    const size = PW - 28;
+    const k = Math.min(size / data.w, size / data.h);
+    const mw = data.w * k;
+    const mh = data.h * k;
+    const PH = mh + 112;
+    const { box } = this.modal(PW, PH);
+    const top = -PH / 2;
+    box.add(this.add.text(0, top + 26, `🗺️ ${data.name} 지도`, { fontFamily: FONT, fontSize: '17px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0.5));
+    const ox = -mw / 2;
+    const oy = top + 48;
+    const frame = this.add.graphics();
+    frame.fillStyle(0x8a6d4b).fillRoundedRect(ox - 4, oy - 4, mw + 8, mh + 8, 8);
+    box.add(frame);
+    box.add(this.add.image(ox, oy, data.tex).setOrigin(0).setScale(k));
+    const at = (tx: number, ty: number) => [ox + tx * data.px * k, oy + ty * data.px * k] as const;
+    // 아이콘 먼저, 곰은 그 위에
+    for (const m of data.marks) {
+      if (!m.icon) continue;
+      const [x, y] = at(m.tx, m.ty);
+      const g = this.add.graphics();
+      g.fillStyle(0xffffff, 0.85).fillCircle(x, y, 8);
+      box.add(g);
+      box.add(this.add.text(x, y, m.icon, { fontSize: '10px' }).setOrigin(0.5));
+    }
+    for (const m of data.marks) {
+      if (!m.bear) continue;
+      const [x, y] = at(m.tx, m.ty);
+      const g = this.add.graphics();
+      g.fillStyle(m.me ? 0xe07a5f : 0x3d8a5f).fillCircle(x, y, 12);
+      g.fillStyle(0xffffff).fillCircle(x, y, 10);
+      box.add(g);
+      box.add(this.add.image(x, y + 1, `${m.bear}_front`).setScale(0.55));
+      const lab = this.add.text(x, y - 15, m.me ? '나' : m.label ?? '', { fontFamily: FONT, fontSize: '9px', color: '#ffffff', fontStyle: 'bold', stroke: m.me ? '#b0513a' : '#2c6b47', strokeThickness: 3 }).setOrigin(0.5, 1);
+      box.add(lab);
+      if (m.me) this.tweens.add({ targets: lab, y: lab.y - 4, duration: 500, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+    }
+    box.add(
+      this.add
+        .text(0, oy + mh + 30, '⛺ 캠프  ⛵ 선착장  🏠 집  ❗ 열 수 있는 구역\n💎 보물  ⚔️ 던전  🎪 놀이  🐾 섬 친구  ☁️ 아직 못 간 곳', { fontFamily: FONT, fontSize: '10px', color: '#8a6d4b', align: 'center', lineSpacing: 5 })
+        .setOrigin(0.5),
+    );
+  }
+
   /** 이 집에 살 주민을 고른다 */
   private openHome(key: string) {
     if (this.registry.get('modal')) return;
@@ -1588,6 +1636,7 @@ export class HudScene extends Phaser.Scene {
     this.emoteRow = row;
     // 변신 (보스를 잡아 얻은 능력)
     this.roundButton(W - 30, HUD_TOP_H + 162, '🎩', () => this.openAbilities());
+    this.roundButton(W - 30, HUD_TOP_H + 206, '🗺️', () => this.openMap());
     // 퀘스트 수첩 (받을 보상이 있으면 빨간 점)
     const qb = this.roundButton(30, HUD_TOP_H + 162, '📜', () => this.openQuestBook());
     this.questDot = this.add.circle(13, -13, 5, 0xe8604c).setStrokeStyle(1.5, 0xffffff).setVisible(false);
