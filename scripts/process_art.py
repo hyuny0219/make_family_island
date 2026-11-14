@@ -7,7 +7,7 @@
 """
 from pathlib import Path
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw
 from scipy import ndimage
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -94,6 +94,48 @@ def slice_tiles():
     sheet.save(OUT / "tiles.png")
 
 
+def slice_walk(bear: str):
+    """걷는 그림(3열 × 2행: 앞·옆·뒤 × 두 걸음)을 서 있는 그림과 같은 비율로 맞춘다.
+    여섯 장의 머리 너비를 서 있는 그림과 견줘 곰마다 배율 하나를 정한다 (장마다 따로 맞추면 크기가 들쭉날쭉해진다)."""
+    im = Image.open(SRC / f"walk_{bear}.png").convert("RGBA")
+    cw, ch = im.width / 3, im.height / 2
+
+    def head_w(img):
+        al = np.array(img.getchannel("A")) > 0
+        top = al[: max(1, int(img.height * 0.4))]
+        return max(int(row.sum()) for row in top)
+
+    cells = []
+    for r in range(2):
+        for c, facing in enumerate(["front", "side", "back"]):
+            idle = Image.open(OUT / f"{bear}_{facing}.png").convert("RGBA")
+            cell = im.crop((int(c * cw), int(r * ch), int((c + 1) * cw), int((r + 1) * ch)))
+            a = np.array(cell.getchannel("A")) >= ALPHA_CUT
+            lab, n = ndimage.label(ndimage.binary_dilation(a, iterations=6))
+            sizes = ndimage.sum(np.ones_like(lab), lab, range(1, n + 1))
+            region = (lab == int(np.argmax(sizes)) + 1) & a
+            ys, xs = np.nonzero(region)
+            arr = np.array(cell)
+            arr[..., 3] = np.where(region, arr[..., 3], 0)
+            body = Image.fromarray(arr).crop((xs.min(), ys.min(), xs.max() + 1, ys.max() + 1))
+            cells.append((r, facing, idle, body))
+    f = float(np.median([head_w(idle) / head_w(body) for _, _, idle, body in cells]))
+    for r, facing, idle, body in cells:
+        body = clean_alpha(body.resize((max(1, round(body.width * f)), max(1, round(body.height * f))), Image.BOX))
+        w = max(body.width, idle.width)
+        h = body.height + 2
+        out = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        # 그림자: 서 있는 그림처럼 발밑에 두 줄
+        d = ImageDraw.Draw(out)
+        sw = idle.width - 6
+        d.rectangle(((w - sw) // 2, h - 2, (w - sw) // 2 + sw - 1, h - 2), fill=(158, 145, 156, 255))
+        d.rectangle(((w - sw) // 2 + 2, h - 1, (w - sw) // 2 + sw - 3, h - 1), fill=(158, 145, 156, 255))
+        out.alpha_composite(body, ((w - body.width) // 2, h - 2 - body.height))
+        name = f"{bear}_{facing}_w{r + 1}"
+        out.save(OUT / f"{name}.png")
+        print(f"{name:20s} {w}x{h}")
+
+
 if __name__ == "__main__":
     slice_grid(
         "bears.png", 3, 4,
@@ -104,6 +146,8 @@ if __name__ == "__main__":
             ["baby_front", "baby_side", "baby_back"],
         ],
     )
+    for bear in ["dad", "mom", "kid", "baby"]:
+        slice_walk(bear)
     slice_grid(
         "objects.png", 4, 3,
         [
