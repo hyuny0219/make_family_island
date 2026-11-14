@@ -15,8 +15,9 @@ import { BEARS, BLOCKING, OBJECT_TEXTURE, type BearId } from '../data/assets';
 import { GATHER, rollDrops } from '../data/gathering';
 import { ITEMS, itemKey, type ItemId } from '../data/items';
 import { ISLANDS } from '../data/islands';
+import { SKIN_COLORS } from '../data/skinColors';
 import { BIOME_INFO } from '../data/biomes';
-import { generateWorld, T_SEA, type Decor, type FishingSpot, type RegionInfo, type World } from '../world/generate';
+import { generateWorld, T_SAND, T_SEA, type Decor, type FishingSpot, type RegionInfo, type World } from '../world/generate';
 import { drawEdges } from '../world/edges';
 import { inventory } from '../state/inventory';
 import { progress } from '../state/progress';
@@ -2104,6 +2105,63 @@ export class IslandScene extends Phaser.Scene {
       if (pc?.floor && cx >= q.tx && cx < q.tx + pc.w && cy <= q.ty && cy > q.ty - pc.h) return true;
     }
     return false;
+  }
+
+  /**
+   * 섬 지도: 작은 그림(타일 한 칸 = MAP_PX 픽셀)과 표시할 것들을 만든다.
+   * 아직 열지 않은 구역은 구름으로 가린다.
+   */
+  mapData() {
+    const W = this.world;
+    const PX = 3;
+    // 같은 크기면 그림판을 다시 쓴다 (지도 창이 떠 있는 동안 지우면 안 된다)
+    let tex = this.textures.exists('minimap') ? (this.textures.get('minimap') as Phaser.Textures.CanvasTexture) : null;
+    if (tex && (tex.width !== W.w * PX || tex.height !== W.h * PX)) {
+      this.textures.remove('minimap');
+      tex = null;
+    }
+    tex ??= this.textures.createCanvas('minimap', W.w * PX, W.h * PX)!;
+    const ctx = tex.getContext();
+    const skin = ISLANDS[this.islandIdx].skin;
+    const sc = skin ? SKIN_COLORS[skin] : undefined;
+    const sand = sc?.sand ?? '#f3e0a6';
+    const grass = sc?.grass ?? '#8fd16a';
+    const grassB = sc?.grassLine ?? '#76bd55';
+    for (let y = 0; y < W.h; y++) {
+      for (let x = 0; x < W.w; x++) {
+        const t = W.terrain[y][x];
+        const r = W.region[y * W.w + x];
+        if (t === T_SEA) ctx.fillStyle = (x + y) % 7 === 0 ? '#8fd3ea' : '#7ec8e3';
+        else if (r >= 0 && !this.unlocked(r)) ctx.fillStyle = (x * 3 + y * 5) % 4 === 0 ? '#c3cad6' : '#d3d9e3';
+        else if (t === T_SAND) ctx.fillStyle = sand;
+        else ctx.fillStyle = (x * 7 + y * 3) % 5 === 0 ? grassB : grass;
+        ctx.fillRect(x * PX, y * PX, PX, PX);
+      }
+    }
+    tex.refresh();
+    type Mark = { tx: number; ty: number; icon?: string; bear?: string; me?: boolean; label?: string };
+    const marks: Mark[] = [];
+    const px = (v: number) => v / TILE;
+    marks.push({ tx: W.camp.tx + 0.5, ty: W.camp.ty + 0.5, icon: '⛺' });
+    marks.push({ tx: W.dock.tx + 0.5, ty: W.dock.ty + 1, icon: '⛵' });
+    for (const reg of W.regions) if (this.frontier(reg.idx)) marks.push({ tx: reg.signX + 0.5, ty: reg.signY + 0.5, icon: '❗' });
+    for (const v of this.plays) if (this.unlocked(v.region)) marks.push({ tx: v.tx + 0.5, ty: v.ty + 0.5, icon: '🎪' });
+    for (const p of village.placedOn(this.islandIdx)) if (ENTERABLE.has(p.id)) marks.push({ tx: p.tx + 1, ty: p.ty + 0.5, icon: '🏠' });
+    if (this.chest && this.chestRegion >= 0 && this.unlocked(this.chestRegion)) marks.push({ tx: px(this.chest.x), ty: px(this.chest.y) - 0.5, icon: '💎' });
+    if (this.gate && this.gate.visible) marks.push({ tx: px(this.gate.x), ty: px(this.gate.y) - 0.5, icon: '⚔️' });
+    for (const b of this.bears) if (b.wild && b.sprite.visible) marks.push({ tx: px(b.x), ty: px(b.y) - 0.5, icon: '🐾' });
+    // 가족: 던전·집 안에 있으면 들어간 자리에 표시한다
+    for (const [, p] of Object.entries(family.others)) {
+      if (p.island !== this.islandIdx || !BEARS.some((b) => b.id === p.bear)) continue;
+      if (p.z) continue;
+      marks.push({ tx: px(p.x), ty: px(p.y) - 0.5, bear: p.bear, label: BEARS.find((b) => b.id === p.bear)?.name });
+    }
+    const pl = this.player;
+    if (pl) {
+      const at = this.room?.back ?? this.dungeon?.back ?? pl;
+      marks.push({ tx: px(at.x), ty: px(at.y) - 0.5, bear: pl.id, me: true });
+    }
+    return { tex: 'minimap', w: W.w * PX, h: W.h * PX, px: PX, marks, name: ISLANDS[this.islandIdx].name };
   }
 
   /** 지금 들어와 있는 집에 사는 주민을 방 안에 보여 준다 */
