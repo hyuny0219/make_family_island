@@ -32,7 +32,7 @@ export class BootScene extends Phaser.Scene {
     for (const o of OBJECTS) if (!NO_LOAD.has(o)) this.load.image(o, `${o}.png`);
     for (let i = 0; i < 10; i++) this.load.image(`treasure_${i}`, `treasure_${i}.png`);
     for (const k of ['chest_open', 'pedestal']) this.load.image(k, `${k}.png`);
-    for (const k of ['play_dig', 'play_geode', 'play_ice', 'play_spring', 'play_tramp']) this.load.image(k, `${k}.png`);
+    for (const k of ['play_dig', 'play_geode', 'play_ice', 'play_spring', 'play_tramp', 'play_hive', 'play_bud', 'play_log', 'play_shroom']) this.load.image(k, `${k}.png`);
     for (let i = 0; i < 10; i++) this.load.image(`boss_${i}`, `boss_${i}.png`);
     this.load.image('dungeon_gate', 'dungeon_gate.png');
     for (const ab of ABILITIES) this.load.image(hatKey(ab.id), `${hatKey(ab.id)}.png`);
