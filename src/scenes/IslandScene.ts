@@ -102,6 +102,7 @@ export class IslandScene extends Phaser.Scene {
   private thunderAcc = 0;
   private dungeon: null | { x: number; y: number; w: number; h: number; back: { x: number; y: number }; objs: Phaser.GameObjects.GameObject[]; phase: 'wave' | 'boss' | 'clear'; boss?: Monster; slamT: number; called: boolean; waved: boolean } = null;
   private monsterTimer = 6;
+  private followState = new Map<Bear, { x: number; y: number; t: number }>();
   /** 지금 있는 곳에 들어온 시각 — 가장 먼저 들어온 기기가 몬스터를 움직인다 */
   private zt = Date.now();
   private batZone: string | null = null;
@@ -143,6 +144,7 @@ export class IslandScene extends Phaser.Scene {
     this.slimeTimer = 3;
     this.monsters = [];
     this.monsterTimer = 6;
+    this.followState.clear();
     this.zt = family.now();
     this.batZone = null;
     this.batZ = '';
@@ -736,7 +738,61 @@ export class IslandScene extends Phaser.Scene {
     if (this.presenceTimer <= 0 && this.player) this.sendPresence();
   }
 
+  /**
+   * 아무도 고르지 않은 가족 곰은 접속한 사람을 줄지어 따라다닌다.
+   * 접속한 사람이 여럿이면 곰을 차례로 나눈다 (기기 이름 순서라 가족 모두 같게 본다).
+   */
+  private updateFollower(bear: Bear, dt: number) {
+    const pl = this.player!;
+    // 집 안·던전에는 따라 들어오지 않고 밖에서 기다린다
+    if (!bear.sprite.visible || this.room || this.dungeon || this.flying) {
+      bear.target = null;
+      return;
+    }
+    const leaders = [[family.device, pl] as [string, Bear], ...this.remotes].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map(([, b]) => b);
+    const pack = this.bears.filter((b) => !b.remote && !b.wild && !b.resident && b !== pl && b.sprite.visible);
+    const k = pack.indexOf(bear);
+    const lead = leaders[k % leaders.length];
+    // 같은 사람을 따르는 바로 앞 곰 뒤에 선다 (맨 앞이면 그 사람 뒤)
+    const ahead = k >= leaders.length ? pack[k - leaders.length] : lead;
+    const far = Math.hypot(lead.x - bear.x, lead.y - bear.y);
+    // 오래 막혀 있거나 너무 멀어졌으면 (배·트램펄린·기절 등) 곁으로 폴짝 온다
+    const st = this.followState.get(bear) ?? { x: bear.x, y: bear.y, t: 0 };
+    this.followState.set(bear, st);
+    if (Math.hypot(bear.x - st.x, bear.y - st.y) > 3 || far < 110) {
+      st.x = bear.x;
+      st.y = bear.y;
+      st.t = 0;
+    } else st.t += dt;
+    if (far > 420 || st.t > 2.5) {
+      st.t = 0;
+      for (let i = 0; i < 10; i++) {
+        const x = lead.x + Phaser.Math.Between(-44, 44);
+        const y = lead.y + Phaser.Math.Between(-30, 44);
+        if (!this.walkable(x, y)) continue;
+        this.fx.puff.explode(5, bear.x, bear.y - 14);
+        bear.x = x;
+        bear.y = y;
+        bear.target = null;
+        this.fx.puff.explode(5, x, y - 14);
+        break;
+      }
+      return;
+    }
+    const dx = ahead.x - bear.x;
+    const dy = ahead.y - bear.y;
+    const d = Math.hypot(dx, dy);
+    if (d > 36) {
+      // 앞 곰에서 한 걸음 떨어진 자리까지 간다. 뒤처지면 조금 서두른다
+      bear.speed = d > 80 ? PLAYER_SPEED * 1.3 : PLAYER_SPEED * 0.95;
+      bear.target = { x: ahead.x - (dx / d) * 26, y: ahead.y - (dy / d) * 26 };
+    } else if (d < 28) {
+      bear.target = null;
+    }
+  }
+
   private updateNpc(bear: Bear, dt: number) {
+    if (this.player && !bear.resident) return this.updateFollower(bear, dt);
     if (bear.moving) return;
     const t = (this.npcTimers.get(bear) ?? 0) - dt;
     this.npcTimers.set(bear, t);
