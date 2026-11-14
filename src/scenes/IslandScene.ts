@@ -102,7 +102,7 @@ export class IslandScene extends Phaser.Scene {
   private thunderAcc = 0;
   private dungeon: null | { x: number; y: number; w: number; h: number; back: { x: number; y: number }; objs: Phaser.GameObjects.GameObject[]; phase: 'wave' | 'boss' | 'clear'; boss?: Monster; slamT: number; called: boolean; waved: boolean } = null;
   private monsterTimer = 6;
-  private followState = new Map<Bear, { x: number; y: number; t: number }>();
+  private followState = new Map<Bear, { x: number; y: number; t: number; role: number }>();
   /** 지금 있는 곳에 들어온 시각 — 가장 먼저 들어온 기기가 몬스터를 움직인다 */
   private zt = Date.now();
   private batZone: string | null = null;
@@ -757,7 +757,7 @@ export class IslandScene extends Phaser.Scene {
     const ahead = k >= leaders.length ? pack[k - leaders.length] : lead;
     const far = Math.hypot(lead.x - bear.x, lead.y - bear.y);
     // 오래 막혀 있거나 너무 멀어졌으면 (배·트램펄린·기절 등) 곁으로 폴짝 온다
-    const st = this.followState.get(bear) ?? { x: bear.x, y: bear.y, t: 0 };
+    const st = this.followState.get(bear) ?? { x: bear.x, y: bear.y, t: 0, role: 8 + Math.random() * 10 };
     this.followState.set(bear, st);
     if (Math.hypot(bear.x - st.x, bear.y - st.y) > 3 || far < 110) {
       st.x = bear.x;
@@ -779,6 +779,8 @@ export class IslandScene extends Phaser.Scene {
       }
       return;
     }
+    // 나를 따르는 곰은 저마다 한 가지씩 도와준다
+    if (lead === pl && this.followerHelp(bear, st, dt)) return;
     const dx = ahead.x - bear.x;
     const dy = ahead.y - bear.y;
     const d = Math.hypot(dx, dy);
@@ -789,6 +791,64 @@ export class IslandScene extends Phaser.Scene {
     } else if (d < 28) {
       bear.target = null;
     }
+  }
+
+  /**
+   * 따라다니는 곰의 도움. 곰마다 다르다:
+   * 아빠 곰은 같이 싸우고, 엄마 곰은 다치면 돌봐 주고, 첫째 곰은 재료를 찾아오고, 막내 곰은 응원한다.
+   * @returns 지금은 따라가지 않고 제 할 일을 하는 중이면 true
+   */
+  private followerHelp(bear: Bear, st: { role: number }, dt: number): boolean {
+    const pl = this.player!;
+    st.role -= dt;
+    if (this.resting) return false;
+    if (bear.id === 'dad') {
+      // 내가 싸우는 몬스터, 아니면 나를 쫓아오는 가까운 몬스터에게 달려가 때린다
+      const m = this.autoTarget && !this.autoTarget.dead ? this.autoTarget : this.monsters.find((o) => !o.dead && !o.def.shy && o.chasing && Math.hypot(o.x - pl.x, o.y - pl.y) < 110);
+      if (!m || Math.hypot(m.x - pl.x, m.y - pl.y) > 150) return false;
+      st.role = Math.min(st.role, 1.1); // 처음 달려갈 때 오래 기다리지 않게
+      const d = Math.hypot(m.x - bear.x, m.y - bear.y);
+      if (d > 34) {
+        bear.speed = PLAYER_SPEED * 1.2;
+        bear.target = { x: m.x + (bear.x < m.x ? -20 : 20), y: m.y + 2 };
+      } else {
+        bear.target = null;
+        if (st.role <= 0) {
+          st.role = 1.1;
+          bear.face('side', m.x < bear.x);
+          bear.jump(60);
+          this.fx.splash.explode(4, m.x, m.y - 10);
+          this.damageMonster(m, 1, true);
+        }
+      }
+      return true;
+    }
+    if (st.role > 0) return false;
+    if (bear.id === 'mom') {
+      if (player.hp >= 70 || player.hp <= 0) return false;
+      st.role = 10;
+      player.heal(10);
+      bear.jump(70);
+      bear.emote('💗');
+      this.fx.heart.explode(5, pl.x, pl.y - 30);
+      sfx.pop();
+    } else if (bear.id === 'kid') {
+      st.role = 28 + Math.random() * 10;
+      if (!pl.moving) return false; // 같이 돌아다닐 때만 찾아온다
+      const found: ItemId[] = ['twig', 'stone', 'flower', 'berry'];
+      bear.jump(70);
+      bear.emote('✨');
+      sfx.pop();
+      this.spawnDrop(Phaser.Utils.Array.GetRandom(found), bear.x, bear.y - 14, bear.y);
+    } else if (bear.id === 'baby') {
+      st.role = 45;
+      if (!pl.moving) return false;
+      bear.jump(90);
+      bear.emote('📣');
+      player.addBuff('speed', 15);
+      sfx.pop();
+    }
+    return false;
   }
 
   private updateNpc(bear: Bear, dt: number) {
@@ -855,6 +915,9 @@ export class IslandScene extends Phaser.Scene {
       pl.jump(90);
       sfx.pop();
       this.fx.heart.explode(3, (pl.x + other.x) / 2, Math.min(pl.y, other.y) - 34);
+      // 따라다니는 가족 곰을 누르면 무엇을 도와주는지 알려 준다
+      const HELP: Record<string, string> = { dad: '🐻 아빠 곰: 몬스터를 같이 때려 줘요', mom: '💗 엄마 곰: 다치면 체력을 채워 줘요', kid: '✨ 첫째 곰: 가끔 재료를 찾아와요', baby: '📣 막내 곰: 응원해서 발이 빨라져요' };
+      if (!other.remote && HELP[other.id]) this.toast(HELP[other.id]);
       this.npcTimers.set(other, 2.5);
       return;
     }
