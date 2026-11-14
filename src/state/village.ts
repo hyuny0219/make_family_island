@@ -34,6 +34,8 @@ interface Saved {
   orders: Record<string, Order>;
   /** 다음 부탁이 생기는 시각 (ms) */
   nextAt: Record<string, number>;
+  /** 주민이 사는 집 (주민 id → 집 안 열쇠) */
+  homes: Record<string, string>;
 }
 
 /**
@@ -41,7 +43,7 @@ interface Saved {
  * 이벤트: 'changed', 'resident-joined'(id)
  */
 class Village extends Phaser.Events.EventEmitter {
-  private d: Saved = { placed: {}, joined: [], hearts: {}, orders: {}, nextAt: {} };
+  private d: Saved = { placed: {}, joined: [], hearts: {}, orders: {}, nextAt: {}, homes: {} };
 
   constructor() {
     super();
@@ -105,6 +107,48 @@ class Village extends Phaser.Events.EventEmitter {
     return RESIDENTS.filter((r) => this.d.joined.includes(r.id));
   }
 
+  // ───────── 주민의 집 ─────────
+
+  /** 주민이 사는 집 (없으면 undefined) */
+  homeOf(id: string): string | undefined {
+    return this.d.homes[id];
+  }
+
+  /** 그 집에 사는 주민 (한 집에 한 마리) */
+  residentOf(key: string): string | undefined {
+    return Object.keys(this.d.homes).find((id) => this.d.homes[id] === key);
+  }
+
+  /** 주민을 그 집에 살게 한다 (null이면 내보낸다). 먼저 살던 주민은 나간다 */
+  setHome(id: string, key: string | null) {
+    if (key) {
+      const prev = this.residentOf(key);
+      if (prev && prev !== id) {
+        delete this.d.homes[prev];
+        family.del(`homes.${prev}`);
+      }
+      this.d.homes[id] = key;
+      family.set(`homes.${id}`, key);
+    } else {
+      delete this.d.homes[id];
+      family.del(`homes.${id}`);
+    }
+    this.save();
+    this.emit('changed');
+    this.emit('home-changed');
+  }
+
+  /** 집이 없어졌다 → 살던 주민은 다시 캠프로 */
+  clearHome(key: string) {
+    const id = this.residentOf(key);
+    if (id) this.setHome(id, null);
+  }
+
+  /** 집 안의 아늑함 = 그 집에 놓인 가구·장식 점수의 합 */
+  comfort(key: string) {
+    return this.placedOn(key).reduce((n, p) => n + (PIECES[p.id]?.points ?? 0), 0);
+  }
+
 
   hearts(id: string) {
     return this.d.hearts[id] ?? 0;
@@ -160,16 +204,17 @@ class Village extends Phaser.Events.EventEmitter {
   }
 
   /** 가족 섬의 최신 상태로 맞추기. 달라졌으면 'changed'·'remote', 새 주민은 'resident-joined' */
-  applyRemote(r: { placed?: Record<string, Placed[]>; joined?: string[]; hearts?: Record<string, number>; orders?: Record<string, Order>; nextAt?: Record<string, number> }) {
+  applyRemote(r: { placed?: Record<string, Placed[]>; joined?: string[]; hearts?: Record<string, number>; orders?: Record<string, Order>; nextAt?: Record<string, number>; homes?: Record<string, string> }) {
     const placed: Record<string, Placed[]> = {};
     for (const [k, v] of Object.entries(r.placed ?? {})) placed[k] = v.filter((p) => p.id in PIECES).map(wire);
-    const next: Saved = { placed, joined: [...(r.joined ?? [])], hearts: { ...(r.hearts ?? {}) }, orders: { ...(r.orders ?? {}) }, nextAt: { ...(r.nextAt ?? {}) } };
+    const next: Saved = { placed, joined: [...(r.joined ?? [])], hearts: { ...(r.hearts ?? {}) }, orders: { ...(r.orders ?? {}) }, nextAt: { ...(r.nextAt ?? {}) }, homes: { ...(r.homes ?? {}) } };
     if (JSON.stringify(next) === JSON.stringify(this.d)) return;
     const before = new Set(this.d.joined);
     this.d = next;
     this.save();
     this.emit('changed');
     this.emit('remote');
+    this.emit('home-changed');
     next.joined.filter((id) => !before.has(id)).forEach((id) => this.emit('resident-joined', id));
   }
 

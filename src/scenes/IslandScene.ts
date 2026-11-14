@@ -102,6 +102,8 @@ export class IslandScene extends Phaser.Scene {
   private thunderAcc = 0;
   private dungeon: null | { x: number; y: number; w: number; h: number; back: { x: number; y: number }; objs: Phaser.GameObjects.GameObject[]; phase: 'wave' | 'boss' | 'clear'; boss?: Monster; slamT: number; called: boolean; waved: boolean } = null;
   private monsterTimer = 6;
+  /** 지금 들어와 있는 집에 사는 주민 */
+  private roomGuest: Bear | null = null;
   private followState = new Map<Bear, { x: number; y: number; t: number; role: number }>();
   /** 지금 있는 곳에 들어온 시각 — 가장 먼저 들어온 기기가 몬스터를 움직인다 */
   private zt = Date.now();
@@ -145,6 +147,7 @@ export class IslandScene extends Phaser.Scene {
     this.monsters = [];
     this.monsterTimer = 6;
     this.followState.clear();
+    this.roomGuest = null;
     this.zt = family.now();
     this.batZone = null;
     this.batZ = '';
@@ -258,6 +261,7 @@ export class IslandScene extends Phaser.Scene {
     player.on('faint', this.onFaint, this);
     village.on('resident-joined', this.onResidentJoined, this);
     village.on('remote', this.syncPlaced, this);
+    village.on('home-changed', this.syncRoomGuest, this);
     family.on('presence', this.onPresence, this);
     family.on('status', this.sendPresence, this);
     family.on('mobs', this.onNetMobs, this);
@@ -280,6 +284,7 @@ export class IslandScene extends Phaser.Scene {
       player.off('faint', this.onFaint, this);
       village.off('resident-joined', this.onResidentJoined, this);
       village.off('remote', this.syncPlaced, this);
+      village.off('home-changed', this.syncRoomGuest, this);
       family.off('presence', this.onPresence, this);
       family.off('status', this.sendPresence, this);
       family.off('mobs', this.onNetMobs, this);
@@ -858,10 +863,35 @@ export class IslandScene extends Phaser.Scene {
     this.npcTimers.set(bear, t);
     if (t > 0) return;
     this.npcTimers.set(bear, 2 + Math.random() * 4);
+    const rm = this.room;
+    if (bear === this.roomGuest && rm) {
+      // 집 안의 주민은 방 안을 거닌다
+      for (let i = 0; i < 8; i++) {
+        const x = rm.x + Phaser.Math.Between(14, rm.w - 14);
+        const y = rm.y + Phaser.Math.Between(16, rm.h - 30);
+        if (this.walkable(x, y)) {
+          bear.target = { x, y };
+          return;
+        }
+      }
+      return;
+    }
+    if (rm || this.dungeon) return;
+    // 이 섬에 집이 있는 주민은 제 집 앞에서, 없으면 캠프에서 지낸다
     const c = this.world.camp;
+    let ax = c.tx * TILE;
+    let ay = (c.ty + 2) * TILE + 30;
+    const hm = /^h(\d+)_(\d+)_(\d+)$/.exec(village.homeOf(bear.id) ?? '');
+    if (hm && +hm[1] === this.islandIdx) {
+      const on = this.placedOcc.get(`${hm[2]},${hm[3]}`);
+      if (on && ENTERABLE.has(on.id)) {
+        ax = (+hm[2] + 1) * TILE;
+        ay = (+hm[3] + 2) * TILE + 20;
+      }
+    }
     for (let i = 0; i < 8; i++) {
-      const x = c.tx * TILE + Phaser.Math.Between(-100, 100);
-      const y = (c.ty + 2) * TILE + Phaser.Math.Between(-30, 90);
+      const x = ax + Phaser.Math.Between(-100, 100) * (ax === c.tx * TILE ? 1 : 0.6);
+      const y = ay + Phaser.Math.Between(-60, 60) * (ax === c.tx * TILE ? 1 : 0.5);
       if (this.walkable(x, y)) {
         bear.target = { x, y };
         return;
@@ -1908,6 +1938,7 @@ export class IslandScene extends Phaser.Scene {
       g.fillStyle(0xd1495b).fillRoundedRect(doorX - 18, ry + rh - 12, 36, 10, 4);
       const out = this.add.text(doorX, ry + rh + 12, '▼ 나가기', { fontFamily: FONT, fontSize: '9px', color: '#e8d5a9', fontStyle: 'bold' }).setOrigin(0.5).setDepth(-50);
       this.room = { key: houseKey(this.islandIdx, h.tx, h.ty), x: rx, y: ry, w: rw, h: rh, back: this.registry.get('view') === 'build' ? { x: (h.tx + 1) * TILE, y: (h.ty + 2) * TILE + 12 } : { x: pl.x, y: pl.y + 4 }, objs: [g, out], imgs: new Map(), occ: new Map(), blocked: new Set(), door: plan.door, holes };
+      this.registry.set('roomKey', this.room.key);
       this.zoneChanged();
       // 꾸미기 중에는 카메라가 곰을 따라가지 않으니, 방이 화면 위쪽에 오도록 직접 맞춘다 (아래는 꾸미기 창이 가린다)
       if (this.registry.get('view') === 'build') {
@@ -1935,6 +1966,7 @@ export class IslandScene extends Phaser.Scene {
       cam.setBounds(cx * TILE, cy * TILE, RW * TILE, RH * TILE);
       cam.fadeIn(400, 40, 30, 20);
       this.resting = false;
+      this.syncRoomGuest();
       if (village.placedOn(this.room.key).length === 0) this.toast('🏠 꾸미기 탭에서 가구를 놓아 보세요');
     });
   }
@@ -2074,12 +2106,45 @@ export class IslandScene extends Phaser.Scene {
     return false;
   }
 
+  /** 지금 들어와 있는 집에 사는 주민을 방 안에 보여 준다 */
+  private syncRoomGuest() {
+    const rm = this.room;
+    const id = rm ? village.residentOf(rm.key) : undefined;
+    if (this.roomGuest && this.roomGuest.id === id) return;
+    if (this.roomGuest) {
+      const g = this.roomGuest;
+      this.roomGuest = null;
+      this.bears = this.bears.filter((b) => b !== g);
+      this.npcTimers.delete(g);
+      g.destroy();
+    }
+    if (!rm || !id) return;
+    let x = rm.x + (rm.door + 0.5) * TILE;
+    let y = rm.y + rm.h - 50;
+    for (let i = 0; i < 20; i++) {
+      const cx = rm.x + Phaser.Math.Between(14, rm.w - 14);
+      const cy = rm.y + Phaser.Math.Between(16, rm.h - 40);
+      if (this.walkable(cx, cy)) {
+        x = cx;
+        y = cy;
+        break;
+      }
+    }
+    const b = new Bear(this, id, x, y, 34);
+    b.resident = true;
+    this.bears.push(b);
+    this.npcTimers.set(b, 1 + Math.random() * 3);
+    this.roomGuest = b;
+    this.fx.heart.explode(4, x, y - 30);
+  }
+
   private leaveRoom() {
     const rm = this.room;
     if (!rm) return;
     rm.objs.forEach((o) => o.destroy());
     rm.imgs.forEach((i) => i.destroy());
     this.room = null;
+    this.syncRoomGuest();
     this.registry.set('room', false);
     const W = this.world;
     this.cameras.main.setBounds(0, 0, W.w * TILE, W.h * TILE);
@@ -2858,6 +2923,8 @@ export class IslandScene extends Phaser.Scene {
       const piece = PIECES[target.id];
       if (ENTERABLE.has(target.id) && village.placedOn(houseKey(this.islandIdx, target.tx, target.ty)).length > 0) return void this.toast('🏠 집 안의 가구를 먼저 치워요');
       village.remove(this.islandIdx, target.tx, target.ty, target.id);
+      // 집을 치우거나 옮기면 살던 주민은 캠프로 돌아간다
+      if (ENTERABLE.has(target.id)) village.clearHome(houseKey(this.islandIdx, target.tx, target.ty));
       this.dropPlaced(target, true);
       for (const [id, n] of Object.entries(piece.cost) as [ItemId, number][]) inventory.add(id, n);
       sfx.pop();
