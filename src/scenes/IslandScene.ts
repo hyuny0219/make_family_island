@@ -837,7 +837,8 @@ export class IslandScene extends Phaser.Scene {
         if (st.role <= 0) {
           st.role = 1.1;
           bear.face('side', m.x < bear.x);
-          bear.jump(60);
+          bear.jump(40);
+          bear.swing(m.x < bear.x);
           this.fx.splash.explode(4, m.x, m.y - 10);
           this.damageMonster(m, 1, true);
         }
@@ -1484,13 +1485,39 @@ export class IslandScene extends Phaser.Scene {
     if (now - this.lastHit >= 260 / (1 + abilities.power('bee') / 100)) {
       this.lastHit = now;
       pl.face('side', m.x < pl.x);
-      pl.jump(60);
+      pl.jump(40);
+      pl.swing(m.x < pl.x);
+      this.slashFx(pl, m);
       sfx.boing();
       this.fx.splash.explode(6, m.x, m.y - 10);
       this.damageMonster(m, this.attackPower());
     }
     // 한 번 누르면 잡을 때까지 계속 싸운다 (다른 곳을 누르면 그만둔다)
     if (!m.dead) this.time.delayedCall(abilities.power('bee') > 0 ? 170 : 300, () => this.autoTarget === m && !m.dead && this.attackMonster(m));
+  }
+
+  /** 휘두르는 모습: 검이 있으면 검이 돌고, 없으면 발톱 자국이 스친다 */
+  private slashFx(from: Bear, m: Monster) {
+    const left = m.x < from.x;
+    const dir = left ? -1 : 1;
+    const weapon = inventory.get('stone_sword') > 0 ? 'stone_sword' : inventory.get('sword') > 0 ? 'sword' : null;
+    if (weapon) {
+      const sw = this.add.image(from.x + dir * 10, from.y - 16, itemKey(weapon)).setOrigin(0.5, 0.9).setDepth(99986).setScale(0.9).setFlipX(left);
+      sw.setAngle(-70 * dir);
+      this.tweens.add({ targets: sw, angle: 80 * dir, duration: 150, ease: 'Quad.easeOut', onComplete: () => sw.destroy() });
+    }
+    const g = this.add.graphics().setDepth(99986);
+    const cx = (from.x + m.x) / 2 + dir * 4;
+    const cy = m.y - 14;
+    g.lineStyle(3, 0xffffff, 0.95);
+    g.beginPath();
+    g.arc(cx - dir * 6, cy, 16, left ? Math.PI * 0.7 : -Math.PI * 0.3, left ? Math.PI * 1.3 : Math.PI * 0.3, false);
+    g.strokePath();
+    g.lineStyle(1.5, 0xffe08a, 0.9);
+    g.beginPath();
+    g.arc(cx - dir * 9, cy, 13, left ? Math.PI * 0.75 : -Math.PI * 0.25, left ? Math.PI * 1.25 : Math.PI * 0.25, false);
+    g.strokePath();
+    this.tweens.add({ targets: g, alpha: 0, x: dir * 5, duration: 170, onComplete: () => g.destroy() });
   }
 
   private damageMonster(m: Monster, dmg: number, extra = false) {

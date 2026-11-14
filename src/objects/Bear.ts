@@ -28,6 +28,13 @@ export class Bear {
   speed: number;
 
   private walkT = 0;
+  /** 걷는 그림이 있는 곰인가 (가족 곰만 있다) */
+  private readonly hasWalk: boolean;
+  /** 지금 보여 주는 걸음 (0이면 서 있는 그림) */
+  private walkFrame = 0;
+  /** 때리는 몸짓: 남은 시간과 방향 */
+  private lungeT = 0;
+  private lungeDir = 1;
   private hop = 0;
   private hopV = 0;
 
@@ -37,6 +44,7 @@ export class Bear {
     this.y = y;
     this.speed = speed;
     this.sprite = scene.add.image(x, y, `${id}_front`).setOrigin(0.5, 1);
+    this.hasWalk = scene.textures.exists(`${id}_front_w1`);
     this.sprite.setInteractive({ useHandCursor: true });
     (this.sprite as unknown as { bear: Bear }).bear = this;
   }
@@ -47,8 +55,14 @@ export class Bear {
 
   face(dir: Facing, left = false) {
     this.facing = dir;
-    this.sprite.setTexture(`${this.id}_${dir}`);
+    this.sprite.setTexture(`${this.id}_${dir}${this.walkFrame ? `_w${this.walkFrame}` : ''}`);
     this.sprite.setFlipX(dir === 'side' && left);
+  }
+
+  /** 때리는 몸짓: 상대 쪽으로 몸을 훅 내밀었다 돌아온다 */
+  swing(left: boolean) {
+    this.lungeT = 0.18;
+    this.lungeDir = left ? -1 : 1;
   }
 
   /** 제자리 점프 (터치 반응) */
@@ -106,17 +120,39 @@ export class Bear {
     let bob = 0;
     if (this.target) {
       const w = Math.sin(this.walkT * 16);
-      bob = Math.abs(w) * 2.5;
-      sx = 1 + w * 0.05;
-      sy = 1 - w * 0.05;
+      if (this.hasWalk) {
+        // 걷는 그림 두 장을 번갈아 보여 준다 (통통 튀는 건 조금만)
+        const f = 1 + (Math.floor(this.walkT / 0.16) % 2);
+        if (f !== this.walkFrame) {
+          this.walkFrame = f;
+          this.sprite.setTexture(`${this.id}_${this.facing}_w${f}`);
+        }
+        bob = Math.abs(w) * 1.2;
+      } else {
+        bob = Math.abs(w) * 2.5;
+        sx = 1 + w * 0.05;
+        sy = 1 - w * 0.05;
+      }
     } else {
+      if (this.walkFrame) {
+        this.walkFrame = 0;
+        this.sprite.setTexture(`${this.id}_${this.facing}`);
+      }
       const b = Math.sin(performance.now() / 420 + this.x) * 0.025;
       sx = 1 + b;
       sy = 1 - b;
       this.walkT = 0;
     }
+    // 때리는 몸짓
+    let lunge = 0;
+    if (this.lungeT > 0) {
+      this.lungeT = Math.max(0, this.lungeT - dt);
+      const k = Math.sin(Math.PI * (1 - this.lungeT / 0.18));
+      lunge = k * 6 * this.lungeDir;
+      this.sprite.setAngle(k * 14 * this.lungeDir);
+    } else if (this.sprite.angle !== 0) this.sprite.setAngle(0);
     this.sprite.setScale(sx, sy);
-    this.sprite.setPosition(Math.round(this.x), Math.round(this.y - bob - this.hop));
+    this.sprite.setPosition(Math.round(this.x + lunge), Math.round(this.y - bob - this.hop));
     this.sprite.setDepth(this.y);
     this.label?.setPosition(this.sprite.x, this.sprite.y - this.sprite.height - 3).setDepth(this.y + 1);
     this.bubble?.setPosition(this.sprite.x, this.sprite.y - this.sprite.height - (this.label ? 14 : 4)).setDepth(99984);
