@@ -16,11 +16,18 @@ import { village } from './state/village';
 import { family } from './sync/family';
 import './sync/bridge';
 
+/**
+ * 화면의 기준 크기. 세로 화면은 360×640, 가로 화면은 640×450을 기준으로 삼는다.
+ * (가로에서도 세로 기준을 쓰면 높이 640을 좁은 화면에 욱여넣어 글자와 단추가 절반으로 작아진다)
+ */
+const baseSize = (): [number, number] => (window.innerWidth > window.innerHeight * 1.2 ? [640, 450] : [GAME_WIDTH, GAME_HEIGHT]);
+const [baseW, baseH] = baseSize();
+
 const game = new Phaser.Game({
   type: Phaser.AUTO,
   parent: 'game',
-  width: GAME_WIDTH,
-  height: GAME_HEIGHT,
+  width: baseW,
+  height: baseH,
   backgroundColor: COLORS.sea,
   pixelArt: true,
   roundPixels: true,
@@ -34,6 +41,18 @@ const game = new Phaser.Game({
   },
   scene: [BootScene, IslandScene, MergeScene, HudScene],
 });
+
+// 폰을 돌리면 기준 크기를 바꾼다 (화면을 다시 짜는 일은 HUD가 크기 변화를 보고 한다)
+const applyBase = () => {
+  const [w, h] = baseSize();
+  const c = game.config as unknown as { width: number; height: number };
+  if (c.width === w && c.height === h) return;
+  c.width = w;
+  c.height = h;
+  game.scale.refresh();
+};
+window.addEventListener('resize', applyBase);
+window.addEventListener('orientationchange', () => window.setTimeout(applyBase, 200));
 
 // 디버그/테스트용 핸들
 Object.assign(window, { __game: game, __inv: inventory, __progress: progress, __village: village, __family: family, __Slime: Slime, __quests: quests, __Monster: Monster, __MONSTERS: MONSTERS, __player: player, __abilities: abilities });

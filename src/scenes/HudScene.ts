@@ -948,11 +948,13 @@ export class HudScene extends Phaser.Scene {
     this.buildTray?.destroy();
     this.buildTray = undefined;
     if (this.view !== 'build') return;
-    const W = this.scale.width;
+    // 가로 화면에서는 창을 오른쪽 아래에 붙여서, 왼쪽으로 섬이 넓게 보이게 한다
+    const full = this.scale.width;
+    const W = Math.min(full, 380);
     const H = this.scale.height;
     const h = 176;
     const top = H - HUD_BOTTOM_H - h + 2;
-    const tray = this.add.container(0, 0).setDepth(30);
+    const tray = this.add.container(full - W, 0).setDepth(30);
     this.buildTray = tray;
     const bg = this.add.graphics();
     bg.fillStyle(0x000000, 0.15).fillRoundedRect(10, top + 3, W - 20, h, 16);
