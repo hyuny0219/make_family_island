@@ -47,6 +47,8 @@ export interface Presence {
   z?: string;
   /** 그곳에 들어간 시각(ms). 가장 먼저 들어간 기기가 몬스터를 움직인다 */
   zt?: number;
+  /** 잠자리에 들었으면 1 — 접속한 가족이 모두 잠들어야 잠이 든다 */
+  sl?: 1;
   /** 보낸 시각(ms) */
   t: number;
 }
@@ -384,7 +386,7 @@ class FamilySync extends Phaser.Events.EventEmitter {
     this.presSentAt = Date.now();
     const p = this.presLast;
     const r = (n: number) => Math.round(n);
-    void this.rt.set(this.presRef, { bear: p.bear, island: p.island, x: r(p.x), y: r(p.y), tx: r(p.tx), ty: r(p.ty), ...(p.e ? { e: p.e, et: p.et ?? 0 } : {}), ...(p.z ? { z: p.z } : {}), zt: p.zt ?? 0, t: Date.now() }).catch(() => undefined);
+    void this.rt.set(this.presRef, { bear: p.bear, island: p.island, x: r(p.x), y: r(p.y), tx: r(p.tx), ty: r(p.ty), ...(p.e ? { e: p.e, et: p.et ?? 0 } : {}), ...(p.z ? { z: p.z } : {}), ...(p.sl ? { sl: 1 } : {}), zt: p.zt ?? 0, t: Date.now() }).catch(() => undefined);
   }
 
   private handleFeed(feed: FeedItem[]) {

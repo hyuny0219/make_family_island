@@ -25,7 +25,7 @@ const builtIn = (cat: string) => ISLANDS.reduce((s, _v, i) => s + village.placed
 /** 모험 퀘스트 — 하나씩 차례로. 처음 하는 사람에게 게임을 안내한다 */
 export const STORY: QuestDef[] = [
   { id: 's1', text: '나뭇가지 5개 줍기', goal: { count: 'gather:twig', n: 5 }, reward: ['twig', 5], tip: '나무를 톡톡 눌러요' },
-  { id: 's2', text: '머지로 새 물건 만들기', goal: { count: 'merge', n: 1 }, reward: ['log', 2], tip: '머지 탭에서 같은 것 3개를 붙여요' },
+  { id: 's2', text: '같은 것 3개를 합쳐 새 물건 만들기', goal: { count: 'merge', n: 1 }, reward: ['log', 2], tip: '만들기 탭에서 같은 것 3개를 붙여요' },
   { id: 's3', text: '표지판 퀘스트로 새 지역 열기', goal: { state: regionsOpened, n: 1 }, reward: ['stone', 10], tip: '구름 앞 표지판을 눌러요' },
   { id: 's4', text: '낚시 3번 성공하기', goal: { count: 'fish', n: 3 }, reward: ['fish', 2], tip: '물가의 반짝이는 곳을 눌러요' },
   { id: 's5', text: '슬라임 3마리 잡기', goal: { count: 'slime', n: 3 }, reward: ['jelly', 3], tip: '캠프 밖 지역에 나타나요' },
@@ -55,7 +55,7 @@ export const DAILY_POOL: QuestDef[] = [
   { id: 'd_any', text: '재료 40개 모으기', goal: { count: 'gather', n: 40 }, reward: ['crystal', 1] },
   { id: 'd_fish', text: '낚시 5번 성공하기', goal: { count: 'fish', n: 5 }, reward: ['fish_big', 1] },
   { id: 'd_slime', text: '슬라임 6마리 잡기', goal: { count: 'slime', n: 6 }, reward: ['jelly_block', 1] },
-  { id: 'd_merge', text: '머지 10번 하기', goal: { count: 'merge', n: 10 }, reward: ['coal', 2] },
+  { id: 'd_merge', text: '합치기 10번 하기', goal: { count: 'merge', n: 10 }, reward: ['coal', 2] },
   { id: 'd_combo', text: '조합 2번 하기', goal: { count: 'combo', n: 2 }, reward: ['crystal', 1] },
   { id: 'd_monster', text: '몬스터 5마리 잡기', goal: { count: 'monster', n: 5 }, reward: ['jam', 1] },
   { id: 'd_eat', text: '요리 2번 먹기', goal: { count: 'eat', n: 2 }, reward: ['fruit', 8] },

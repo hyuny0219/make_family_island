@@ -113,6 +113,13 @@ export class IslandScene extends Phaser.Scene {
   private monsterTimer = 6;
   /** 지금 들어와 있는 집에 사는 주민 */
   private roomGuest: Bear | null = null;
+  /** 잠자리에 누워 가족을 기다리는 중 / 잠든 중 */
+  private sleepWait = false;
+  private sleeping = false;
+  private sleepCheck = 0;
+  private sleepZ = 0;
+  private sleepHold = 0;
+  private sleepInfoKey = '';
   private stepTimers = new Map<Bear, number>();
   private roadTip = false;
   private stepSide = 1;
@@ -161,6 +168,10 @@ export class IslandScene extends Phaser.Scene {
     this.monsters = [];
     this.monsterTimer = 6;
     this.followState.clear();
+    this.sleepWait = false;
+    this.sleeping = false;
+    this.sleepInfoKey = '';
+    this.registry.set('sleepInfo', null);
     this.stepTimers.clear();
     this.roomGuest = null;
     this.zt = family.now();
@@ -269,6 +280,7 @@ export class IslandScene extends Phaser.Scene {
     ge.on('emote', this.onEmote, this);
     ge.on('use-item', this.onUseItem, this);
     ge.on('sleep', this.onSleep, this);
+    ge.on('wake', this.onWake, this);
     ge.on('enter-dungeon', this.enterDungeon, this);
     ge.on('use-skill', this.useSkill, this);
     ge.on('exit-house', this.exitHouse, this);
@@ -294,6 +306,7 @@ export class IslandScene extends Phaser.Scene {
       ge.off('emote', this.onEmote, this);
       ge.off('use-item', this.onUseItem, this);
       ge.off('sleep', this.onSleep, this);
+      ge.off('wake', this.onWake, this);
       ge.off('enter-dungeon', this.enterDungeon, this);
       ge.off('use-skill', this.useSkill, this);
       ge.off('exit-house', this.exitHouse, this);
@@ -768,6 +781,7 @@ export class IslandScene extends Phaser.Scene {
       }
     }
     if (this.fishing) this.updateFishing(dt);
+    this.updateSleep(dt);
     this.updateSlimes(dt);
     this.updateMonsters(dt);
     this.updateDungeon(dt);
@@ -787,6 +801,16 @@ export class IslandScene extends Phaser.Scene {
     const pl = this.player!;
     // 따라오는 곰은 눌리지 않는다: 곰 뒤에 있는 나무·놀이·몬스터를 누를 수 있어야 한다
     if (bear.sprite.input?.enabled) bear.sprite.disableInteractive();
+    // 내가 잠자리에 들면 따라서 눕는다 (접속하지 않은 가족은 접속한 사람을 따라 잔다)
+    if (this.sleepWait) {
+      bear.target = null;
+      if (!bear.lying && bear.sprite.visible && !this.room) {
+        bear.lying = true;
+        bear.face('front');
+        bear.emote('💤');
+      }
+      return;
+    }
     // 집 안·던전에는 따라 들어오지 않고 밖에서 기다린다
     if (!bear.sprite.visible || this.room || this.dungeon || this.flying) {
       bear.target = null;
@@ -2708,6 +2732,11 @@ export class IslandScene extends Phaser.Scene {
   }
 
   /** 텐트·침대에서 잠자기: 체력을 모두 회복한다 */
+  /**
+   * 잠자기. 접속한 가족이 모두 잠자리에 들어야 잠이 든다 (혼자면 바로 잔다).
+   * 아무도 고르지 않은 곰들은 내가 누우면 따라서 눕는다.
+   * @param anywhere 다른 가족이 자려고 할 때 '같이 자기'로 그 자리에서 눕는 경우
+   */
   private onSleep() {
     const pl = this.player;
     if (!pl || this.resting || this.flying || this.fishing) return;
@@ -2715,23 +2744,101 @@ export class IslandScene extends Phaser.Scene {
     if (this.room) pl.target = null;
     if (!this.room && this.monsters.some((m) => !m.dead && !m.def.shy && Math.hypot(m.x - pl.x, m.y - pl.y) < 150)) return void this.toast('몬스터가 가까이 있어서 잘 수 없어요!');
     this.resting = true;
+    this.sleepWait = true;
+    this.autoTarget = null;
     pl.target = null;
+    pl.face('front');
+    pl.lying = true;
     pl.emote('💤');
+    this.sendPresence();
+    this.sleepCheck = 0;
+    const awake = this.awakeFamily();
+    if (awake.length) {
+      this.toast(`💤 ${awake.join(', ')}도 잠들면 아침이 와요`);
+      family.post('💤 잠자리에 들었어요. 같이 자요!');
+    }
+    this.updateSleep(1);
+  }
+
+  /** 접속해 있는데 아직 잠자리에 들지 않은 가족의 이름 */
+  private awakeFamily(): string[] {
+    if (!family.active) return [];
+    return Object.values(family.others)
+      .filter((p) => !p.sl)
+      .map((p) => BEARS.find((b) => b.id === p.bear)?.name ?? '가족');
+  }
+
+  /** 누워서 기다리는 동안: 모두 잠들었는지 살핀다. 다른 가족이 자려고 하면 알려 준다 */
+  private updateSleep(dt: number) {
+    this.sleepCheck -= dt;
+    if (this.sleepCheck > 0) return;
+    this.sleepCheck = 0.3;
+    const pl = this.player;
+    if (!pl) return;
+    let info: { mode: 'wait' | 'call'; text: string } | null = null;
+    if (this.sleepWait && !this.sleeping) {
+      const awake = this.awakeFamily();
+      if (!awake.length) return this.fallAsleep();
+      info = { mode: 'wait', text: `💤 ${awake.join(', ')} 기다리는 중 · 일어나기` };
+      if (this.time.now > this.sleepZ) {
+        this.sleepZ = this.time.now + 2600;
+        pl.emote('💤');
+      }
+    } else if (!this.sleepWait && family.active) {
+      // 다른 가족이 자려고 한다 → 같이 자자고 알린다
+      const lying = Object.values(family.others).filter((p) => p.sl).map((p) => BEARS.find((b) => b.id === p.bear)?.name ?? '가족');
+      if (lying.length && !this.dungeon) info = { mode: 'call', text: `💤 ${lying.join(', ')}이(가) 자려고 해요 · 같이 자기` };
+    }
+    const key = info ? `${info.mode}|${info.text}` : '';
+    if (key !== this.sleepInfoKey) {
+      this.sleepInfoKey = key;
+      this.registry.set('sleepInfo', info);
+    }
+  }
+
+  /** 모두 잠자리에 들었다 → 잠든다 */
+  private fallAsleep() {
+    const pl = this.player!;
+    this.sleeping = true;
+    this.sleepInfoKey = '';
+    this.registry.set('sleepInfo', null);
     const cam = this.cameras.main;
     cam.fadeOut(700, 20, 24, 60);
     this.time.delayedCall(2200, () => {
       player.restore(100);
       if (this.dark > 0.3) {
-        // 밤에 자면 아침까지 건너뛴다 (이 기기에서만)
+        // 밤에 자면 아침까지 건너뛴다 (함께 잠든 가족 모두 같은 시각으로 건너뛴다)
         this.registry.set('nightSkip', Date.now() + (CYCLE - (Date.now() % CYCLE)));
         this.toast('☀️ 아침까지 푹 잤어요!');
       }
       cam.fadeIn(800, 20, 24, 60);
       this.resting = false;
+      this.sleepWait = false;
+      this.sleeping = false;
+      pl.lying = false;
+      pl.sprite.setAngle(0);
+      for (const b of this.bears) if (b.lying && !b.remote) { b.lying = false; b.sprite.setAngle(0); }
+      // 다른 가족의 기기가 '모두 잠들었다'를 확인할 틈을 주고 나서 일어났다고 알린다
+      this.sleepHold = this.time.now + 1800;
+      this.time.delayedCall(1900, () => this.sendPresence());
       sfx.fanfare();
       this.fx.heart.explode(8, pl.x, pl.y - 30);
       this.toast('☀️ 푹 잤어요! 체력이 가득 찼어요');
     });
+  }
+
+  /** 기다리다가 그만두고 일어난다 */
+  private onWake() {
+    const pl = this.player;
+    if (!pl || !this.sleepWait || this.sleeping) return;
+    this.sleepWait = false;
+    this.resting = false;
+    pl.lying = false;
+    pl.sprite.setAngle(0);
+    for (const b of this.bears) if (b.lying && !b.remote) { b.lying = false; b.sprite.setAngle(0); }
+    this.sendPresence();
+    this.sleepCheck = 0;
+    this.toast('일어났어요');
   }
 
   // ───────────────────────── 섬 친구 ─────────────────────────
@@ -2985,7 +3092,7 @@ export class IslandScene extends Phaser.Scene {
     // 함께 싸우는 중에는 자리를 더 자주 알린다 (몬스터가 가까운 곰을 쫓으니까)
     const z = this.zoneKey();
     this.presenceTimer = this.monsters.length && this.peersIn(z).length ? 1 : pl.moving ? 2 : 30;
-    family.setPresence({ bear: pl.id, island: this.islandIdx, x: pl.x, y: pl.y, tx: pl.target?.x ?? pl.x, ty: pl.target?.y ?? pl.y, ...(this.myEmote ?? {}), ...(z ? { z } : {}), zt: this.zt });
+    family.setPresence({ bear: pl.id, island: this.islandIdx, x: pl.x, y: pl.y, tx: pl.target?.x ?? pl.x, ty: pl.target?.y ?? pl.y, ...(this.myEmote ?? {}), ...(z ? { z } : {}), ...(this.sleepWait || this.sleeping || this.time.now < this.sleepHold ? { sl: 1 as const } : {}), zt: this.zt });
   }
 
   /** 같은 섬에 있는 다른 가족의 곰을 보여 주고, 그쪽이 누른 곳으로 걸어가게 한다 */
@@ -3022,6 +3129,12 @@ export class IslandScene extends Phaser.Scene {
         bear.y = p.y;
       }
       bear.target = Math.hypot(p.tx - bear.x, p.ty - bear.y) > 2 ? { x: p.tx, y: p.ty } : null;
+      // 잠자리에 든 가족은 누워 있다
+      if (bear.lying !== !!p.sl) {
+        bear.lying = !!p.sl;
+        if (p.sl) bear.emote('💤');
+        else bear.sprite.setAngle(0);
+      }
       // 새 말풍선 (방금 보낸 것만 — 뒤늦게 들어와서 옛 말풍선을 보지 않게)
       if (p.e && p.et && p.et > bear.emoteAt) {
         const first = bear.emoteAt === 0;

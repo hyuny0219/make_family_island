@@ -34,7 +34,7 @@ type View = 'explore' | 'merge' | 'build';
 type Tab = { key: string; icon: string; label: string; enabled: boolean };
 const TABS: Tab[] = [
   { key: 'explore', icon: '🗺️', label: '탐험', enabled: true },
-  { key: 'merge', icon: '🧩', label: '머지', enabled: true },
+  { key: 'merge', icon: '🔨', label: '만들기', enabled: true },
   { key: 'build', icon: '🏝️', label: '꾸미기', enabled: true },
 ];
 
@@ -50,6 +50,7 @@ export class HudScene extends Phaser.Scene {
   private stripArrows?: () => void;
   private questPill?: Phaser.GameObjects.Container;
   private homePill?: Phaser.GameObjects.Container;
+  private sleepPill?: Phaser.GameObjects.Container;
   private questDot?: Phaser.GameObjects.Arc;
   private resizeTimer?: Phaser.Time.TimerEvent;
   private statusBar?: Phaser.GameObjects.Container;
@@ -144,6 +145,7 @@ export class HudScene extends Phaser.Scene {
     this.registry.events.on('changedata-dungeon', this.refreshQuestPill, this);
     this.registry.events.on('changedata-room', this.onRoomChange, this);
     this.registry.events.on('changedata-night', this.updateTopBar, this);
+    this.registry.events.on('changedata-sleepInfo', this.refreshSleepPill, this);
     this.time.addEvent({
       delay: 1000,
       loop: true,
@@ -169,6 +171,7 @@ export class HudScene extends Phaser.Scene {
       this.registry.events.off('changedata-dungeon', this.refreshQuestPill, this);
       this.registry.events.off('changedata-room', this.onRoomChange, this);
       this.registry.events.off('changedata-night', this.updateTopBar, this);
+      this.registry.events.off('changedata-sleepInfo', this.refreshSleepPill, this);
       progress.off('region-unlocked', this.refreshQuestPill, this);
       progress.off('treasure', this.refreshQuestPill, this);
       progress.off('boat-built', this.refreshQuestPill, this);
@@ -1269,7 +1272,7 @@ export class HudScene extends Phaser.Scene {
     const top = -PH / 2;
     const made = COMBOS.filter((c) => inventory.discovered(c.out)).length;
     box.add(this.add.text(0, top + 26, `📖 조합 수첩  ${made}/${COMBOS.length}`, { fontFamily: FONT, fontSize: '19px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0.5));
-    box.add(this.add.text(0, top + 50, '머지 보드에서 서로 다른 두 가지를 겹쳐요 · 밀어서 더 보기', { fontFamily: FONT, fontSize: '10px', color: '#a08a6a' }).setOrigin(0.5));
+    box.add(this.add.text(0, top + 50, '만들기 → 합치기 보드에서 서로 다른 두 가지를 겹쳐요 · 밀어서 더 보기', { fontFamily: FONT, fontSize: '10px', color: '#a08a6a' }).setOrigin(0.5));
     const list = this.scrollList(box, PW, PH, top + 68, viewH, contentH, () => {});
     COMBOS.forEach((c, i) => {
       const y = i * rowH;
@@ -1376,7 +1379,7 @@ export class HudScene extends Phaser.Scene {
     box.add(this.add.text(0, top + 26, '🍱 도시락', { fontFamily: FONT, fontSize: '20px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0.5));
     box.add(this.add.text(0, top + 50, `❤️ 체력 ${player.hp}/${MAX_HP} · 음식을 눌러서 먹어요`, { fontFamily: FONT, fontSize: '11px', color: '#e07a5f', fontStyle: 'bold' }).setOrigin(0.5));
     if (foods.length === 0) {
-      box.add(this.add.text(0, top + 96, '먹을 것이 없어요.\n과일을 따거나, 머지 탭에서 요리를 만들어요!', { fontFamily: FONT, fontSize: '12px', color: '#a08a6a', align: 'center' }).setOrigin(0.5));
+      box.add(this.add.text(0, top + 96, '먹을 것이 없어요.\n과일을 따거나, 만들기 탭에서 요리를 만들어요!', { fontFamily: FONT, fontSize: '12px', color: '#a08a6a', align: 'center' }).setOrigin(0.5));
       return;
     }
     const list = this.scrollList(box, PW, PH, top + 68, viewH, contentH, (_x, ly) => {
@@ -1522,6 +1525,27 @@ export class HudScene extends Phaser.Scene {
   }
 
   /** 텐트·침대: 잠자기 */
+  /** 잠자리 알림: 누워서 가족을 기다리는 중(누르면 일어남) / 다른 가족이 자려고 함(누르면 같이 잠) */
+  private refreshSleepPill() {
+    this.sleepPill?.destroy();
+    this.sleepPill = undefined;
+    const info = this.registry.get('sleepInfo') as { mode: 'wait' | 'call'; text: string } | null;
+    if (!info) return;
+    const t = this.add.text(0, 0, info.text, { fontFamily: FONT, fontSize: '12px', color: '#ffffff', fontStyle: 'bold' }).setOrigin(0.5);
+    const w = Math.min(this.scale.width - 20, t.width + 28);
+    const g = this.add.graphics();
+    g.fillStyle(info.mode === 'wait' ? 0x4a5a8c : 0x6a4c93, 0.96).fillRoundedRect(-w / 2, -15, w, 30, 15);
+    g.lineStyle(2, 0xffffff, 0.7).strokeRoundedRect(-w / 2, -15, w, 30, 15);
+    const c = this.add.container(this.scale.width / 2, this.scale.height - HUD_BOTTOM_H - 86, [g, t]).setDepth(6);
+    c.setSize(w, 36).setInteractive({ useHandCursor: true });
+    c.on('pointerdown', () => {
+      sfx.tap();
+      this.game.events.emit(info.mode === 'wait' ? 'wake' : 'sleep');
+    });
+    this.tweens.add({ targets: c, scale: 1.05, duration: 600, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+    this.sleepPill = c;
+  }
+
   private openSleep() {
     if (this.registry.get('modal')) return;
     const PW = 280;
@@ -1530,6 +1554,9 @@ export class HudScene extends Phaser.Scene {
     const top = -PH / 2;
     box.add(this.add.text(0, top + 34, '💤 잠자기', { fontFamily: FONT, fontSize: '22px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0.5));
     box.add(this.add.text(0, top + 82, player.hp >= MAX_HP ? '지금은 쌩쌩해요!\n그래도 한숨 잘까요?' : `❤️ 체력 ${player.hp}/${MAX_HP}\n푹 자면 체력이 가득 차요`, { fontFamily: FONT, fontSize: '13px', color: '#8a6d4b', align: 'center' }).setOrigin(0.5));
+    // 가족이 접속해 있으면 모두 잠자리에 들어야 잠이 든다
+    const up = Object.values(family.others).filter((p) => !p.sl).length;
+    if (up) box.add(this.add.text(0, top + 122, `👨‍👩‍👧 접속한 가족 ${up}명도 잠자리에 들어야 잠들어요`, { fontFamily: FONT, fontSize: '10px', color: '#6a4c93', fontStyle: 'bold' }).setOrigin(0.5));
     const btn = this.button('🛏️ 쿨쿨 자기', true, () => {
       close();
       this.time.delayedCall(200, () => this.game.events.emit('sleep'));

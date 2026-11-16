@@ -12,6 +12,8 @@ export class Bear {
   resident = false;
   /** 아직 친구가 되지 않은 섬 친구 (자기 지역에 서 있다) */
   wild = false;
+  /** 누워서 자는 중 */
+  lying = false;
   /** 다른 가족이 조종하는 곰이면 그 기기 id */
   remote: string | null = null;
   /** 머리 위 이름표 (다른 가족 곰) */
@@ -191,9 +193,14 @@ export class Bear {
       const k = Math.sin(Math.PI * (1 - this.lungeT / 0.18));
       lunge = k * 6 * this.lungeDir;
       this.sprite.setAngle(k * 14 * this.lungeDir);
-    } else if (this.sprite.angle !== 0) this.sprite.setAngle(0);
+    } else if (this.sprite.angle !== 0 && !this.lying) this.sprite.setAngle(0);
     this.sprite.setScale(sx, sy);
     this.sprite.setPosition(Math.round(this.x + lunge), Math.round(this.y - bob - this.hop));
+    // 잘 때는 옆으로 눕는다 (발을 축으로 돌리므로 몸 길이의 절반만큼 당겨서 제자리에 눕힌다)
+    if (this.lying) {
+      this.sprite.setAngle(90);
+      this.sprite.setPosition(Math.round(this.x - this.sprite.height / 2), Math.round(this.y - 5));
+    }
     this.sprite.setDepth(this.y);
     this.label?.setPosition(this.sprite.x, this.sprite.y - this.sprite.height - 3).setDepth(this.y + 1);
     this.bubble?.setPosition(this.sprite.x, this.sprite.y - this.sprite.height - (this.label ? 14 : 4)).setDepth(99984);
