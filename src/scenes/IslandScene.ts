@@ -55,7 +55,7 @@ type Hit = { house?: Placed; door?: boolean; gate?: boolean; monster?: Monster; 
 
 /** 지역 분위기별 슬라임 색 (초록이 기본) */
 const SLIME_KIND: Record<string, '' | '_pink' | '_blue'> = { orchard: '', forest: '', rocky: '_blue', meadow: '_pink', beach: '_blue' };
-const SLIME_MAX = 6;
+const SLIME_MAX = 4;
 
 const CLOUD_PX = 6; // 구름은 타일당 6px 저해상도로 그려 4배 확대 (도트 느낌 + 메모리 절약)
 
@@ -837,8 +837,7 @@ export class IslandScene extends Phaser.Scene {
         if (st.role <= 0) {
           st.role = 1.1;
           bear.face('side', m.x < bear.x);
-          bear.jump(40);
-          bear.swing(m.x < bear.x);
+          this.slashFx(bear, m);
           this.fx.splash.explode(4, m.x, m.y - 10);
           this.damageMonster(m, 1, true);
         }
@@ -989,6 +988,7 @@ export class IslandScene extends Phaser.Scene {
     }
 
     this.hitEffect(obj, rule.feel);
+    this.gatherMotion(pl, obj.decor.kind, rule, obj.x);
     // 돌 곡괭이가 있으면 돌을 두 배로 빨리 캔다
     obj.hitsLeft -= rule.feel === 'stony' && inventory.get('stone_pickaxe') > 0 ? 2 : 1;
     const drops = rollDrops(rule.perHit);
@@ -1410,8 +1410,9 @@ export class IslandScene extends Phaser.Scene {
     this.monsterTimer -= dt;
     if (this.monsterTimer > 0 || safe) return;
     const night = this.dark > 0.5;
-    this.monsterTimer = (6 + Math.random() * 5) * (night ? 0.5 : 1);
-    if (this.monsters.length >= (night ? 5 : 3) + this.remotes.size) return;
+    // 낮에는 드문드문(10~18초마다, 많아야 2마리), 밤에는 더 자주(많아야 3마리)
+    this.monsterTimer = (10 + Math.random() * 8) * (night ? 0.5 : 1);
+    if (this.monsters.length >= (night ? 3 : 2) + this.remotes.size) return;
     // 가족이 흩어져 있어도 저마다 둘레에 몬스터가 나오게, 곰 하나를 골라 그 둘레에 낸다
     const around = Phaser.Utils.Array.GetRandom([pl, ...this.remotes.values()]);
     for (let i = 0; i < 10; i++) {
@@ -1485,8 +1486,6 @@ export class IslandScene extends Phaser.Scene {
     if (now - this.lastHit >= 260 / (1 + abilities.power('bee') / 100)) {
       this.lastHit = now;
       pl.face('side', m.x < pl.x);
-      pl.jump(40);
-      pl.swing(m.x < pl.x);
       this.slashFx(pl, m);
       sfx.boing();
       this.fx.splash.explode(6, m.x, m.y - 10);
@@ -1496,28 +1495,78 @@ export class IslandScene extends Phaser.Scene {
     if (!m.dead) this.time.delayedCall(abilities.power('bee') > 0 ? 170 : 300, () => this.autoTarget === m && !m.dead && this.attackMonster(m));
   }
 
-  /** 휘두르는 모습: 검이 있으면 검이 돌고, 없으면 발톱 자국이 스친다 */
+  /**
+   * 공격 모습. 무기에 따라 다르다:
+   * 맨손은 주먹을 내지르고 별이 튄다 / 나무 검은 가볍게 휘두른다 / 돌 검은 크게 치켜들었다 내려쳐서 화면이 흔들린다.
+   */
   private slashFx(from: Bear, m: Monster) {
     const left = m.x < from.x;
     const dir = left ? -1 : 1;
-    const weapon = inventory.get('stone_sword') > 0 ? 'stone_sword' : inventory.get('sword') > 0 ? 'sword' : null;
-    if (weapon) {
-      const sw = this.add.image(from.x + dir * 10, from.y - 16, itemKey(weapon)).setOrigin(0.5, 0.9).setDepth(99986).setScale(0.9).setFlipX(left);
-      sw.setAngle(-70 * dir);
-      this.tweens.add({ targets: sw, angle: 80 * dir, duration: 150, ease: 'Quad.easeOut', onComplete: () => sw.destroy() });
+    const weapon = from === this.player ? (inventory.get('stone_sword') > 0 ? 'stone_sword' : inventory.get('sword') > 0 ? 'sword' : null) : null;
+    if (!weapon) {
+      // 맨손: 주먹 + 맞은 자리에 별
+      if (!from.act('punch')) from.swing(left);
+      const star = this.add.image(m.x - dir * 6, m.y - 14, 'fx_star').setDepth(99986).setScale(0.4).setAngle(Phaser.Math.Between(-20, 20));
+      this.tweens.add({ targets: star, scale: 1, alpha: 0, duration: 200, ease: 'Quad.easeOut', onComplete: () => star.destroy() });
+      return;
     }
-    const g = this.add.graphics().setDepth(99986);
-    const cx = (from.x + m.x) / 2 + dir * 4;
-    const cy = m.y - 14;
-    g.lineStyle(3, 0xffffff, 0.95);
-    g.beginPath();
-    g.arc(cx - dir * 6, cy, 16, left ? Math.PI * 0.7 : -Math.PI * 0.3, left ? Math.PI * 1.3 : Math.PI * 0.3, false);
-    g.strokePath();
-    g.lineStyle(1.5, 0xffe08a, 0.9);
-    g.beginPath();
-    g.arc(cx - dir * 9, cy, 13, left ? Math.PI * 0.75 : -Math.PI * 0.25, left ? Math.PI * 1.25 : Math.PI * 0.25, false);
-    g.strokePath();
-    this.tweens.add({ targets: g, alpha: 0, x: dir * 5, duration: 170, onComplete: () => g.destroy() });
+    const heavy = weapon === 'stone_sword';
+    const wind = heavy ? 0.15 : 0.07;
+    if (!from.act('swing', wind)) from.swing(left);
+    this.toolSwing(from, itemKey(weapon), left, wind, heavy ? 1.2 : 0.95, true);
+    // 칼이 지나간 자리
+    this.time.delayedCall(wind * 1000, () => {
+      const g = this.add.graphics().setDepth(99986);
+      const cx = (from.x + m.x) / 2 + dir * 4;
+      const cy = m.y - 14;
+      const R = heavy ? 22 : 16;
+      g.lineStyle(heavy ? 5 : 3, 0xffffff, 0.95);
+      g.beginPath();
+      g.arc(cx - dir * 6, cy, R, left ? Math.PI * 0.7 : -Math.PI * 0.3, left ? Math.PI * 1.3 : Math.PI * 0.3, false);
+      g.strokePath();
+      g.lineStyle(heavy ? 2.5 : 1.5, heavy ? 0xb8c4d6 : 0xffe08a, 0.9);
+      g.beginPath();
+      g.arc(cx - dir * 9, cy, R - 3, left ? Math.PI * 0.75 : -Math.PI * 0.25, left ? Math.PI * 1.25 : Math.PI * 0.25, false);
+      g.strokePath();
+      this.tweens.add({ targets: g, alpha: 0, x: dir * 5, duration: 170, onComplete: () => g.destroy() });
+      if (heavy) this.cameras.main.shake(90, 0.004);
+    });
+  }
+
+  /** 도구(도끼·곡괭이·검)를 머리 위로 치켜들었다가 앞으로 내려치는 모습 */
+  private toolSwing(bear: Bear, tex: string, left: boolean, wind: number, scale = 1, diagonal = false) {
+    const dir = left ? -1 : 1;
+    // 검 그림은 비스듬히(손잡이가 아래 왼쪽) 그려져 있어서, 손잡이를 축으로 잡고 45도만큼 세워 준다
+    const img = this.add.image(bear.x, bear.y, tex).setScale(scale).setFlipX(left);
+    img.setOrigin(diagonal ? (left ? 0.82 : 0.18) : 0.5, diagonal ? 0.84 : 0.9);
+    const base = diagonal ? -45 : 0;
+    const total = wind + 0.2;
+    const put = (t: number) => {
+      // t: 지난 시간(초). 치켜든 동안은 머리 위, 그 뒤 0.12초 동안 앞으로 내려온다
+      const k = Phaser.Math.Clamp((t - wind) / 0.12, 0, 1);
+      const e = k * k * (3 - 2 * k);
+      const h = bear.sprite.height;
+      img.setPosition(bear.sprite.x + dir * (2 + e * 9), bear.sprite.y - h * (0.82 - e * 0.42));
+      img.setAngle(dir * (base - 25 + e * 125));
+      img.setDepth(bear.y + 2);
+    };
+    put(0);
+    this.tweens.addCounter({ from: 0, to: total, duration: total * 1000, onUpdate: (tw) => put(tw.getValue() ?? 0), onComplete: () => img.destroy() });
+  }
+
+  /**
+   * 채집 모습. 채집물에 따라 다르다:
+   * 나무·그루터기는 도끼질, 바위는 곡괭이질, 꽃·조개처럼 한 번에 줍는 것과 덤불은 몸을 숙여 줍는다.
+   */
+  private gatherMotion(pl: Bear, kind: string, rule: { hits: number; feel: 'leafy' | 'stony' }, x: number) {
+    const left = x < pl.x;
+    const motion = rule.hits === 1 ? 'pick' : kind === 'stump' ? 'chop' : rule.feel === 'stony' ? 'mine' : rule.hits >= 3 ? 'chop' : 'pick';
+    if (motion === 'pick') {
+      pl.act('pick');
+      return;
+    }
+    pl.act('swing', 0.08);
+    this.toolSwing(pl, motion === 'chop' ? 'tool_axe' : 'tool_pickaxe', left, 0.08);
   }
 
   private damageMonster(m: Monster, dmg: number, extra = false) {
@@ -2659,7 +2708,7 @@ export class IslandScene extends Phaser.Scene {
     if (this.dungeon || this.room) return;
     this.slimeTimer -= dt;
     if (this.slimeTimer > 0) return;
-    this.slimeTimer = 5 + Math.random() * 4;
+    this.slimeTimer = 8 + Math.random() * 6;
     if (this.slimes.length >= SLIME_MAX) return;
     for (let i = 0; i < 10; i++) {
       const a = Math.random() * Math.PI * 2;

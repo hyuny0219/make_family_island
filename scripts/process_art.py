@@ -94,10 +94,11 @@ def slice_tiles():
     sheet.save(OUT / "tiles.png")
 
 
-def slice_walk(bear: str):
-    """걷는 그림(3열 × 2행: 앞·옆·뒤 × 두 걸음)을 서 있는 그림과 같은 비율로 맞춘다.
-    여섯 장의 머리 너비를 서 있는 그림과 견줘 곰마다 배율 하나를 정한다 (장마다 따로 맞추면 크기가 들쭉날쭉해진다)."""
-    im = Image.open(SRC / f"walk_{bear}.png").convert("RGBA")
+def slice_frames(bear: str, sheet: str, rows: list, scale_row: int):
+    """곰 동작 그림(3열 × 2행: 앞·옆·뒤 × 두 동작)을 서 있는 그림과 같은 비율로 맞춘다.
+    scale_row 줄의 머리 너비를 서 있는 그림과 견줘 그 장의 배율 하나를 정한다
+    (장마다 따로 맞추면 크기가 들쭉날쭉해지고, 팔을 든 그림은 머리 너비를 재기 어렵다)."""
+    im = Image.open(SRC / sheet).convert("RGBA")
     cw, ch = im.width / 3, im.height / 2
 
     def head_w(img):
@@ -119,7 +120,7 @@ def slice_walk(bear: str):
             arr[..., 3] = np.where(region, arr[..., 3], 0)
             body = Image.fromarray(arr).crop((xs.min(), ys.min(), xs.max() + 1, ys.max() + 1))
             cells.append((r, facing, idle, body))
-    f = float(np.median([head_w(idle) / head_w(body) for _, _, idle, body in cells]))
+    f = float(np.median([head_w(idle) / head_w(body) for r, _, idle, body in cells if r == scale_row or scale_row < 0]))
     for r, facing, idle, body in cells:
         body = clean_alpha(body.resize((max(1, round(body.width * f)), max(1, round(body.height * f))), Image.BOX))
         w = max(body.width, idle.width)
@@ -131,7 +132,7 @@ def slice_walk(bear: str):
         d.rectangle(((w - sw) // 2, h - 2, (w - sw) // 2 + sw - 1, h - 2), fill=(158, 145, 156, 255))
         d.rectangle(((w - sw) // 2 + 2, h - 1, (w - sw) // 2 + sw - 3, h - 1), fill=(158, 145, 156, 255))
         out.alpha_composite(body, ((w - body.width) // 2, h - 2 - body.height))
-        name = f"{bear}_{facing}_w{r + 1}"
+        name = f"{bear}_{facing}_{rows[r]}"
         out.save(OUT / f"{name}.png")
         print(f"{name:20s} {w}x{h}")
 
@@ -147,7 +148,10 @@ if __name__ == "__main__":
         ],
     )
     for bear in ["dad", "mom", "kid", "baby"]:
-        slice_walk(bear)
+        slice_frames(bear, f"walk_{bear}.png", ["w1", "w2"], -1)
+        # 동작: 치켜들기(a1)·내려치기(a2) / 주먹(a3)·줍기(a4)
+        slice_frames(bear, f"act_{bear}_a.png", ["a1", "a2"], 1)
+        slice_frames(bear, f"act_{bear}_b.png", ["a3", "a4"], 0)
     slice_grid(
         "objects.png", 4, 3,
         [
@@ -295,6 +299,11 @@ if __name__ == "__main__":
         grid = [[None] * 3, [None] * 3]
         grid[i // 3][i % 3] = f"play_{name}"
         slice_grid("play.png", 3, 2, grid, fit=fit)
+
+    # 도구 (채집 모습에 쓴다)와 맞은 자리의 별
+    slice_grid("tools.png", 3, 2, [["tool_axe", None, None], [None, None, None]], fit=22)
+    slice_grid("tools.png", 3, 2, [[None, "tool_pickaxe", None], [None, None, None]], fit=24)
+    slice_grid("tools.png", 3, 2, [[None, None, None], [None, None, "fx_star"]], fit=22)
 
     # 섬 놀이 2 (곰돌이·꽃향기·솔방울·버섯 섬)
     for i, (name, fit) in enumerate([("hive", 32), ("bud", 30), ("log", 36), ("shroom", 36)]):

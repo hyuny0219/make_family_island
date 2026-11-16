@@ -32,6 +32,14 @@ export class Bear {
   private readonly hasWalk: boolean;
   /** 지금 보여 주는 걸음 (0이면 서 있는 그림) */
   private walkFrame = 0;
+  /** 동작 그림이 있는 곰인가 (가족 곰만 있다) */
+  private readonly hasAct: boolean;
+  /** 하고 있는 동작: 휘두르기(치켜들기→내려치기), 주먹, 줍기 */
+  private actKind: 'swing' | 'punch' | 'pick' | null = null;
+  private actT = 0;
+  private actWind = 0.08;
+  /** 지금 보여 주는 동작 그림 (0이면 없음. 1 치켜들기, 2 내려치기, 3 주먹, 4 줍기) */
+  private actFrame = 0;
   /** 때리는 몸짓: 남은 시간과 방향 */
   private lungeT = 0;
   private lungeDir = 1;
@@ -45,6 +53,7 @@ export class Bear {
     this.speed = speed;
     this.sprite = scene.add.image(x, y, `${id}_front`).setOrigin(0.5, 1);
     this.hasWalk = scene.textures.exists(`${id}_front_w1`);
+    this.hasAct = scene.textures.exists(`${id}_front_a1`);
     this.sprite.setInteractive({ useHandCursor: true });
     (this.sprite as unknown as { bear: Bear }).bear = this;
   }
@@ -55,8 +64,21 @@ export class Bear {
 
   face(dir: Facing, left = false) {
     this.facing = dir;
-    this.sprite.setTexture(`${this.id}_${dir}${this.walkFrame ? `_w${this.walkFrame}` : ''}`);
+    this.sprite.setTexture(`${this.id}_${dir}${this.actFrame ? `_a${this.actFrame}` : this.walkFrame ? `_w${this.walkFrame}` : ''}`);
     this.sprite.setFlipX(dir === 'side' && left);
+  }
+
+  /**
+   * 동작 그림을 보여 준다. 동작 그림이 없는 곰(주민 등)은 아무것도 하지 않는다.
+   * @param wind 휘두르기에서 치켜드는 시간(초). 무거운 무기일수록 길다
+   * @returns 동작 그림이 있어서 시작했으면 true
+   */
+  act(kind: 'swing' | 'punch' | 'pick', wind = 0.08) {
+    if (!this.hasAct) return false;
+    this.actKind = kind;
+    this.actT = 0;
+    this.actWind = wind;
+    return true;
   }
 
   /** 때리는 몸짓: 상대 쪽으로 몸을 훅 내밀었다 돌아온다 */
@@ -114,11 +136,30 @@ export class Bear {
       if (this.hop === 0) this.hopV = 0;
     }
 
+    // 동작 그림: 걷기 시작하면 그만둔다
+    if (this.actKind) {
+      this.actT += dt;
+      let f = 0;
+      if (!this.target) {
+        if (this.actKind === 'swing') f = this.actT < this.actWind ? 1 : this.actT < this.actWind + 0.2 ? 2 : 0;
+        else if (this.actKind === 'punch') f = this.actT < 0.22 ? 3 : 0;
+        else f = this.actT < 0.32 ? 4 : 0;
+      }
+      if (f !== this.actFrame) {
+        this.actFrame = f;
+        this.walkFrame = 0;
+        this.sprite.setTexture(`${this.id}_${this.facing}${f ? `_a${f}` : ''}`);
+      }
+      if (!f) this.actKind = null;
+    }
+
     // 걷기: 통통 + 찌그러짐 / 정지: 숨쉬기
     let sx = 1;
     let sy = 1;
     let bob = 0;
-    if (this.target) {
+    if (this.actFrame) {
+      // 동작 중에는 그림 그대로
+    } else if (this.target) {
       const w = Math.sin(this.walkT * 16);
       if (this.hasWalk) {
         // 걷는 그림 두 장을 번갈아 보여 준다 (통통 튀는 건 조금만)
