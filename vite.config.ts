@@ -39,7 +39,7 @@ export default defineConfig({
         ],
       },
       workbox: {
-        globPatterns: ['**/*.{js,css,html,png,svg,webmanifest}'],
+        globPatterns: ['**/*.{js,css,html,png,jpg,svg,webmanifest}'],
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
         // 정식 서비스워커가 PR 미리보기 경로를 가로채지 않도록
         navigateFallbackDenylist: [/\/pr-preview\//],

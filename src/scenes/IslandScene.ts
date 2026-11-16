@@ -1573,6 +1573,7 @@ export class IslandScene extends Phaser.Scene {
 
   /** 몬스터는 캠프에서 두 지역 이상 떨어진 곳에만 나온다 (캠프 주변은 안전 지대) */
   private updateMonsters(dt: number) {
+    if (this.registry.get('talk')) return; // 가족이 이야기하는 동안에는 몬스터도 기다려 준다
     const pl = this.player;
     if (!pl) return;
     const now = this.time.now;
