@@ -583,6 +583,8 @@ export class IslandScene extends Phaser.Scene {
     bear.jump(150);
     this.fx.heart.explode(4, bear.x, bear.y - 30);
     this.cameras.main.startFollow(bear.sprite, true, 0.12, 0.12, 0, 20);
+    // 꾸미기 화면에서 곰을 다시 고르게 된 경우(화면이 다시 짜일 때)에는 따라가지 않는다
+    if (this.registry.get('view') === 'build') this.cameras.main.stopFollow();
     this.sendPresence();
     this.onPresence(family.others);
     // 따라오는 곰이 무엇을 도와주는지 한 번 알려 준다
@@ -3265,7 +3267,11 @@ export class IslandScene extends Phaser.Scene {
     if (!d || !p.isDown) return;
     const cam = this.cameras.main;
     if (!d.moved && Math.hypot(p.x - d.sx, p.y - d.sy) > 10) d.moved = true;
-    if (d.moved) cam.setScroll(d.cx - (p.x - d.sx) / cam.zoom, d.cy - (p.y - d.sy) / cam.zoom);
+    if (d.moved) {
+      // 혹시 카메라가 곰을 따라가는 중이면 끈다 (따라가는 동안에는 끌어도 화면이 제자리로 돌아간다)
+      cam.stopFollow();
+      cam.setScroll(d.cx - (p.x - d.sx) / cam.zoom, d.cy - (p.y - d.sy) / cam.zoom);
+    }
   }
 
   private onBuildUp(p: Phaser.Input.Pointer) {

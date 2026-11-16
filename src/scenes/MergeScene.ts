@@ -46,6 +46,11 @@ export class MergeScene extends Phaser.Scene {
   private trayScroll = 0;
   private hints: Phaser.GameObjects.Graphics[] = [];
   private craftList?: Phaser.GameObjects.Container;
+  private craftMask?: Phaser.Display.Masks.GeometryMask;
+  private craftScroll = 0;
+  private craftMax = 0;
+  /** 창고 줄이 놓이는 자리: 세로 화면은 보드 아래, 가로 화면은 보드 오른쪽 */
+  private trayBox = { x: 0, w: 0, top: 0 };
   private readyLayer!: Phaser.GameObjects.Container;
   private readyList?: Phaser.GameObjects.Container;
   private readyHead?: Phaser.GameObjects.Container;
@@ -84,13 +89,19 @@ export class MergeScene extends Phaser.Scene {
     this.readyLayer = this.add.container(0, 0).setVisible(false);
 
     // ── 머지 보드 ──
+    // 가로 화면: 보드를 왼쪽에, 창고 줄을 오른쪽에 둔다 (위아래로는 다 들어가지 않는다)
+    const wide = W > H * 1.2;
     const trayNeed = 28 + 2 * 44 + 4;
-    CELL = Phaser.Math.Clamp(Math.floor((H - HUD_BOTTOM_H - (HUD_TOP_H + 50) - 36 - trayNeed) / BOARD_ROWS), 38, 50);
+    CELL = wide
+      ? Phaser.Math.Clamp(Math.floor((H - HUD_BOTTOM_H - (HUD_TOP_H + 50) - 34) / BOARD_ROWS), 28, 50)
+      : Phaser.Math.Clamp(Math.floor((H - HUD_BOTTOM_H - (HUD_TOP_H + 50) - 36 - trayNeed) / BOARD_ROWS), 38, 50);
     ICON = Math.round((CELL / 25) * 4) / 4;
-    this.x0 = (W - BOARD_COLS * CELL) / 2;
-    this.y0 = HUD_TOP_H + 50;
     const bw = BOARD_COLS * CELL;
     const bh = BOARD_ROWS * CELL;
+    const split = wide ? Math.max(bw + 40, W * 0.46) : W;
+    this.x0 = wide ? (split - bw) / 2 : (W - bw) / 2;
+    this.y0 = HUD_TOP_H + 50;
+    this.trayBox = wide ? { x: split, w: W - split, top: HUD_TOP_H + 42 } : { x: 0, w: W, top: this.y0 + bh + 36 };
     const g = this.add.graphics();
     g.fillStyle(0x000000, 0.12).fillRoundedRect(this.x0 - 8, this.y0 - 8 + 4, bw + 16, bh + 16, 18);
     g.fillStyle(0xe9c98a).fillRoundedRect(this.x0 - 8, this.y0 - 8, bw + 16, bh + 16, 18);
@@ -102,11 +113,11 @@ export class MergeScene extends Phaser.Scene {
     this.mergeLayer.add(g);
     this.mergeLayer.add(
       this.add
-        .text(W / 2 - 34, this.y0 + bh + 20, '같은 것 3개 = 합체 · 다른 것 겹치기 = 조합', { fontFamily: FONT, fontSize: '11px', color: '#a08a6a' })
+        .text(wide ? this.x0 + bw / 2 - 34 : W / 2 - 34, this.y0 + bh + 20, wide ? '3개 = 합체 · 겹치기 = 조합' : '같은 것 3개 = 합체 · 다른 것 겹치기 = 조합', { fontFamily: FONT, fontSize: '11px', color: '#a08a6a' })
         .setOrigin(0.5),
     );
     const book = this.add
-      .text(W - 16, this.y0 + bh + 20, '📖 조합 수첩', { fontFamily: FONT, fontSize: '11px', color: '#e07a5f', fontStyle: 'bold', backgroundColor: '#fff8e7', padding: { x: 6, y: 4 } })
+      .text(wide ? this.x0 + bw + 8 : W - 16, this.y0 + bh + 20, '📖 조합 수첩', { fontFamily: FONT, fontSize: '11px', color: '#e07a5f', fontStyle: 'bold', backgroundColor: '#fff8e7', padding: { x: 6, y: 4 } })
       .setOrigin(1, 0.5)
       .setInteractive({ useHandCursor: true });
     book.on('pointerdown', () => {
@@ -126,20 +137,26 @@ export class MergeScene extends Phaser.Scene {
     this.readyScroll = 0;
     this.readyMask = undefined;
     this.rebuildReady();
+    this.craftMask = undefined;
+    this.craftScroll = 0;
+    this.rebuildCraft();
     // 들어오면 '바로 만들기'부터 보여 준다
     this.setMode('ready');
 
     // 바로 만들기 목록: 위아래로 밀어서 넘긴다
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
-      if (this.mode === 'ready' && !this.registry.get('modal') && p.y > HUD_TOP_H + 40 && p.y < this.scale.height - HUD_BOTTOM_H) this.readyDrag = { y: p.y, s: this.readyScroll, moved: false };
+      if (this.mode !== 'merge' && !this.registry.get('modal') && p.y > HUD_TOP_H + 40 && p.y < this.scale.height - HUD_BOTTOM_H) this.readyDrag = { y: p.y, s: this.mode === 'ready' ? this.readyScroll : this.craftScroll, moved: false };
     });
     this.input.on('pointermove', (p: Phaser.Input.Pointer) => {
       const d = this.readyDrag;
       if (!d || !p.isDown) return;
       if (Math.abs(p.y - d.y) > 8) d.moved = true;
-      if (d.moved) {
+      if (d.moved && this.mode === 'ready') {
         this.readyScroll = Phaser.Math.Clamp(d.s - (p.y - d.y), 0, this.readyMax);
         this.readyList?.setY(-this.readyScroll);
+      } else if (d.moved && this.mode === 'craft') {
+        this.craftScroll = Phaser.Math.Clamp(d.s - (p.y - d.y), 0, this.craftMax);
+        this.craftList?.setY(-this.craftScroll);
       }
     });
     this.input.on('pointerup', () => this.time.delayedCall(0, () => (this.readyDrag = null)));
@@ -655,9 +672,11 @@ export class MergeScene extends Phaser.Scene {
 
   private rebuildTray() {
     this.tray?.destroy();
-    const W = this.scale.width;
     const H = this.scale.height;
-    const top = this.y0 + BOARD_ROWS * CELL + 36;
+    // 아래 계산은 창고 줄 상자(trayBox) 안에서 한다: L = 왼쪽 끝, W = 너비
+    const L = this.trayBox.x;
+    const W = this.trayBox.w;
+    const top = this.trayBox.top;
     const tray = this.add.container(0, 0);
     this.tray = tray;
     this.mergeLayer.add(tray);
@@ -671,14 +690,14 @@ export class MergeScene extends Phaser.Scene {
     const rows = Math.min(rowsFit, Math.max(1, items.length));
     const th = Math.min(rows * slot + 30, availH);
     const g = this.add.graphics();
-    g.fillStyle(0xfff8e7).fillRoundedRect(8, top, W - 16, th, 16);
-    g.lineStyle(2, 0xe8d5a9).strokeRoundedRect(8, top, W - 16, th, 16);
+    g.fillStyle(0xfff8e7).fillRoundedRect(L + 8, top, W - 16, th, 16);
+    g.lineStyle(2, 0xe8d5a9).strokeRoundedRect(L + 8, top, W - 16, th, 16);
     tray.add(g);
-    tray.add(this.add.text(20, top + 13, `🧺 창고에서 꺼내기${items.length ? ` (${items.length}종)` : ''}`, { fontFamily: FONT, fontSize: '12px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0, 0.5));
+    tray.add(this.add.text(L + 20, top + 13, `🧺 창고에서 꺼내기${items.length ? ` (${items.length}종)` : ''}`, { fontFamily: FONT, fontSize: '12px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0, 0.5));
 
     // 보드 정리 버튼
     const tidy = this.add
-      .text(W - 20, top + 13, '모두 창고로 ▸', { fontFamily: FONT, fontSize: '12px', color: '#e07a5f', fontStyle: 'bold' })
+      .text(L + W - 20, top + 13, '모두 창고로 ▸', { fontFamily: FONT, fontSize: '12px', color: '#e07a5f', fontStyle: 'bold' })
       .setOrigin(1, 0.5)
       .setInteractive({ useHandCursor: true });
     tidy.on('pointerdown', () => this.storeAll());
@@ -687,13 +706,13 @@ export class MergeScene extends Phaser.Scene {
     this.trayMask?.destroy();
     this.trayMask = undefined;
     if (items.length === 0) {
-      tray.add(this.add.text(W / 2, top + 26 + slot / 2, '합칠 재료가 없어요. 탐험에서 모아 와요!', { fontFamily: FONT, fontSize: '12px', color: '#a08a6a' }).setOrigin(0.5));
+      tray.add(this.add.text(L + W / 2, top + 26 + slot / 2, '합칠 재료가 없어요. 탐험에서 모아 와요!', { fontFamily: FONT, fontSize: '12px', color: '#a08a6a' }).setOrigin(0.5));
       return;
     }
     const viewW = W - 28;
     const contentW = cols * slot;
     const scrolls = contentW > viewW;
-    const x0 = scrolls ? 14 : (W - contentW) / 2;
+    const x0 = L + (scrolls ? 14 : (W - contentW) / 2);
     const minX = scrolls ? viewW - contentW : 0;
     const row = this.add.container(0, 0);
     tray.add(row);
@@ -716,14 +735,14 @@ export class MergeScene extends Phaser.Scene {
     let arrows = () => {};
     if (scrolls) {
       const mg = this.make.graphics({}, false);
-      mg.fillStyle(0xffffff).fillRect(14, top + 24, viewW, rows * slot + 4);
+      mg.fillStyle(0xffffff).fillRect(L + 14, top + 24, viewW, rows * slot + 4);
       this.trayMask = mg;
       row.setMask(mg.createGeometryMask());
       this.trayScroll = Phaser.Math.Clamp(this.trayScroll, minX, 0);
       row.x = this.trayScroll;
       const cy = top + 26 + (rows * slot) / 2;
-      const more = this.add.text(W - 11, cy, '›', { fontFamily: FONT, fontSize: '24px', color: '#c9a66b', fontStyle: 'bold' }).setOrigin(1, 0.55);
-      const less = this.add.text(11, cy, '‹', { fontFamily: FONT, fontSize: '24px', color: '#c9a66b', fontStyle: 'bold' }).setOrigin(0, 0.55);
+      const more = this.add.text(L + W - 11, cy, '›', { fontFamily: FONT, fontSize: '24px', color: '#c9a66b', fontStyle: 'bold' }).setOrigin(1, 0.55);
+      const less = this.add.text(L + 11, cy, '‹', { fontFamily: FONT, fontSize: '24px', color: '#c9a66b', fontStyle: 'bold' }).setOrigin(0, 0.55);
       tray.add([more, less]);
       arrows = () => {
         more.setVisible(row.x > minX + 4);
@@ -734,7 +753,7 @@ export class MergeScene extends Phaser.Scene {
       this.trayScroll = 0;
     }
     // 밀면 넘기고, 톡 누르면 꺼낸다
-    const zone = this.add.rectangle(W / 2, top + 26 + (rows * slot) / 2, W - 16, rows * slot, 0, 0).setInteractive();
+    const zone = this.add.rectangle(L + W / 2, top + 26 + (rows * slot) / 2, W - 16, rows * slot, 0, 0).setInteractive();
     tray.add(zone);
     let drag: { px: number; rx: number; moved: boolean } | null = null;
     zone.on('pointerdown', (p: Phaser.Input.Pointer) => {
@@ -815,9 +834,24 @@ export class MergeScene extends Phaser.Scene {
     const list = this.add.container(0, 0);
     this.craftList = list;
     this.craftLayer.add(list);
+    const H = this.scale.height;
     const top = HUD_TOP_H + 44;
+    const bottom = H - HUD_BOTTOM_H - 6;
     const rowH = 66;
-    RECIPES.forEach((r, i) => list.add(this.recipeCard(r, 10, top + i * rowH, W - 20, rowH - 6)));
+    // 가로 화면은 두 줄로 나란히
+    const cols = W > H * 1.2 ? 2 : 1;
+    const cw = (W - 20 - (cols - 1) * 8) / cols;
+    RECIPES.forEach((r, i) => list.add(this.recipeCard(r, 10 + (i % cols) * (cw + 8), top + Math.floor(i / cols) * rowH, cw, rowH - 6)));
+    // 다 들어가지 않으면 위아래로 밀어서 넘긴다
+    if (!this.craftMask) {
+      const mg = this.make.graphics();
+      mg.fillStyle(0xffffff).fillRect(0, top - 4, W, bottom - top + 4);
+      this.craftMask = mg.createGeometryMask();
+    }
+    list.setMask(this.craftMask);
+    this.craftMax = Math.max(0, top + Math.ceil(RECIPES.length / cols) * rowH + 6 - bottom);
+    this.craftScroll = Math.min(this.craftScroll, this.craftMax);
+    list.setY(-this.craftScroll);
   }
 
   private recipeCard(r: Recipe, x: number, y: number, w: number, h: number) {
@@ -861,8 +895,9 @@ export class MergeScene extends Phaser.Scene {
     );
     if (!done) {
       const hit = this.add.rectangle(bx, by, bw, 40, 0, 0).setInteractive({ useHandCursor: true });
-      hit.on('pointerdown', () => {
-        if (this.registry.get('modal') || this.mode !== 'craft') return;
+      hit.on('pointerup', (p: Phaser.Input.Pointer) => {
+        // 목록을 밀던 중이거나 가려진 줄이면 누른 것으로 치지 않는다
+        if (this.registry.get('modal') || this.mode !== 'craft' || this.readyDrag?.moved || p.y < HUD_TOP_H + 40 || p.y > this.scale.height - HUD_BOTTOM_H) return;
         if (!can) {
           buzz(20);
           this.game.events.emit('toast', '재료가 부족해요');
