@@ -404,8 +404,8 @@ export function generateWorld(theme: IslandTheme, islandIdx: number): World {
       r.need[it] = Math.max(1, Math.round(share * scale));
     });
 
-    // 물고기는 낚기 어려워서 구역을 여는 재료로 쓰지 않는다.
-    // 대신 이미 열린 지역의 재료(와 어디서나 나오는 젤리)로 만드는 조합 아이템을 조금 넣는다.
+    // 물고기는 낚기 어려워서 구역을 여는 재료로는 가끔만, 조금만 쓴다.
+    // 나머지는 이미 열린 지역의 재료(와 어디서나 나오는 젤리)로 만드는 조합 아이템으로 바꾼다.
     // (난수는 건드리지 않아서 섬의 생김새는 예전과 똑같다)
     const fishKinds = (Object.keys(r.need) as ItemId[]).filter((it) => it.startsWith('fish'));
     if (fishKinds.length) {
@@ -413,6 +413,11 @@ export function generateWorld(theme: IslandTheme, islandIdx: number): World {
       const combos = COMBOS.filter((c) => have(c.a) && have(c.b)).map((c) => c.out);
       fishKinds.forEach((f, k) => {
         const n = r.need[f]!;
+        // 물고기가 들어가던 지역 넷 중 하나쯤은 그대로 물고기를 쓴다 (낚시할 이유는 남기되, 많아야 3마리)
+        if ((r.idx * 5 + islandIdx * 3 + k) % 4 === 0) {
+          r.need[f] = Math.min(n, 3);
+          return;
+        }
         delete r.need[f];
         const free = combos.filter((c) => !(c in r.need));
         if (free.length) {
