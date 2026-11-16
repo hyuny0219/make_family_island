@@ -518,7 +518,9 @@ export class HudScene extends Phaser.Scene {
     if (!progress.hasBoat(island) && !last) {
       const PW = Math.min(330, this.scale.width - 30);
       const rows = Math.ceil(Object.keys(isl.boat).length / 3);
-      const PH = 270 + rows * 86;
+      // 타고 온 배가 있으니, 이 섬의 배를 만들기 전에도 지나온 섬으로는 돌아갈 수 있다
+      const back = island > 0;
+      const PH = 270 + rows * 86 + (back ? 44 : 0);
       const { box, close } = this.modal(PW, PH);
       const top = -PH / 2;
       box.add(this.add.image(-PW / 2 + 44, top + 40, 'boat').setScale(0.9));
@@ -545,8 +547,16 @@ export class HudScene extends Phaser.Scene {
         close();
         this.game.events.emit('build-boat', island);
       });
-      btn.setPosition(0, PH / 2 - 36);
+      btn.setPosition(0, PH / 2 - 36 - (back ? 44 : 0));
       box.add(btn);
+      if (back) {
+        const b2 = this.button('⛵ 지나온 섬으로 가기', true, () => {
+          close();
+          this.time.delayedCall(230, () => this.openIslandList(true));
+        }, 190);
+        b2.setPosition(0, PH / 2 - 32).setScale(0.82);
+        box.add(b2);
+      }
       return;
     }
     this.openIslandList(true);
