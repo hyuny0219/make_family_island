@@ -48,6 +48,11 @@ export class MergeScene extends Phaser.Scene {
   private craftList?: Phaser.GameObjects.Container;
   private readyLayer!: Phaser.GameObjects.Container;
   private readyList?: Phaser.GameObjects.Container;
+  private readyHead?: Phaser.GameObjects.Container;
+  private readyMask?: Phaser.Display.Masks.GeometryMask;
+  /** 이름으로 찾기: 찾는 말과, 글자를 치는 동안 화면 위에 띄우는 입력 칸 */
+  private query = '';
+  private searchEl: HTMLInputElement | null = null;
   private readyScroll = 0;
   private readyMax = 0;
   private readyDrag: null | { y: number; s: number; moved: boolean } = null;
@@ -119,6 +124,7 @@ export class MergeScene extends Phaser.Scene {
     this.rebuildTray();
     this.rebuildCraft();
     this.readyScroll = 0;
+    this.readyMask = undefined;
     this.rebuildReady();
     // 들어오면 '바로 만들기'부터 보여 준다
     this.setMode('ready');
@@ -143,6 +149,8 @@ export class MergeScene extends Phaser.Scene {
     inventory.on('changed', this.onInventory, this);
     this.events.once('shutdown', () => {
       inventory.off('changed', this.onInventory, this);
+      this.searchEl?.remove();
+      this.searchEl = null;
       this.input.off('pointermove', this.onMove, this);
       this.input.off('pointerup', this.onUp, this);
       saveBoard(this.cells);
@@ -193,6 +201,7 @@ export class MergeScene extends Phaser.Scene {
     this.mergeLayer?.setVisible(mode === 'merge');
     this.craftLayer?.setVisible(mode === 'craft');
     this.readyLayer?.setVisible(mode === 'ready');
+    if (mode !== 'ready') this.searchEl?.blur();
     this.sprites.forEach((s) => s?.setVisible(mode === 'merge'));
   }
 
@@ -205,25 +214,25 @@ export class MergeScene extends Phaser.Scene {
   // ───────────────────────── 바로 만들기 ─────────────────────────
 
   /** 창고 재료로 지금 만들 수 있는 것과 개수 (보드에 올려 둔 것은 세지 않는다) */
-  private makeables(): Makeable[] {
+  private makeables(all = false): Makeable[] {
     const list: Makeable[] = [];
     // 작업대: 도구는 하나만
     for (const r of RECIPES) {
       const cost = Object.entries(r.need) as [ItemId, number][];
       let n = Math.min(...cost.map(([id, k]) => Math.floor(inventory.get(id) / k)));
       if (r.tool) n = inventory.get(r.id) > 0 ? 0 : Math.min(1, n);
-      if (n > 0) list.push({ kind: 'recipe', out: r.id, n, cost, use: r.desc });
+      if (n > 0 || all) list.push({ kind: 'recipe', out: r.id, n, cost, use: r.desc });
     }
     // 조합: 서로 다른 두 가지
     for (const c of COMBOS) {
       const n = Math.min(inventory.get(c.a), inventory.get(c.b));
-      if (n > 0) list.push({ kind: 'combo', out: c.out, n, cost: [[c.a, 1], [c.b, 1]], use: c.use });
+      if (n > 0 || all) list.push({ kind: 'combo', out: c.out, n, cost: [[c.a, 1], [c.b, 1]], use: c.use });
     }
     // 합치기: 같은 것 3개 → 1개 (5개면 2개)
     for (const [from, to] of Object.entries(MERGE_NEXT) as [ItemId, ItemId][]) {
       const have = inventory.get(from);
       const n = Math.floor(have / 5) * 2 + Math.floor((have % 5) / 3);
-      if (n > 0) list.push({ kind: 'merge', out: to, n, cost: [[from, 3]] });
+      if (n > 0 || all) list.push({ kind: 'merge', out: to, n, cost: [[from, 3]] });
     }
     return list;
   }
@@ -254,30 +263,94 @@ export class MergeScene extends Phaser.Scene {
     else this.game.events.emit('toast', `✨ ${name}${made > 1 ? ` ×${made}` : ''} 완성!`);
   }
 
+  /** 이름으로 찾기: 화면 위에 입력 칸을 띄운다 (글자를 치는 대로 목록이 바뀐다) */
+  private openSearch() {
+    if (this.searchEl) return void this.searchEl.focus();
+    const el = document.createElement('input');
+    el.type = 'search';
+    el.placeholder = '만들 것 이름 (예: 사탕)';
+    el.value = this.query;
+    el.setAttribute('enterkeyhint', 'search');
+    Object.assign(el.style, { position: 'fixed', left: '50%', top: '12px', transform: 'translateX(-50%)', width: 'min(86vw, 340px)', height: '46px', fontSize: '18px', padding: '0 16px', borderRadius: '23px', border: '3px solid #e8b84a', background: '#fffdf5', color: '#5a4632', zIndex: '9999', outline: 'none', boxShadow: '0 4px 14px rgba(0,0,0,.28)', boxSizing: 'border-box', fontFamily: 'inherit' });
+    document.body.appendChild(el);
+    this.searchEl = el;
+    el.addEventListener('input', () => {
+      this.query = el.value.trim();
+      this.readyScroll = 0;
+      this.rebuildReady();
+    });
+    el.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter') el.blur();
+    });
+    el.addEventListener('blur', () => {
+      el.remove();
+      if (this.searchEl === el) this.searchEl = null;
+    });
+    el.focus();
+  }
+
   private rebuildReady() {
     this.readyList?.destroy();
+    this.readyHead?.destroy();
     const W = this.scale.width;
     const H = this.scale.height;
-    const top = HUD_TOP_H + 42;
+    const headTop = HUD_TOP_H + 42;
+    // 맨 위에 찾기 칸을 두고, 목록은 그 아래에서 밀려 다닌다
+    const head = this.add.container(0, 0);
+    this.readyHead = head;
+    this.readyLayer.add(head);
+    const sg = this.add.graphics();
+    sg.fillStyle(0xffffff).fillRoundedRect(14, headTop + 2, W - 28, 30, 15);
+    sg.lineStyle(2, this.query ? 0xe8b84a : 0xe8d5a9).strokeRoundedRect(14, headTop + 2, W - 28, 30, 15);
+    head.add(sg);
+    head.add(this.add.text(28, headTop + 17, this.query ? `🔍 ${this.query}` : '🔍 이름으로 찾기 (조합·합치기·작업대)', { fontFamily: FONT, fontSize: '12px', color: this.query ? COLORS.uiText : '#b3a283', fontStyle: 'bold' }).setOrigin(0, 0.5));
+    const sHit = this.add.rectangle(W / 2 - 20, headTop + 17, W - 70, 34, 0, 0).setInteractive({ useHandCursor: true });
+    sHit.on('pointerup', () => {
+      if (this.registry.get('modal') || this.mode !== 'ready' || this.readyDrag?.moved) return;
+      sfx.tap();
+      this.openSearch();
+    });
+    head.add(sHit);
+    if (this.query) {
+      head.add(this.add.text(W - 32, headTop + 17, '✕', { fontFamily: FONT, fontSize: '14px', color: '#c0573f', fontStyle: 'bold' }).setOrigin(0.5));
+      const xHit = this.add.rectangle(W - 32, headTop + 17, 40, 34, 0, 0).setInteractive({ useHandCursor: true });
+      xHit.on('pointerup', () => {
+        if (this.mode !== 'ready') return;
+        this.query = '';
+        if (this.searchEl) this.searchEl.value = '';
+        this.readyScroll = 0;
+        this.rebuildReady();
+      });
+      head.add(xHit);
+    }
+    const top = headTop + 36;
     const bottom = H - HUD_BOTTOM_H - 6;
     const list = this.add.container(0, 0);
     this.readyList = list;
     this.readyLayer.add(list);
-    if (!this.readyLayer.mask) {
+    if (!this.readyMask) {
       const mg = this.make.graphics();
       mg.fillStyle(0xffffff).fillRect(0, top, W, bottom - top);
-      this.readyLayer.setMask(mg.createGeometryMask());
+      this.readyMask = mg.createGeometryMask();
     }
-    const items = this.makeables();
+    list.setMask(this.readyMask);
+    // 찾는 말이 있으면 만들 수 없는 것까지 모두 보여 준다 (만드는 법을 알 수 있게). 만들 수 있는 것이 먼저
+    const q = this.query.replace(/\s+/g, '');
+    const items = q
+      ? this.makeables(true)
+          .filter((m) => ITEMS[m.out].name.replace(/\s+/g, '').includes(q))
+          .sort((a, b) => Number(b.n > 0) - Number(a.n > 0))
+      : this.makeables();
     list.add(
       this.add
-        .text(W / 2, top + 14, items.length ? `창고 재료로 지금 만들 수 있는 것 ${items.length}가지` : '', { fontFamily: FONT, fontSize: '11px', color: '#a08a6a', fontStyle: 'bold' })
+        .text(W / 2, top + 14, !items.length ? '' : q ? `'${this.query}' 찾은 것 ${items.length}가지` : `창고 재료로 지금 만들 수 있는 것 ${items.length}가지`, { fontFamily: FONT, fontSize: '11px', color: '#a08a6a', fontStyle: 'bold' })
         .setOrigin(0.5),
     );
     if (!items.length) {
       list.add(
         this.add
-          .text(W / 2, top + 110, '지금 창고 재료로는\n만들 수 있는 게 없어요\n\n섬에서 재료를 더 모아 오거나\n작업대에서 필요한 재료를 확인해 보세요', { fontFamily: FONT, fontSize: '13px', color: '#a08a6a', align: 'center', lineSpacing: 5 })
+          .text(W / 2, top + 110, q ? `'${this.query}'(으)로 만들 수 있는 걸\n찾지 못했어요\n\n이름의 일부만 넣어 보세요 (예: 꿀, 주스)` : '지금 창고 재료로는\n만들 수 있는 게 없어요\n\n섬에서 재료를 더 모아 오거나\n위에서 이름으로 찾아보세요', { fontFamily: FONT, fontSize: '13px', color: '#a08a6a', align: 'center', lineSpacing: 5 })
           .setOrigin(0.5),
       );
       this.readyMax = 0;
@@ -300,12 +373,13 @@ export class MergeScene extends Phaser.Scene {
       c.add(g);
       c.add(this.add.image(28, h / 2, itemKey(m.out)).setScale(1.8));
       c.add(this.add.text(54, 7, ITEMS[m.out].name, { fontFamily: FONT, fontSize: '14px', color: COLORS.uiText, fontStyle: 'bold' }));
-      c.add(this.add.text(54, 25, `${LABEL[m.kind]} · ${m.n}개 만들 수 있어요`, { fontFamily: FONT, fontSize: '10px', color: '#3f8f3a', fontStyle: 'bold' }));
+      const owned = m.kind === 'recipe' && RECIPES.find((r) => r.id === m.out)?.tool && inventory.get(m.out) > 0;
+      c.add(this.add.text(54, 25, `${LABEL[m.kind]} · ${m.n > 0 ? `${m.n}개 만들 수 있어요` : owned ? '이미 있어요' : '재료가 부족해요'}`, { fontFamily: FONT, fontSize: '10px', color: m.n > 0 ? '#3f8f3a' : owned ? '#8a6d4b' : '#c0573f', fontStyle: 'bold' }));
       // 한 개에 드는 재료와 지금 가진 수
       m.cost.forEach(([id, k], j) => {
         const nx = 62 + j * 62;
         c.add(this.add.image(nx, h - 11, itemKey(id)).setScale(0.75));
-        c.add(this.add.text(nx + 11, h - 11, `${k}개 (${inventory.get(id)})`, { fontFamily: FONT, fontSize: '10px', color: '#8a6d4b', fontStyle: 'bold' }).setOrigin(0, 0.5));
+        c.add(this.add.text(nx + 11, h - 11, `${k}개 (${inventory.get(id)})`, { fontFamily: FONT, fontSize: '10px', color: inventory.get(id) >= k ? '#8a6d4b' : '#c0573f', fontStyle: 'bold' }).setOrigin(0, 0.5));
       });
       // 버튼: 1개 만들기 / 모두 만들기
       const btn = (bx: number, bw: number, text: string, color: number, all: boolean) => {
@@ -321,7 +395,10 @@ export class MergeScene extends Phaser.Scene {
         });
         c.add(hit);
       };
-      if (m.n > 1) {
+      if (m.n <= 0) {
+        // 재료가 모자라면 만드는 법만 보여 준다
+        c.add(this.add.text(w - 46, h / 2, '—', { fontFamily: FONT, fontSize: '14px', color: '#c9bfa8', fontStyle: 'bold' }).setOrigin(0.5));
+      } else if (m.n > 1) {
         btn(w - 104, 52, '1개', 0x8bd17c, false);
         btn(w - 42, 64, `모두 ${m.n}`, 0xe0995f, true);
       } else btn(w - 46, 72, '만들기', 0x8bd17c, false);
