@@ -92,6 +92,7 @@ export class HudScene extends Phaser.Scene {
     this.makeTabBar(W, H);
     this.makeHint(W, H);
     this.makeSideButtons(W);
+    this.makePad(W, H);
     this.makeArrow();
     const prevView = (this.registry.get('bear') ? this.registry.get('view') : 'explore') as View | undefined;
     this.view = 'explore';
@@ -1647,6 +1648,99 @@ export class HudScene extends Phaser.Scene {
     return c;
   }
 
+  private pad?: Phaser.GameObjects.Container;
+  private padRelease?: () => void;
+
+  /** 가로 화면: 왼쪽 아래 조이스틱 + 오른쪽 아래 행동 단추 (게임기처럼 두 엄지로) */
+  private makePad(W: number, H: number) {
+    this.pad = undefined;
+    this.padRelease = undefined;
+    this.registry.set('pad', null);
+    if (W < H * 1.2) return;
+    this.input.addPointer(1);
+    const c = this.add.container(0, 0).setDepth(40).setVisible(false);
+    this.pad = c;
+    const R = 46;
+    const jx = 128;
+    const jy = H - HUD_BOTTOM_H - R - 16;
+    const base = this.add.graphics();
+    base.fillStyle(0x000000, 0.14).fillCircle(jx, jy + 3, R);
+    base.fillStyle(0xfff6e0, 0.55).fillCircle(jx, jy, R);
+    base.lineStyle(3, 0xffffff, 0.85).strokeCircle(jx, jy, R);
+    // 네 방향 세모
+    base.fillStyle(0xb89a6a, 0.7);
+    for (let i = 0; i < 4; i++) {
+      const a = (i * Math.PI) / 2;
+      const px = jx + Math.cos(a) * (R - 11);
+      const py = jy + Math.sin(a) * (R - 11);
+      const ox = Math.cos(a + Math.PI / 2) * 5;
+      const oy = Math.sin(a + Math.PI / 2) * 5;
+      base.fillTriangle(px + Math.cos(a) * 6, py + Math.sin(a) * 6, px + ox, py + oy, px - ox, py - oy);
+    }
+    const knob = this.add.graphics();
+    knob.fillStyle(0x000000, 0.18).fillCircle(0, 3, 20);
+    knob.fillStyle(0xffc65c).fillCircle(0, 0, 20);
+    knob.lineStyle(3, 0xffffff, 0.95).strokeCircle(0, 0, 20);
+    knob.setPosition(jx, jy);
+    const zone = this.add.zone(jx, jy, R * 2 + 44, R * 2 + 44).setInteractive();
+    let pid = -1;
+    const move = (p: Phaser.Input.Pointer) => {
+      const dx = p.x - jx;
+      const dy = p.y - jy;
+      const d = Math.hypot(dx, dy);
+      const lim = R - 10;
+      const kx = d > lim ? (dx / d) * lim : dx;
+      const ky = d > lim ? (dy / d) * lim : dy;
+      knob.setPosition(jx + kx, jy + ky);
+      this.registry.set('pad', d < 9 ? null : { x: dx / d, y: dy / d });
+    };
+    const release = () => {
+      pid = -1;
+      knob.setPosition(jx, jy);
+      this.registry.set('pad', null);
+    };
+    this.padRelease = release;
+    zone.on('pointerdown', (p: Phaser.Input.Pointer) => {
+      pid = p.id;
+      this.hideHint();
+      move(p);
+    });
+    const onMove = (p: Phaser.Input.Pointer) => {
+      if (p.id === pid && p.isDown) move(p);
+    };
+    const onUp = (p: Phaser.Input.Pointer) => {
+      if (p.id === pid) release();
+    };
+    this.input.on('pointermove', onMove);
+    this.input.on('pointerup', onUp);
+    this.input.on('pointerupoutside', onUp);
+    this.input.on('gameout', release);
+    this.events.once('shutdown', () => {
+      this.input.off('pointermove', onMove);
+      this.input.off('pointerup', onUp);
+      this.input.off('pointerupoutside', onUp);
+      this.input.off('gameout', release);
+      this.registry.set('pad', null);
+    });
+    // 행동 단추
+    const ax = W - 128;
+    const ay = jy;
+    const AR = 32;
+    const ab = this.add.container(ax, ay);
+    const ag = this.add.graphics();
+    ag.fillStyle(0x000000, 0.16).fillCircle(0, 4, AR);
+    ag.fillStyle(0xff7a59).fillCircle(0, 0, AR);
+    ag.lineStyle(3, 0xffffff, 0.95).strokeCircle(0, 0, AR);
+    ab.add([ag, this.add.text(0, -5, '🐾', { fontSize: '22px' }).setOrigin(0.5), this.add.text(0, 17, '행동', { fontFamily: FONT, fontSize: '9px', color: '#ffffff', fontStyle: 'bold' }).setOrigin(0.5)]);
+    ab.setSize(AR * 2 + 16, AR * 2 + 16).setInteractive();
+    ab.on('pointerdown', () => {
+      buzz(15);
+      this.tweens.add({ targets: ab, scale: { from: 0.86, to: 1 }, duration: 160, ease: 'Back.easeOut' });
+      this.game.events.emit('pad-action');
+    });
+    c.add([base, knob, zone, ab]);
+  }
+
   private makeSideButtons(W: number) {
     this.sideBtns = [];
     this.roundButton(W - 30, HUD_TOP_H + 30, '🏕️', () => {
@@ -1721,6 +1815,13 @@ export class HudScene extends Phaser.Scene {
   }
 
   update() {
+    if (this.pad) {
+      const show = this.view === 'explore' && !this.registry.get('modal') && !!this.registry.get('bear');
+      if (show !== this.pad.visible) {
+        this.pad.setVisible(show);
+        if (!show) this.padRelease?.();
+      }
+    }
     if (this.view !== 'explore' || this.registry.get('modal') || !this.registry.get('bear')) {
       this.arrow.setVisible(false);
       return;

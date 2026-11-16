@@ -285,6 +285,10 @@ export class IslandScene extends Phaser.Scene {
     ge.on('use-skill', this.useSkill, this);
     ge.on('exit-house', this.exitHouse, this);
     ge.on('exit-dungeon', this.exitDungeon, this);
+    ge.on('pad-action', this.padAction, this);
+    this.events.once('shutdown', () => ge.off('pad-action', this.padAction, this));
+    this.padKeys = this.input.keyboard?.addKeys('W,A,S,D,UP,DOWN,LEFT,RIGHT,SPACE') as Record<string, Phaser.Input.Keyboard.Key> | undefined;
+    this.padKeys?.SPACE.on('down', () => this.padAction());
     player.on('faint', this.onFaint, this);
     village.on('resident-joined', this.onResidentJoined, this);
     village.on('remote', this.syncPlaced, this);
@@ -704,6 +708,111 @@ export class IslandScene extends Phaser.Scene {
     }
   }
 
+  private padOn = false;
+  private padKeys?: Record<string, Phaser.Input.Keyboard.Key>;
+
+  /** 가로 화면 조이스틱(또는 키보드)으로 걷기: 미는 쪽으로 조금 앞을 목적지로 계속 잡아 준다 */
+  private updatePad() {
+    const pl = this.player;
+    if (!pl) return;
+    let v = this.registry.get('pad') as { x: number; y: number } | null | undefined;
+    const k = this.padKeys;
+    if (!v && k) {
+      const x = (k.D.isDown || k.RIGHT.isDown ? 1 : 0) - (k.A.isDown || k.LEFT.isDown ? 1 : 0);
+      const y = (k.S.isDown || k.DOWN.isDown ? 1 : 0) - (k.W.isDown || k.UP.isDown ? 1 : 0);
+      if (x || y) {
+        const d = Math.hypot(x, y);
+        v = { x: x / d, y: y / d };
+      }
+    }
+    const can = !!v && !this.registry.get('modal') && this.registry.get('view') !== 'build' && !this.fishing && !this.flying && !this.resting && !this.sleepWait;
+    if (can && v) {
+      if (!this.padOn) {
+        this.padOn = true;
+        this.pending = null;
+        this.autoTarget = null;
+        this.game.events.emit('player-moved');
+      }
+      pl.target = { x: pl.x + v.x * 28, y: pl.y + v.y * 28 };
+    } else if (this.padOn) {
+      this.padOn = false;
+      if (!this.pending) pl.target = null;
+      this.sendPresence();
+    }
+  }
+
+  /** 행동 단추: 가까운 몬스터를 치고, 없으면 바로 옆에 있는 것(나무·돌·낚시터·집·상자…)에 다가가 쓴다 */
+  private padAction() {
+    const pl = this.player;
+    if (!pl || this.registry.get('modal') || this.registry.get('view') === 'build') return;
+    if (this.fishing) return this.onFishingTap();
+    if (this.flying || this.resting || this.sleepWait) return;
+    const d2 = (x: number, y: number) => Math.hypot(x - pl.x, y - pl.y);
+    const side = (x: number) => (pl.x <= x ? -1 : 1);
+    this.padOn = false;
+    const mon = this.monsters.filter((m) => !m.dead).sort((a, b) => d2(a.x, a.y) - d2(b.x, b.y))[0];
+    if (mon && d2(mon.x, mon.y) < 110) {
+      this.autoTarget = mon;
+      return this.walkTo(mon.x + side(mon.x) * 18, mon.y, { monster: mon });
+    }
+    this.autoTarget = null;
+    const R = 56;
+    const cand: { d: number; go: () => void }[] = [];
+    const add = (x: number, y: number, go: () => void, bias = 0) => {
+      const d = d2(x, y) + bias;
+      if (d < R) cand.push({ d, go });
+    };
+    for (const sl of this.slimes) if (!sl.dead) add(sl.x, sl.y, () => this.walkTo(sl.x + side(sl.x) * 18, sl.y, { slime: sl }), -10);
+    const rm = this.room;
+    if (rm) {
+      const doorX = rm.x + (rm.door + 0.5) * TILE;
+      add(doorX, rm.y + rm.h - 8, () => this.walkTo(doorX, rm.y + rm.h - 8, { door: true }), 14);
+      rm.imgs.forEach((img) => {
+        if ((img as unknown as { placed?: Placed }).placed?.id === 'bed') add(img.x, img.y, () => this.walkTo(img.x + side(img.x) * 22, img.y - 2, { sleep: true }));
+      });
+    } else if (!this.dungeon) {
+      for (const o of this.decorObjs) {
+        if (o.gone || !o.visible || !this.unlocked(o.region)) continue;
+        const fy = o.decor.ty * TILE + TILE - 1;
+        add(o.x, fy - 6, () => this.walkTo(o.x + side(o.x) * (o.decor.kind === 'tent' ? 30 : 20), fy, { decor: o }));
+      }
+      for (const sp of this.spots) {
+        if (!sp.active) continue;
+        const stand = this.shoreStand(sp.spot);
+        if (stand) add(stand.x, stand.y, () => this.walkTo(stand.x, stand.y, { spot: sp }), -6);
+      }
+      for (const pv of this.plays) {
+        if (!pv.ready) continue;
+        if (pv.kind === 'spring') add(pv.img.x, pv.img.y, () => this.walkTo(pv.img.x, pv.img.y - 6, null));
+        else add(pv.img.x, pv.img.y, () => this.walkTo(pv.img.x + side(pv.img.x) * 22, pv.img.y - 2, { play: pv }));
+      }
+      const seen = new Set<Placed>();
+      this.placedOcc.forEach((hp) => {
+        if (seen.has(hp) || !ENTERABLE.has(hp.id)) return;
+        seen.add(hp);
+        add((hp.tx + 1) * TILE, (hp.ty + 1) * TILE + 10, () => this.walkTo((hp.tx + 1) * TILE, (hp.ty + 1) * TILE + 10, { house: hp }), 6);
+      });
+      this.placedObjs.forEach((img) => {
+        if ((img as unknown as { placed?: Placed }).placed?.id === 'bed') add(img.x, img.y, () => this.walkTo(img.x + side(img.x) * 22, img.y - 2, { sleep: true }));
+      });
+      const ch = this.chest;
+      if (ch?.visible) add(ch.x, ch.y, () => this.walkTo(ch.x + side(ch.x) * 24, ch.y - 1, { treasure: true }), -8);
+      const pd = this.pedestal;
+      if (pd?.visible) add(pd.x, pd.y, () => this.walkTo(pd.x + side(pd.x) * 20, pd.y - 1, { pedestal: true }));
+      for (const b of this.bears) {
+        if (b === pl || !b.sprite.visible || !(b.resident || b.wild || b.remote)) continue;
+        add(b.x, b.y, () => this.walkTo(b.x + side(b.x) * 22, b.y, { bear: b }), 8);
+      }
+    }
+    const g = this.gate;
+    if (g?.visible) add(g.x, g.y, () => this.walkTo(g.x + side(g.x) * 26, g.y - 2, { gate: true }));
+    cand.sort((a, b) => a.d - b.d);
+    if (cand[0]) return cand[0].go();
+    // 아무것도 없으면 허공에 한 번 휘두른다
+    pl.act('swing');
+    sfx.tap();
+  }
+
   private walkTo(x: number, y: number, hit: Hit | null) {
     if (!this.player) return;
     this.player.target = { x, y };
@@ -748,6 +857,7 @@ export class IslandScene extends Phaser.Scene {
 
   update(_t: number, deltaMs: number) {
     const dt = Math.min(deltaMs / 1000, 0.05);
+    this.updatePad();
     for (const bear of this.bears) {
       if (bear === this.player && this.flying) continue; // 날아가는 중에는 트램펄린이 움직인다
       const arrived = bear.step(dt, this.walkable);
@@ -763,7 +873,7 @@ export class IslandScene extends Phaser.Scene {
         if (arrived && this.pending) this.interact(this.pending);
         if (arrived) {
           this.pending = null;
-          this.sendPresence();
+          if (!this.padOn) this.sendPresence(); // 조이스틱으로 벽을 밀 때마다 알리지는 않는다
         }
       } else if (!bear.remote && !bear.wild) {
         this.updateNpc(bear, dt);
