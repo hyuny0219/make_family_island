@@ -88,6 +88,9 @@ const DIRS = [
  * 1) 섬 모양 → 2) 지역 씨앗(고르게 퍼뜨리기) → 3) 타일별 지역 배정(보로노이)
  * → 4) 지역 그래프·깊이 → 5) 분위기·지형 다듬기 → 6) 오브젝트·낚시터 → 7) 퀘스트
  */
+/** 채집물을 솎아내는 비율(%) */
+const DECOR_THIN = 35;
+
 export function generateWorld(theme: IslandTheme, islandIdx: number): World {
   const rnd = mulberry32(theme.seed);
   const N = theme.regions;
@@ -305,8 +308,11 @@ export function generateWorld(theme: IslandTheme, islandIdx: number): World {
         ]);
       }
       if (!kind) continue;
-      decor.push({ kind, tx: x, ty: y });
       take(x, y);
+      // 채집물 솎아내기: 세 개 중 하나쯤은 비워 둔다.
+      // (자리는 그대로 잡아 두어서, 남는 것들의 위치는 예전과 똑같다 → 가족이 지어 둔 건물과 겹치지 않는다)
+      if ((((x * 73856093) ^ (y * 19349663)) >>> 0) % 100 < DECOR_THIN) continue;
+      decor.push({ kind, tx: x, ty: y });
     }
   }
 
