@@ -36,6 +36,10 @@ type DecorObj = Phaser.GameObjects.Image & { decor: Decor; hitsLeft: number; res
 type SpotObj = (Phaser.GameObjects.Container | Phaser.GameObjects.Image) & { spot: FishingSpot; active: boolean; ice?: boolean };
 /** 섬마다 다른 놀이 */
 type PlayKind = 'dig' | 'geode' | 'ice' | 'spring' | 'tramp';
+type Ground = 'plain' | 'road' | 'shore' | 'sand' | 'snow' | 'lava' | 'cloud' | 'spore' | 'grass';
+/** 땅마다 걷는 빠르기: 깔아 둔 길은 빠르고, 물가·모래·눈은 조금 느리다 */
+const GROUND_SPEED: Record<Ground, number> = { plain: 1, road: 1.2, shore: 0.85, sand: 0.93, snow: 0.93, lava: 1, cloud: 1, spore: 1, grass: 1 };
+
 const ISLAND_PLAY: Record<number, { kind: PlayKind; tex: string; tip: string; loot?: [ItemId, number][] }> = {
   0: { kind: 'geode', tex: 'play_hive', tip: '🍯 곰돌이 섬에는 꿀통이 있어요. 톡톡 두드려 보세요!', loot: [['honey', 5], ['fruit', 3], ['flower', 2]] },
   1: { kind: 'dig', tex: 'play_bud', tip: '🌷 꽃향기 섬에는 커다란 꽃봉오리가 있어요. 톡톡 건드려 보세요!', loot: [['flower', 5], ['honey', 2], ['cotton', 1.5], ['crystal', 0.4]] },
@@ -109,6 +113,11 @@ export class IslandScene extends Phaser.Scene {
   private monsterTimer = 6;
   /** 지금 들어와 있는 집에 사는 주민 */
   private roomGuest: Bear | null = null;
+  private stepTimers = new Map<Bear, number>();
+  private roadTip = false;
+  private stepSide = 1;
+  /** 길·광장 바닥이 깔린 칸 (그 위에서는 발이 빨라진다) */
+  private roads = new Set<string>();
   private followState = new Map<Bear, { x: number; y: number; t: number; role: number }>();
   /** 지금 있는 곳에 들어온 시각 — 가장 먼저 들어온 기기가 몬스터를 움직인다 */
   private zt = Date.now();
@@ -133,7 +142,7 @@ export class IslandScene extends Phaser.Scene {
   private slimeTip = false;
   private myEmote: { e: string; et: number } | null = null;
   private fishing: null | { spot: SpotObj; phase: 'wait' | 'bite'; t: number; bobber: Phaser.GameObjects.Image; mark?: Phaser.GameObjects.Text; bait?: boolean } = null;
-  private fx!: Record<'leaf' | 'pebble' | 'sparkle' | 'ember' | 'heart' | 'dust' | 'splash' | 'puff', Phaser.GameObjects.Particles.ParticleEmitter>;
+  private fx!: Record<'leaf' | 'pebble' | 'sparkle' | 'ember' | 'heart' | 'dust' | 'splash' | 'puff' | 'grass' | 'snow' | 'spore', Phaser.GameObjects.Particles.ParticleEmitter>;
 
   constructor() {
     super('Island');
@@ -152,6 +161,7 @@ export class IslandScene extends Phaser.Scene {
     this.monsters = [];
     this.monsterTimer = 6;
     this.followState.clear();
+    this.stepTimers.clear();
     this.roomGuest = null;
     this.zt = family.now();
     this.batZone = null;
@@ -267,6 +277,8 @@ export class IslandScene extends Phaser.Scene {
     village.on('resident-joined', this.onResidentJoined, this);
     village.on('remote', this.syncPlaced, this);
     village.on('home-changed', this.syncRoomGuest, this);
+    village.on('changed', this.rebuildRoads, this);
+    this.rebuildRoads();
     family.on('presence', this.onPresence, this);
     family.on('status', this.sendPresence, this);
     family.on('mobs', this.onNetMobs, this);
@@ -290,6 +302,7 @@ export class IslandScene extends Phaser.Scene {
       village.off('resident-joined', this.onResidentJoined, this);
       village.off('remote', this.syncPlaced, this);
       village.off('home-changed', this.syncRoomGuest, this);
+      village.off('changed', this.rebuildRoads, this);
       family.off('presence', this.onPresence, this);
       family.off('status', this.sendPresence, this);
       family.off('mobs', this.onNetMobs, this);
@@ -527,6 +540,9 @@ export class IslandScene extends Phaser.Scene {
       heart: this.add.particles(0, 0, 'heart', { ...base, speed: { min: 20, max: 50 }, angle: { min: 230, max: 310 }, gravityY: -20, lifespan: 900, alpha: { start: 1, end: 0 }, scale: { start: 1.2, end: 0.6 } }),
       dust: this.add.particles(0, 0, 'pebble', { ...base, speed: { min: 20, max: 50 }, lifespan: 500, scale: { start: 3, end: 0 }, alpha: { start: 0.8, end: 0 }, tint: 0xd9d4c7 }),
       splash: this.add.particles(0, 0, 'sparkle', { ...base, speed: { min: 20, max: 60 }, angle: { min: 220, max: 320 }, gravityY: 160, lifespan: 500, tint: 0xd9f5ff, scale: 1.3 }),
+      grass: this.add.particles(0, 0, 'leaf', { ...base, speed: { min: 15, max: 40 }, angle: { min: 220, max: 320 }, gravityY: 120, lifespan: 420, rotate: { min: 0, max: 360 }, tint: 0x6fbf55, alpha: { start: 1, end: 0 } }),
+      snow: this.add.particles(0, 0, 'pebble', { ...base, speed: { min: 12, max: 34 }, angle: { min: 210, max: 330 }, gravityY: 90, lifespan: 520, scale: { start: 2, end: 0.5 }, tint: 0xffffff, alpha: { start: 0.95, end: 0 } }),
+      spore: this.add.particles(0, 0, 'sparkle', { ...base, speed: { min: 6, max: 20 }, angle: { min: 240, max: 300 }, gravityY: -25, lifespan: 900, scale: { start: 1.4, end: 0 }, tint: 0xb9f5d8, blendMode: 'ADD' }),
       puff: this.add.particles(0, 0, 'cloudpuff', { ...base, speed: { min: 10, max: 40 }, lifespan: 900, scale: { start: 1.6, end: 0.2 }, alpha: { start: 0.95, end: 0 } }),
     };
     Object.values(this.fx).forEach((e) => e.setDepth(99990));
@@ -725,7 +741,7 @@ export class IslandScene extends Phaser.Scene {
           this.stepTimer -= dt;
           if (this.stepTimer <= 0) {
             sfx.step();
-            this.fx.dust.explode(1, bear.x, bear.y - 1);
+            this.stepFx(bear);
             this.stepTimer = 0.26;
           }
         }
@@ -736,6 +752,12 @@ export class IslandScene extends Phaser.Scene {
         }
       } else if (!bear.remote && !bear.wild) {
         this.updateNpc(bear, dt);
+      }
+      // 다른 가족 곰·따라오는 곰도 걸을 때 발밑 효과가 난다
+      if (bear !== this.player && !bear.resident && !bear.wild && bear.moving && bear.sprite.visible) {
+        const t = (this.stepTimers.get(bear) ?? 0) - dt;
+        if (t <= 0) this.stepFx(bear);
+        this.stepTimers.set(bear, t <= 0 ? 0.3 : t);
       }
     }
     if (this.player) {
@@ -1281,11 +1303,115 @@ export class IslandScene extends Phaser.Scene {
     }
   }
 
+  // ───────────────────────── 지형 효과 ─────────────────────────
+
+  private rebuildRoads() {
+    this.roads.clear();
+    for (const p of village.placedOn(this.islandIdx)) {
+      const piece = PIECES[p.id];
+      if (piece?.floor) for (const [x, y] of this.footprint(piece, p.tx, p.ty)) this.roads.add(`${x},${y}`);
+    }
+  }
+
+  /** 발밑이 어떤 땅인가 */
+  private groundAt(x: number, y: number): Ground {
+    if (this.room || this.dungeon) return 'plain';
+    const W = this.world;
+    const tx = Math.floor(x / TILE);
+    const ty = Math.floor((y - 2) / TILE);
+    if (this.roads.has(`${tx},${ty}`)) return 'road';
+    const t = W.terrain[ty]?.[tx];
+    const skin = ISLANDS[this.islandIdx].skin;
+    if (t === T_SAND) {
+      // 바다와 맞닿은 모래는 물가
+      if (W.terrain[ty + 1]?.[tx] === T_SEA || W.terrain[ty - 1]?.[tx] === T_SEA || W.terrain[ty]?.[tx + 1] === T_SEA || W.terrain[ty]?.[tx - 1] === T_SEA) return 'shore';
+      if (!skin || skin === 'desert') return 'sand';
+    }
+    if (skin === 'snow') return 'snow';
+    if (skin === 'volcano') return 'lava';
+    if (skin === 'cloud') return 'cloud';
+    if (skin === 'mushroom') return 'spore';
+    if (skin === 'desert') return 'sand';
+    return t === T_SAND ? 'sand' : 'grass';
+  }
+
+  /** 발자국: 잠깐 남았다가 사라진다 */
+  private footmark(x: number, y: number, color: number, alpha: number, ms: number) {
+    this.stepSide = -this.stepSide;
+    const e = this.add.ellipse(x + this.stepSide * 3, y - 1, 5, 3, color, alpha).setDepth(-20);
+    this.tweens.add({ targets: e, alpha: 0, duration: ms, ease: 'Quad.easeIn', onComplete: () => e.destroy() });
+  }
+
+  /** 한 걸음 디딜 때의 발밑 효과 (땅마다 다르다) */
+  private stepFx(bear: Bear) {
+    const g = this.groundAt(bear.x, bear.y);
+    const x = bear.x;
+    const y = bear.y;
+    switch (g) {
+      case 'road':
+        this.fx.dust.explode(1, x, y - 1);
+        if (bear === this.player && !this.roadTip) {
+          this.roadTip = true;
+          this.toast('🛤️ 길 위에서는 발이 빨라져요!');
+        }
+        break;
+      case 'shore': {
+        // 물이 튀고 잔물결이 퍼진다
+        this.fx.splash.explode(3, x, y - 2);
+        const ring = this.add.ellipse(x, y, 6, 3).setStrokeStyle(1, 0xffffff, 0.8).setDepth(-20);
+        this.tweens.add({ targets: ring, scaleX: 3.2, scaleY: 3.2, alpha: 0, duration: 520, onComplete: () => ring.destroy() });
+        this.footmark(x, y, 0xb99a62, 0.5, 1600);
+        break;
+      }
+      case 'sand':
+        this.footmark(x, y, 0xc19a5b, 0.55, 3200);
+        this.fx.dust.explode(1, x, y - 1);
+        break;
+      case 'snow':
+        this.footmark(x, y, 0x8fa9c4, 0.6, 4200);
+        this.fx.snow.explode(2, x, y - 1);
+        break;
+      case 'lava':
+        this.fx.ember.explode(1, x + Phaser.Math.Between(-3, 3), y - 2);
+        this.footmark(x, y, 0x3a2a2a, 0.35, 1800);
+        break;
+      case 'cloud':
+        // 구름 위에서는 통통 튄다
+        this.fx.puff.explode(1, x, y);
+        bear.jump(90);
+        break;
+      case 'spore':
+        this.fx.spore.explode(2, x, y - 2);
+        break;
+      case 'grass':
+        this.fx.grass.explode(Math.random() < 0.5 ? 1 : 2, x, y - 1);
+        // 가끔 풀숲에서 나비(밤에는 반딧불이)가 날아오른다
+        if (Math.random() < 0.05) this.flutter(x, y);
+        break;
+      default:
+        this.fx.dust.explode(1, x, y - 1);
+    }
+  }
+
+  private flutter(x: number, y: number) {
+    const night = this.dark > 0.5;
+    const dx = Phaser.Math.Between(-40, 40);
+    if (night) {
+      const f = this.add.image(x, y - 6, 'sparkle').setTint(0xfff27a).setScale(1.6).setBlendMode(Phaser.BlendModes.ADD).setDepth(99985);
+      this.tweens.add({ targets: f, x: x + dx, y: y - 50, duration: 2600, ease: 'Sine.easeInOut', onComplete: () => f.destroy() });
+      this.tweens.add({ targets: f, alpha: 0.2, duration: 380, yoyo: true, repeat: 3 });
+      return;
+    }
+    const b = this.add.text(x, y - 6, '🦋', { fontSize: '9px' }).setOrigin(0.5).setDepth(99985);
+    this.tweens.add({ targets: b, x: x + dx, y: y - 56, alpha: 0, duration: 2200, ease: 'Sine.easeOut', onComplete: () => b.destroy() });
+    this.tweens.add({ targets: b, scaleX: 0.3, duration: 130, yoyo: true, repeat: 7 });
+  }
+
   /** 온천: 들어가 있으면 한동안 발이 빨라진다 */
   private updateSpring() {
     const pl = this.player;
     if (!pl || this.flying) return;
-    pl.speed = PLAYER_SPEED * (player.has('speed') ? 1.6 : 1);
+    pl.speed = PLAYER_SPEED * (player.has('speed') ? 1.6 : 1) * GROUND_SPEED[this.groundAt(pl.x, pl.y)];
     if (ISLAND_PLAY[this.islandIdx]?.kind !== 'spring') return;
     const tx = Math.floor(pl.x / TILE);
     const ty = Math.floor((pl.y - 2) / TILE);
