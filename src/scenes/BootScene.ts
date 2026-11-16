@@ -1,3 +1,5 @@
+import { OPENING } from '../data/story';
+import { story } from '../state/story';
 import Phaser from 'phaser';
 import { COLORS } from '../config';
 import { BUILD_TEXTURES } from '../data/build';
@@ -53,6 +55,8 @@ export class BootScene extends Phaser.Scene {
 
   create() {
     this.makeParticles();
+    // 처음 켰을 때는 오프닝부터
+    if (!story.seen('opening')) return void this.scene.start('Story', { pages: OPENING, key: 'opening', boot: true });
     this.scene.start('Island');
     this.scene.launch('Hud');
   }

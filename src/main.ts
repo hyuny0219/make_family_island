@@ -8,6 +8,7 @@ import Phaser from 'phaser';
 import { GAME_HEIGHT, GAME_WIDTH, COLORS } from './config';
 import { BootScene } from './scenes/BootScene';
 import { IslandScene } from './scenes/IslandScene';
+import { StoryScene } from './scenes/StoryScene';
 import { HudScene } from './scenes/HudScene';
 import { MergeScene } from './scenes/MergeScene';
 import { inventory } from './state/inventory';
@@ -39,7 +40,7 @@ const game = new Phaser.Game({
   input: {
     activePointers: 2,
   },
-  scene: [BootScene, IslandScene, MergeScene, HudScene],
+  scene: [BootScene, IslandScene, MergeScene, HudScene, StoryScene],
 });
 
 // 폰을 돌리면 기준 크기를 바꾼다 (화면을 다시 짜는 일은 HUD가 크기 변화를 보고 한다)

@@ -1,3 +1,5 @@
+import { ENDING, OPENING, talkLines, type CutPage } from '../data/story';
+import { story } from '../state/story';
 import { ABILITIES, BOSSES, UPGRADE_COST, hatKey } from '../data/abilities';
 import { abilities } from '../state/abilities';
 import { BUFFS, FOODS, foodText } from '../data/food';
@@ -164,6 +166,27 @@ export class HudScene extends Phaser.Scene {
     progress.on('treasure', this.refreshQuestPill, this);
     progress.on('boat-built', this.refreshQuestPill, this);
     this.scale.on('resize', this.onResize, this);
+    // 이야기 대화: 섬에 처음 왔을 때, 보물을 찾았을 때, 처음 겪는 일마다
+    this.talkQueue = [];
+    this.talking = false;
+    this.registry.set('talk', false);
+    const onBoat = () => this.queueTalk('boat');
+    const onFriend = () => this.queueTalk('friend');
+    const onNight = () => this.registry.get('night') && this.queueTalk('night');
+    const onDg = () => this.registry.get('dungeon') && this.queueTalk('dungeon');
+    progress.on('boat-built', onBoat);
+    village.on('resident-joined', onFriend);
+    this.registry.events.on('changedata-night', onNight);
+    this.registry.events.on('changedata-dungeon', onDg);
+    const talkTick = this.time.addEvent({ delay: 600, loop: true, callback: () => this.pumpTalk() });
+    this.events.once('shutdown', () => {
+      progress.off('boat-built', onBoat);
+      village.off('resident-joined', onFriend);
+      this.registry.events.off('changedata-night', onNight);
+      this.registry.events.off('changedata-dungeon', onDg);
+      talkTick.remove();
+    });
+    this.queueTalk(`island_${progress.current}`);
     this.events.once('shutdown', () => {
       quests.off('changed', this.refreshQuestPill, this);
       player.off('changed', this.refreshStatus, this);
@@ -1855,6 +1878,8 @@ export class HudScene extends Phaser.Scene {
     const all = progress.treasureCount >= TREASURES.length;
     this.celebrate(all ? `👑 보물을 모두 모았어요!\n${t.name}` : `👑 보물 발견!\n${t.name}`);
     family.post(`👑 ${ISLANDS[island].name}의 보물 '${t.name}'을(를) 찾았어요`);
+    // 보물 도감을 닫은 뒤에 가족이 한마디씩
+    this.time.delayedCall(3200, () => this.queueTalk(`treasure_${island}`));
     this.time.delayedCall(2600, () => this.openTreasures());
   }
 
@@ -1940,6 +1965,14 @@ export class HudScene extends Phaser.Scene {
     const { box, close } = this.modal(PW, PH);
     const top = -PH / 2;
     box.add(this.add.text(0, top + 30, '⚙️ 설정', { fontFamily: FONT, fontSize: '20px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0.5));
+    // 오프닝 다시 보기
+    const op = this.add.text(-PW / 2 + 14, top + 30, '🎬 오프닝', { fontFamily: FONT, fontSize: '11px', color: '#ffffff', fontStyle: 'bold', backgroundColor: '#8a6d4b', padding: { x: 7, y: 5 } }).setOrigin(0, 0.5).setInteractive({ useHandCursor: true });
+    op.on('pointerdown', (_p: Phaser.Input.Pointer, _x: number, _y: number, e: Phaser.Types.Input.EventData) => {
+      e.stopPropagation();
+      close();
+      this.time.delayedCall(260, () => this.playStory(OPENING, 'opening'));
+    });
+    box.add(op);
     const toggle = (y: number, name: string, key: 'sound' | 'vibrate' | 'music') => {
       const label = () => `${name}: ${settings[key] ? '켜짐' : '꺼짐'}`;
       const btn = this.button(label(), true, () => {
@@ -2166,8 +2199,115 @@ export class HudScene extends Phaser.Scene {
     });
   }
 
+  private talkQueue: string[] = [];
+  private talking = false;
+
+  /** 아직 안 본 대화면 줄을 세운다 (곰을 고르고, 다른 창이 없을 때 나온다) */
+  private queueTalk(key: string) {
+    if (story.seen(key) || this.talkQueue.includes(key) || !talkLines(key)) return;
+    this.talkQueue.push(key);
+  }
+
+  private pumpTalk() {
+    if (this.talking || !this.talkQueue.length || this.view !== 'explore') return;
+    if (this.registry.get('modal') || !this.registry.get('bear') || this.sail) return;
+    const key = this.talkQueue.shift()!;
+    if (story.seen(key)) return;
+    this.openTalk(key);
+  }
+
+  /** 곰 얼굴과 말풍선: 톡 누르면 다음 줄 */
+  private openTalk(key: string) {
+    const lines = talkLines(key);
+    if (!lines?.length) return;
+    this.talking = true;
+    this.registry.set('modal', true);
+    this.registry.set('talk', true);
+    story.mark(key);
+    const W = this.scale.width;
+    const H = this.scale.height;
+    const PW = Math.min(W - 20, 420);
+    const PH = 92;
+    const cy = H - HUD_BOTTOM_H - PH / 2 - 10;
+    const c = this.add.container(W / 2, cy + 30).setDepth(150).setAlpha(0);
+    const shade = this.add.rectangle(W / 2, H / 2, W, H, 0x000000, 0.18).setDepth(149).setInteractive();
+    const g = this.add.graphics();
+    g.fillStyle(0x000000, 0.18).fillRoundedRect(-PW / 2, -PH / 2 + 4, PW, PH, 18);
+    g.fillStyle(COLORS.uiBg).fillRoundedRect(-PW / 2, -PH / 2, PW, PH, 18);
+    g.lineStyle(3, 0xe8b84a).strokeRoundedRect(-PW / 2, -PH / 2, PW, PH, 18);
+    g.fillStyle(0xffe9b8).fillCircle(-PW / 2 + 44, 0, 32);
+    const face = this.add.image(-PW / 2 + 44, 26, 'dad_front').setOrigin(0.5, 1).setScale(1.5);
+    const tag = this.add.graphics();
+    const name = this.add.text(-PW / 2 + 92, -PH / 2 + 1, '', { fontFamily: FONT, fontSize: '11px', color: '#ffffff', fontStyle: 'bold' }).setOrigin(0, 0.5);
+    const body = this.add.text(-PW / 2 + 88, -PH / 2 + 18, '', { fontFamily: FONT, fontSize: '13px', color: COLORS.uiText, lineSpacing: 5, wordWrap: { width: PW - 104, useAdvancedWrap: true } });
+    const more = this.add.text(PW / 2 - 14, PH / 2 - 8, '▶', { fontFamily: FONT, fontSize: '11px', color: '#e0903a' }).setOrigin(1, 1);
+    this.tweens.add({ targets: more, x: PW / 2 - 10, duration: 420, yoyo: true, repeat: -1 });
+    const skip = this.add.text(PW / 2 - 12, -PH / 2 - 12, '건너뛰기 ⏭', { fontFamily: FONT, fontSize: '10px', color: '#ffffff', fontStyle: 'bold', backgroundColor: '#00000066', padding: { x: 7, y: 4 } }).setOrigin(1, 0.5).setInteractive({ useHandCursor: true });
+    c.add([g, face, tag, name, body, more, skip]);
+    this.tweens.add({ targets: c, alpha: 1, y: cy, duration: 220, ease: 'Cubic.easeOut' });
+    let i = -1;
+    let full = '';
+    let n = 0;
+    let typer: Phaser.Time.TimerEvent | undefined;
+    const close = () => {
+      typer?.remove();
+      shade.destroy();
+      this.tweens.add({ targets: c, alpha: 0, y: cy + 20, duration: 160, onComplete: () => c.destroy() });
+      this.registry.set('modal', false);
+      this.talking = false;
+      this.registry.set('talk', false);
+      // 마지막 보물 이야기 뒤에는 엔딩 그림 이야기
+      if (key === `treasure_${TREASURES.length - 1}` && !story.seen('ending')) this.time.delayedCall(500, () => this.playStory(ENDING, 'ending'));
+    };
+    const done = () => {
+      typer?.remove();
+      typer = undefined;
+      body.setText(full);
+      more.setVisible(true);
+    };
+    const next = () => {
+      if (typer) return done();
+      i++;
+      if (i >= lines.length) return close();
+      const ln = lines[i];
+      const who = BEARS.find((b) => b.id === ln.who)!;
+      face.setTexture(`${ln.who}_front`);
+      this.tweens.add({ targets: face, y: { from: 20, to: 26 }, duration: 180, ease: 'Back.easeOut' });
+      name.setText(who.name);
+      tag.clear().fillStyle(0xe0903a).fillRoundedRect(-PW / 2 + 84, -PH / 2 - 9, name.width + 16, 20, 10);
+      full = ln.text;
+      n = 0;
+      body.setText('');
+      more.setVisible(false);
+      sfx.pop();
+      typer = this.time.addEvent({
+        delay: 34,
+        loop: true,
+        callback: () => {
+          n++;
+          body.setText(full.slice(0, n));
+          if (n >= full.length) done();
+        },
+      });
+    };
+    shade.on('pointerdown', next);
+    skip.on('pointerdown', (_p: Phaser.Input.Pointer, _x: number, _y: number, e: Phaser.Types.Input.EventData) => {
+      e.stopPropagation();
+      close();
+    });
+    next();
+  }
+
+  /** 그림 이야기(오프닝 다시 보기·엔딩)를 화면 위에 띄운다 */
+  private playStory(pages: CutPage[], key: string) {
+    if (this.scene.isActive('Story')) return;
+    this.scene.launch('Story', { pages, key });
+    this.scene.bringToTop('Story');
+  }
+
   private onWorldReady() {
     this.updateTopBar();
+    this.queueTalk(`island_${progress.current}`);
     const s = this.sail;
     if (!s) return;
     this.sail = undefined;
