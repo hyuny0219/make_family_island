@@ -2,7 +2,7 @@ import { TILE_IDX, type ObjectKind } from '../data/assets';
 import { BIOMES, BIOME_INFO, type Biome } from '../data/biomes';
 import type { IslandTheme } from '../data/islands';
 import type { ItemId } from '../data/items';
-import { CHAINS } from '../data/merge';
+import { CHAINS, COMBOS } from '../data/merge';
 
 export const T_SEA = 0;
 export const T_SAND = 1;
@@ -403,6 +403,28 @@ export function generateWorld(theme: IslandTheme, islandIdx: number): World {
       const scale = it.startsWith('fish') || it === 'coal' || it === 'starfish' ? 0.5 : 1;
       r.need[it] = Math.max(1, Math.round(share * scale));
     });
+
+    // 물고기는 낚기 어려워서 구역을 여는 재료로 쓰지 않는다.
+    // 대신 이미 열린 지역의 재료(와 어디서나 나오는 젤리)로 만드는 조합 아이템을 조금 넣는다.
+    // (난수는 건드리지 않아서 섬의 생김새는 예전과 똑같다)
+    const fishKinds = (Object.keys(r.need) as ItemId[]).filter((it) => it.startsWith('fish'));
+    if (fishKinds.length) {
+      const have = (it: ItemId) => pool.has(it) || it === 'jelly';
+      const combos = COMBOS.filter((c) => have(c.a) && have(c.b)).map((c) => c.out);
+      fishKinds.forEach((f, k) => {
+        const n = r.need[f]!;
+        delete r.need[f];
+        const free = combos.filter((c) => !(c in r.need));
+        if (free.length) {
+          const out = free[(r.idx * 7 + islandIdx * 3 + k) % free.length];
+          r.need[out] = Math.min(4, Math.max(1, Math.round(n * 0.4)));
+          return;
+        }
+        // 만들 수 있는 조합이 아직 없는 곳은 기본 재료로
+        const basics = [...pool].filter((it) => !(it in r.need));
+        if (basics.length) r.need[basics[(r.idx + k) % basics.length]] = Math.max(1, n);
+      });
+    }
 
     // 캠프에서 3칸 이상 떨어진 지역(2번 섬부터는 2칸)은 머지로 만든 물건도 필요하다
     const craftFrom = islandIdx >= 1 ? 2 : 3;

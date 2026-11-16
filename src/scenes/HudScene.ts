@@ -21,7 +21,7 @@ import { village } from '../state/village';
 import { family, type FeedItem, type SyncStatus } from '../sync/family';
 import { localDoc } from '../sync/bridge';
 import { ORDER_GIFTS, RESIDENTS, TROPHY_HEARTS } from '../data/village';
-import { COMBOS, USABLE } from '../data/merge';
+import { COMBOS, MERGE_NEXT, USABLE } from '../data/merge';
 import { BUILD_CATS, PIECES, PIECE_LIST, type BuildCat, type Piece } from '../data/build';
 import type { IslandScene } from './IslandScene';
 
@@ -486,12 +486,21 @@ export class HudScene extends Phaser.Scene {
     if (this.registry.get('modal')) return;
     const PW = Math.min(330, this.scale.width - 30);
     const rows = Math.ceil(Object.keys(reg.need).length / 3);
-    const PH = 230 + rows * 86;
+    const hints: string[] = [];
+    for (const id of Object.keys(reg.need) as ItemId[]) {
+      const c = COMBOS.find((v) => v.out === id);
+      const from = (Object.keys(MERGE_NEXT) as ItemId[]).find((k) => MERGE_NEXT[k] === id);
+      if (c) hints.push(`💡 ${ITEMS[id].name} = ${ITEMS[c.a].name} + ${ITEMS[c.b].name} (만들기 탭)`);
+      else if (from) hints.push(`💡 ${ITEMS[id].name} = ${ITEMS[from].name} 3개 합치기 (만들기 탭)`);
+    }
+    const PH = 230 + rows * 86 + hints.length * 15;
     const { box, close } = this.modal(PW, PH);
     const top = -PH / 2;
     box.add(this.add.text(0, top + 30, `${BIOME_INFO[reg.biome].emoji} ${reg.name}`, { fontFamily: FONT, fontSize: '20px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0.5));
     box.add(this.add.text(0, top + 64, `${reg.story}\n이 재료를 모으면 길이 열려요!`, { fontFamily: FONT, fontSize: '13px', color: '#8a6d4b', align: 'center' }).setOrigin(0.5));
     const { ok } = this.needList(box, reg.need, top + 140, PW);
+    // 만들어야 하는 재료는 만드는 법을 알려 준다
+    hints.forEach((t, i) => box.add(this.add.text(0, PH / 2 - 74 - (hints.length - 1 - i) * 15, t, { fontFamily: FONT, fontSize: '10px', color: '#6a4c93', fontStyle: 'bold' }).setOrigin(0.5)));
     const btn = this.button(ok ? '🌈 길 열기!' : '재료가 부족해요', ok, () => {
       this.spend(reg.need);
       close();
