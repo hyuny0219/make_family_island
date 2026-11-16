@@ -2,7 +2,7 @@ import { quests } from '../state/quests';
 import Phaser from 'phaser';
 import { COLORS } from '../config';
 import { ITEMS, itemKey, type ItemId } from '../data/items';
-import { COMBO_PARTS, MERGE_NEXT, RECIPES, comboOf, comboPartners, isMergeable, type Recipe } from '../data/merge';
+import { COMBOS, COMBO_PARTS, MERGE_NEXT, RECIPES, comboOf, comboPartners, isMergeable, type Recipe } from '../data/merge';
 import { BOARD_COLS, BOARD_ROWS, loadBoard, saveBoard, type Cell } from '../state/board';
 import { inventory } from '../state/inventory';
 import { sfx, buzz } from '../sfx';
@@ -13,7 +13,19 @@ const FONT = '"Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif
 let CELL = 50;
 let ICON = 2;
 
-type Mode = 'merge' | 'craft';
+type Mode = 'ready' | 'merge' | 'craft';
+
+/** 지금 창고 재료로 바로 만들 수 있는 것 한 가지 */
+interface Makeable {
+  kind: 'merge' | 'combo' | 'recipe';
+  out: ItemId;
+  /** 지금 재료로 만들 수 있는 개수 */
+  n: number;
+  /** 한 개 만드는 데 드는 재료 */
+  cost: [ItemId, number][];
+  /** 어디에 쓰는지 (있으면 보여 준다) */
+  use?: string;
+}
 
 /**
  * 머지 탭: 개인 머지 보드 + 작업대.
@@ -34,6 +46,11 @@ export class MergeScene extends Phaser.Scene {
   private trayScroll = 0;
   private hints: Phaser.GameObjects.Graphics[] = [];
   private craftList?: Phaser.GameObjects.Container;
+  private readyLayer!: Phaser.GameObjects.Container;
+  private readyList?: Phaser.GameObjects.Container;
+  private readyScroll = 0;
+  private readyMax = 0;
+  private readyDrag: null | { y: number; s: number; moved: boolean } = null;
   private pills: Partial<Record<Mode, { bg: Phaser.GameObjects.Graphics; label: Phaser.GameObjects.Text }>> = {};
   private drag: null | { idx: number; sp: Phaser.GameObjects.Image; sx: number; sy: number; moved: boolean } = null;
   private spark!: Phaser.GameObjects.Particles.ParticleEmitter;
@@ -59,6 +76,7 @@ export class MergeScene extends Phaser.Scene {
 
     this.mergeLayer = this.add.container(0, 0);
     this.craftLayer = this.add.container(0, 0).setVisible(false);
+    this.readyLayer = this.add.container(0, 0).setVisible(false);
 
     // ── 머지 보드 ──
     const trayNeed = 28 + 2 * 44 + 4;
@@ -100,6 +118,25 @@ export class MergeScene extends Phaser.Scene {
 
     this.rebuildTray();
     this.rebuildCraft();
+    this.readyScroll = 0;
+    this.rebuildReady();
+    // 들어오면 '바로 만들기'부터 보여 준다
+    this.setMode('ready');
+
+    // 바로 만들기 목록: 위아래로 밀어서 넘긴다
+    this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
+      if (this.mode === 'ready' && !this.registry.get('modal') && p.y > HUD_TOP_H + 40 && p.y < this.scale.height - HUD_BOTTOM_H) this.readyDrag = { y: p.y, s: this.readyScroll, moved: false };
+    });
+    this.input.on('pointermove', (p: Phaser.Input.Pointer) => {
+      const d = this.readyDrag;
+      if (!d || !p.isDown) return;
+      if (Math.abs(p.y - d.y) > 8) d.moved = true;
+      if (d.moved) {
+        this.readyScroll = Phaser.Math.Clamp(d.s - (p.y - d.y), 0, this.readyMax);
+        this.readyList?.setY(-this.readyScroll);
+      }
+    });
+    this.input.on('pointerup', () => this.time.delayedCall(0, () => (this.readyDrag = null)));
 
     this.input.on('pointermove', this.onMove, this);
     this.input.on('pointerup', this.onUp, this);
@@ -117,20 +154,25 @@ export class MergeScene extends Phaser.Scene {
   private makePills(W: number) {
     const y = HUD_TOP_H + 16;
     const defs: [Mode, string][] = [
+      ['ready', '✨ 바로 만들기'],
       ['merge', '🧩 합치기'],
       ['craft', '🔨 작업대'],
     ];
-    const w = 104;
+    const w = Math.min(108, (W - 32) / 3);
     defs.forEach(([mode, text], i) => {
-      const x = W / 2 + (i - 0.5) * (w + 8);
+      const x = W / 2 + (i - 1) * (w + 6);
       const bg = this.add.graphics();
-      const label = this.add.text(x, y, text, { fontFamily: FONT, fontSize: '14px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0.5);
+      const label = this.add.text(x, y, text, { fontFamily: FONT, fontSize: '13px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0.5);
       const hit = this.add.rectangle(x, y, w, 34, 0, 0).setInteractive({ useHandCursor: true });
       hit.on('pointerdown', () => {
         if (this.registry.get('modal')) return;
         sfx.tap();
         this.setMode(mode);
       });
+      // 목록이 밀려 올라와도 단추가 가려지거나 터치를 빼앗기지 않게 맨 위에 둔다
+      bg.setDepth(20);
+      label.setDepth(21);
+      hit.setDepth(22);
       this.pills[mode] = { bg, label };
       bg.setData('x', x - w / 2).setData('y', y - 17).setData('w', w);
     });
@@ -150,12 +192,144 @@ export class MergeScene extends Phaser.Scene {
     });
     this.mergeLayer?.setVisible(mode === 'merge');
     this.craftLayer?.setVisible(mode === 'craft');
+    this.readyLayer?.setVisible(mode === 'ready');
     this.sprites.forEach((s) => s?.setVisible(mode === 'merge'));
   }
 
   private onInventory() {
     this.rebuildTray();
     this.rebuildCraft();
+    this.rebuildReady();
+  }
+
+  // ───────────────────────── 바로 만들기 ─────────────────────────
+
+  /** 창고 재료로 지금 만들 수 있는 것과 개수 (보드에 올려 둔 것은 세지 않는다) */
+  private makeables(): Makeable[] {
+    const list: Makeable[] = [];
+    // 작업대: 도구는 하나만
+    for (const r of RECIPES) {
+      const cost = Object.entries(r.need) as [ItemId, number][];
+      let n = Math.min(...cost.map(([id, k]) => Math.floor(inventory.get(id) / k)));
+      if (r.tool) n = inventory.get(r.id) > 0 ? 0 : Math.min(1, n);
+      if (n > 0) list.push({ kind: 'recipe', out: r.id, n, cost, use: r.desc });
+    }
+    // 조합: 서로 다른 두 가지
+    for (const c of COMBOS) {
+      const n = Math.min(inventory.get(c.a), inventory.get(c.b));
+      if (n > 0) list.push({ kind: 'combo', out: c.out, n, cost: [[c.a, 1], [c.b, 1]], use: c.use });
+    }
+    // 합치기: 같은 것 3개 → 1개 (5개면 2개)
+    for (const [from, to] of Object.entries(MERGE_NEXT) as [ItemId, ItemId][]) {
+      const have = inventory.get(from);
+      const n = Math.floor(have / 5) * 2 + Math.floor((have % 5) / 3);
+      if (n > 0) list.push({ kind: 'merge', out: to, n, cost: [[from, 3]] });
+    }
+    return list;
+  }
+
+  /** 만든다. all이면 만들 수 있는 만큼 모두 */
+  private makeItem(m: Makeable, all: boolean) {
+    let made = 1;
+    if (m.kind === 'merge') {
+      // 5개를 한꺼번에 합치면 2개가 나오므로, 모두 만들 때는 그 덤을 그대로 준다
+      const [from] = m.cost[0];
+      const have = inventory.get(from);
+      made = all ? m.n : 1;
+      const used = all ? have - ((have % 5) % 3) : 3;
+      inventory.add(from, -used);
+    } else {
+      made = all ? m.n : 1;
+      for (const [id, k] of m.cost) inventory.add(id, -k * made);
+    }
+    const first = !inventory.discovered(m.out);
+    inventory.add(m.out, made);
+    inventory.discover(m.out);
+    if (m.kind !== 'recipe') for (let i = 0; i < made; i++) quests.bump(m.kind);
+    sfx.fanfare();
+    buzz(30);
+    this.spark.explode(14, this.scale.width / 2, HUD_TOP_H + 80);
+    const name = ITEMS[m.out].name;
+    if (first) this.game.events.emit('celebrate', `✨ 새로 만들었어요!\n${name}${m.use ? `\n${m.use}` : ''}`);
+    else this.game.events.emit('toast', `✨ ${name}${made > 1 ? ` ×${made}` : ''} 완성!`);
+  }
+
+  private rebuildReady() {
+    this.readyList?.destroy();
+    const W = this.scale.width;
+    const H = this.scale.height;
+    const top = HUD_TOP_H + 42;
+    const bottom = H - HUD_BOTTOM_H - 6;
+    const list = this.add.container(0, 0);
+    this.readyList = list;
+    this.readyLayer.add(list);
+    if (!this.readyLayer.mask) {
+      const mg = this.make.graphics();
+      mg.fillStyle(0xffffff).fillRect(0, top, W, bottom - top);
+      this.readyLayer.setMask(mg.createGeometryMask());
+    }
+    const items = this.makeables();
+    list.add(
+      this.add
+        .text(W / 2, top + 14, items.length ? `창고 재료로 지금 만들 수 있는 것 ${items.length}가지` : '', { fontFamily: FONT, fontSize: '11px', color: '#a08a6a', fontStyle: 'bold' })
+        .setOrigin(0.5),
+    );
+    if (!items.length) {
+      list.add(
+        this.add
+          .text(W / 2, top + 110, '지금 창고 재료로는\n만들 수 있는 게 없어요\n\n섬에서 재료를 더 모아 오거나\n작업대에서 필요한 재료를 확인해 보세요', { fontFamily: FONT, fontSize: '13px', color: '#a08a6a', align: 'center', lineSpacing: 5 })
+          .setOrigin(0.5),
+      );
+      this.readyMax = 0;
+      this.readyScroll = 0;
+      list.setY(0);
+      return;
+    }
+    const rowH = 62;
+    const LABEL = { recipe: '🔨 작업대', combo: '💡 조합', merge: '🧩 합치기' } as const;
+    items.forEach((m, i) => {
+      const x = 10;
+      const y = top + 28 + i * rowH;
+      const w = W - 20;
+      const h = rowH - 6;
+      const c = this.add.container(x, y);
+      const g = this.add.graphics();
+      g.fillStyle(0x000000, 0.1).fillRoundedRect(0, 3, w, h, 14);
+      g.fillStyle(0xfff8e7).fillRoundedRect(0, 0, w, h, 14);
+      g.lineStyle(2, 0xe8d5a9).strokeRoundedRect(0, 0, w, h, 14);
+      c.add(g);
+      c.add(this.add.image(28, h / 2, itemKey(m.out)).setScale(1.8));
+      c.add(this.add.text(54, 7, ITEMS[m.out].name, { fontFamily: FONT, fontSize: '14px', color: COLORS.uiText, fontStyle: 'bold' }));
+      c.add(this.add.text(54, 25, `${LABEL[m.kind]} · ${m.n}개 만들 수 있어요`, { fontFamily: FONT, fontSize: '10px', color: '#3f8f3a', fontStyle: 'bold' }));
+      // 한 개에 드는 재료와 지금 가진 수
+      m.cost.forEach(([id, k], j) => {
+        const nx = 62 + j * 62;
+        c.add(this.add.image(nx, h - 11, itemKey(id)).setScale(0.75));
+        c.add(this.add.text(nx + 11, h - 11, `${k}개 (${inventory.get(id)})`, { fontFamily: FONT, fontSize: '10px', color: '#8a6d4b', fontStyle: 'bold' }).setOrigin(0, 0.5));
+      });
+      // 버튼: 1개 만들기 / 모두 만들기
+      const btn = (bx: number, bw: number, text: string, color: number, all: boolean) => {
+        const bg = this.add.graphics();
+        bg.fillStyle(color).fillRoundedRect(bx - bw / 2, h / 2 - 16, bw, 32, 16);
+        c.add(bg);
+        c.add(this.add.text(bx, h / 2, text, { fontFamily: FONT, fontSize: '12px', color: '#ffffff', fontStyle: 'bold' }).setOrigin(0.5));
+        const hit = this.add.rectangle(bx, h / 2, bw, 40, 0, 0).setInteractive({ useHandCursor: true });
+        hit.on('pointerup', (p: Phaser.Input.Pointer) => {
+          // 목록을 밀던 중이거나, 화면 밖으로 밀려 가려진 줄이면 누른 것으로 치지 않는다
+          if (this.registry.get('modal') || this.mode !== 'ready' || this.readyDrag?.moved || p.y < top || p.y > bottom) return;
+          this.makeItem(m, all);
+        });
+        c.add(hit);
+      };
+      if (m.n > 1) {
+        btn(w - 104, 52, '1개', 0x8bd17c, false);
+        btn(w - 42, 64, `모두 ${m.n}`, 0xe0995f, true);
+      } else btn(w - 46, 72, '만들기', 0x8bd17c, false);
+      list.add(c);
+    });
+    this.readyMax = Math.max(0, top + 28 + items.length * rowH + 8 - bottom);
+    this.readyScroll = Math.min(this.readyScroll, this.readyMax);
+    list.setY(-this.readyScroll);
   }
 
   // ───────────────────────── 보드 ─────────────────────────
