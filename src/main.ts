@@ -10,7 +10,7 @@ import { GAME_HEIGHT, GAME_WIDTH, COLORS } from './config';
 import { BootScene } from './scenes/BootScene';
 import { IslandScene } from './scenes/IslandScene';
 import { StoryScene } from './scenes/StoryScene';
-import { HudScene } from './scenes/HudScene';
+import { HudScene, setHudWide } from './scenes/HudScene';
 import { MergeScene } from './scenes/MergeScene';
 import { inventory } from './state/inventory';
 import { progress } from './state/progress';
@@ -19,11 +19,13 @@ import { family } from './sync/family';
 import './sync/bridge';
 
 /**
- * 화면의 기준 크기. 세로 화면은 360×640, 가로 화면은 640×450을 기준으로 삼는다.
+ * 화면의 기준 크기. 세로 화면은 360×640, 가로 화면은 640×360을 기준으로 삼는다.
+ * (가로는 아래 메뉴 줄을 없앤 대신 기준 높이를 낮춰 글자와 단추를 크게 보여 준다)
  * (가로에서도 세로 기준을 쓰면 높이 640을 좁은 화면에 욱여넣어 글자와 단추가 절반으로 작아진다)
  */
-const baseSize = (): [number, number] => (window.innerWidth > window.innerHeight * 1.2 ? [640, 450] : [GAME_WIDTH, GAME_HEIGHT]);
+const baseSize = (): [number, number] => (window.innerWidth > window.innerHeight * 1.2 ? [640, 360] : [GAME_WIDTH, GAME_HEIGHT]);
 const [baseW, baseH] = baseSize();
+setHudWide(baseW > baseH);
 
 const game = new Phaser.Game({
   type: Phaser.AUTO,
@@ -54,6 +56,7 @@ const applyBase = () => {
   if (c.width === w && c.height === h) return;
   c.width = w;
   c.height = h;
+  setHudWide(w > h);
   game.scale.refresh();
 };
 window.addEventListener('resize', applyBase);

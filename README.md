@@ -1,4 +1,4 @@
-# 🐻 BEAR LORD: 열 개의 섬 (Make Family Island)
+# 🐻 베어로드: 열 개의 섬 (Make Family Island)
 
 가족 넷이 함께, 또는 각자 즐기는 협동형 섬 개척 게임. 모바일 웹(PWA)으로 동작한다.
 
