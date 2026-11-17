@@ -43,6 +43,10 @@ export class BootScene extends Phaser.Scene {
     for (const ab of ABILITIES) this.load.image(hatKey(ab.id), `${hatKey(ab.id)}.png`);
     for (const k of Object.keys(MONSTERS)) this.load.image(`mon_${k}`, `mon_${k}.png`);
     this.load.image('mon_dummy', 'mon_dummy.png');
+    // 연속기 이펙트 그림: 무기마다 마무리(f)·내려찍기(g) 3장씩 + 공통 칼자국·타격 별
+    for (const id of ['leaf', 'bee', 'wood', 'bubble', 'rock', 'poison', 'ice', 'sand', 'fire', 'thunder', 'hit']) {
+      for (const t of ['f', 'g']) for (const i of [1, 2, 3]) this.load.image(`fx_${id}_${t}${i}`, `fx/${id}_${t}${i}.png`);
+    }
     for (const t of BUILD_TEXTURES) this.load.image(t, `${t}.png`);
     for (const skin of SKINS) {
       this.load.spritesheet(`tiles_${skin}`, `tiles_${skin}.png`, { frameWidth: 24, frameHeight: 24, margin: 1, spacing: 2 });

@@ -1896,6 +1896,21 @@ export class IslandScene extends Phaser.Scene {
     });
   }
 
+  /**
+   * 그림 이펙트: 세 장을 차례로 보여 주고 사라진다.
+   * @param key 'fx_<이름>_<f|g>' (뒤에 1~3이 붙는다)
+   */
+  private artFx(key: string, x: number, y: number, o: { scale?: number; flip?: boolean; ox?: number; oy?: number; ms?: number; depth?: number; angle?: number } = {}) {
+    if (!this.textures.exists(`${key}1`)) return;
+    const sc = o.scale ?? 1;
+    const im = this.add.image(x, y, `${key}1`).setOrigin(o.ox ?? 0.5, o.oy ?? 0.5).setFlipX(!!o.flip).setScale(sc * 0.7).setDepth(o.depth ?? 99988).setAngle(o.angle ?? 0);
+    const ms = o.ms ?? 90;
+    this.tweens.add({ targets: im, scale: sc, duration: ms, ease: 'Back.easeOut' });
+    this.time.delayedCall(ms, () => im.active && im.setTexture(`${key}2`));
+    this.time.delayedCall(ms * 2.4, () => im.active && im.setTexture(`${key}3`));
+    this.time.delayedCall(ms * 2.4, () => im.active && this.tweens.add({ targets: im, alpha: 0, scale: sc * 1.08, duration: ms * 1.6, onComplete: () => im.destroy() }));
+  }
+
   /** 곰의 잔상 */
   private ghostFx(b: Bear, color: number, n = 3) {
     for (let i = 0; i < n; i++) {
@@ -1920,8 +1935,11 @@ export class IslandScene extends Phaser.Scene {
 
   /** 맞은 자리의 작은 불꽃 */
   private hitSpark(x: number, y: number, big = false) {
-    this.starFx(x, y, 0xfff1a8, big ? 8 : 5, big ? 22 : 12);
-    if (big) this.flashFx(x, y, 0xfff1a8, 22, 160);
+    this.artFx('fx_hit_g', x, y, { scale: big ? 0.8 : 0.42, ms: 55, angle: Phaser.Math.Between(-25, 25) });
+    if (big) {
+      this.starFx(x, y, 0xfff1a8, 8, 22);
+      this.flashFx(x, y, 0xfff1a8, 22, 160);
+    }
   }
 
   private ringFx(x: number, y: number, r: number, color: number, dur = 300, w = 4) {
@@ -1942,34 +1960,6 @@ export class IslandScene extends Phaser.Scene {
     this.tweens.add({ targets: g, alpha: { from: 1, to: 0.55 }, duration: 320, yoyo: true, repeat: Math.max(0, Math.floor((sec * 1000) / 640) - 1), onComplete: () => this.tweens.add({ targets: g, alpha: 0, duration: 200, onComplete: () => g.destroy() }) });
   }
 
-  /** 땅에서 솟는 가시 */
-  private spikeFx(x: number, y: number, color: number, h = 20, w = 12) {
-    const g = this.add.graphics().setDepth(y + 1);
-    g.fillStyle(color).fillTriangle(-w / 2, 0, w / 2, 0, 0, -h);
-    g.lineStyle(1.5, 0x4a3b2a, 0.9).strokeTriangle(-w / 2, 0, w / 2, 0, 0, -h);
-    g.fillStyle(0xffffff, 0.55).fillTriangle(-w / 6, -2, 0, -2, 0, -h + 3);
-    g.setPosition(x, y).setScale(1, 0);
-    this.glowFx(x, y - h * 0.6, color, 3);
-    this.tweens.add({ targets: g, scaleY: 1, duration: 90, ease: 'Back.easeOut', onComplete: () => this.tweens.add({ targets: g, alpha: 0, delay: 260, duration: 160, onComplete: () => g.destroy() }) });
-  }
-
-  /** 솟는 기둥 (물기둥·불기둥) */
-  private pillarFx(x: number, y: number, color: number, w = 30, h = 76) {
-    this.flashFx(x, y - h * 0.5, color, w * 1.3, 320);
-    this.glowFx(x, y - h * 0.6, color, 14);
-    const g = this.add.graphics().setDepth(99986);
-    g.fillStyle(color, 0.75).fillRoundedRect(-w / 2, -h, w, h, w / 2);
-    g.fillStyle(0xffffff, 0.5).fillRoundedRect(-w / 6, -h + 6, w / 3, h - 12, w / 6);
-    g.setPosition(x, y).setScale(0.6, 0);
-    this.tweens.add({ targets: g, scaleY: 1, scaleX: 1, duration: 130, ease: 'Cubic.easeOut', onComplete: () => this.tweens.add({ targets: g, alpha: 0, scaleX: 0.3, delay: 120, duration: 220, onComplete: () => g.destroy() }) });
-  }
-
-  /** 날아가는 그림 하나 */
-  private shotFx(tex: string, x0: number, y0: number, x1: number, y1: number, dur: number, scale = 1) {
-    const s = this.add.image(x0, y0, tex).setScale(scale).setDepth(99986).setRotation(Math.atan2(y1 - y0, x1 - x0));
-    this.tweens.add({ targets: s, x: x1, y: y1, duration: dur, ease: 'Quad.easeIn', onComplete: () => s.destroy() });
-  }
-
   /**
    * 보스 무기 연속기의 모습 (다른 가족의 곰이 쓸 때도 같은 그림).
    * F: 3타 마무리 (x,y = 노린 자리), G: 공중 공격 뒤 내려찍기 (x,y = 내려앉은 자리)
@@ -1978,7 +1968,6 @@ export class IslandScene extends Phaser.Scene {
     const dir = b.sprite.flipX ? -1 : 1;
     const by = b.y;
     const tex = weaponTex(this.textures, id, lv);
-    const sting = this.textures.exists(`fx_sting${lv}`) ? `fx_sting${lv}` : 'fx_sting';
     const col = ELEM[id] ?? 0xfff1a8;
     // 기술이 터지는 순간: 번쩍 + 빛줄기 + 빛 알갱이 + 잔상
     this.ghostFx(b, col);
@@ -1992,39 +1981,40 @@ export class IslandScene extends Phaser.Scene {
       this.glowFx(x, y - 8, col, 26);
       this.time.delayedCall(90, () => this.ringFx(x, y, 84, 0xffffff, 260, 3));
     }
+    // 그림은 곰(너비 약 28)에 견주어 크게 그려져 있어서 줄여 쓴다. 단계가 오르면 조금씩 커진다
+    const big = 0.55 + lv * 0.08;
+    const left = dir < 0;
     if (kind === 'F') {
       switch (id) {
         case 'leaf':
           this.ringFx(b.x, by, 56 + lv * 6, 0x7ccf5a, 320, 6);
           this.fx.leaf.explode(14, b.x, by - 12);
+          this.artFx('fx_leaf_f', b.x, by - 8, { scale: big * 1.15 });
           break;
         case 'bee':
-          for (let i = 0; i < 3 + lv; i++) {
-            const a = ((i / (2 + lv)) * 2 - 1) * 0.5;
-            this.shotFx(sting, b.x + dir * 8, by - 16, b.x + dir * Math.cos(a) * 150, by - 12 + Math.sin(a) * 150, 220, 1 + lv * 0.15);
-          }
+          this.artFx('fx_bee_f', b.x + dir * 8, by - 16, { scale: big * 1.2, flip: left, ox: left ? 1 : 0 });
           break;
         case 'wood':
           this.ringFx(x, y, 60 + lv * 8, 0xc9a26a, 360, 7);
           this.fx.dust.explode(18, x, y);
+          this.artFx('fx_wood_f', x, y - 6, { scale: big * 1.2 });
           break;
-        case 'bubble': {
-          const g = this.add.graphics().setDepth(99986);
-          g.fillStyle(0x7fd0f5, 0.8).fillRoundedRect(dir > 0 ? 0 : -170, -8, 170, 16, 8);
-          g.fillStyle(0xffffff, 0.7).fillRoundedRect(dir > 0 ? 6 : -164, -3, 158, 6, 3);
-          g.setPosition(b.x + dir * 10, by - 14).setScale(0.1, 1);
-          this.tweens.add({ targets: g, scaleX: 1, duration: 120, onComplete: () => this.tweens.add({ targets: g, alpha: 0, scaleY: 0.2, delay: 100, duration: 180, onComplete: () => g.destroy() }) });
+        case 'bubble':
+          this.artFx('fx_bubble_f', b.x + dir * 8, by - 14, { scale: big * 1.2, flip: left, ox: left ? 1 : 0 });
           this.fx.splash.explode(12, b.x + dir * 150, by - 12);
           break;
-        }
         case 'rock':
-          for (let i = 0; i < 4 + lv; i++) this.time.delayedCall(i * 55, () => this.spikeFx(b.x + dir * (26 + i * 24), by, 0x9aa3ad, 18 + lv * 3));
+          this.artFx('fx_rock_f', b.x + dir * 10, by + 4, { scale: big * 1.2, flip: left, ox: left ? 1 : 0, oy: 1 });
+          this.fx.pebble.explode(12, b.x + dir * 60, by - 4);
           break;
         case 'poison':
           this.poolFx(x, y, 44 + lv * 6, 0xa66cd9, 3);
           this.fx.spore.explode(14, x, y - 8);
+          this.artFx('fx_poison_f', x, y - 4, { scale: big * 1.1, ms: 150 });
+          this.artFx('fx_poison_g', x, y + 4, { scale: big * 0.8, oy: 0.95 });
           break;
         case 'ice': {
+          this.artFx('fx_ice_f', b.x, by - 10, { scale: big * 1.2, ms: 130 });
           const n = lv > 1 ? 3 : 2;
           const imgs = Array.from({ length: n }, () => this.add.image(b.x, by, tex).setScale(0.8 + lv * 0.1).setDepth(99986));
           this.tweens.addCounter({
@@ -2033,8 +2023,8 @@ export class IslandScene extends Phaser.Scene {
             duration: 1200,
             onUpdate: (tw) => {
               const v = tw.getValue() ?? 0;
-              imgs.forEach((im, i) => {
-                const a = v * 14 + (i / n) * Math.PI * 2;
+              imgs.forEach((im, k) => {
+                const a = v * 14 + (k / n) * Math.PI * 2;
                 im.setPosition(b.x + Math.cos(a) * 44, b.y - 14 + Math.sin(a) * 26).setAngle(v * 2400).setAlpha(v > 0.85 ? (1 - v) / 0.15 : 1);
               });
             },
@@ -2042,91 +2032,73 @@ export class IslandScene extends Phaser.Scene {
           });
           break;
         }
-        case 'sand': {
-          const g = this.add.graphics().setDepth(99986);
-          const u = { v: 0 };
-          this.tweens.add({ targets: u, v: 1, duration: 480, onUpdate: () => {
-            g.clear().lineStyle(5, 0xe2c27a, 1 - u.v * 0.5);
-            for (const k of [0, 2.1, 4.2]) {
-              g.beginPath();
-              g.arc(b.x, b.y - 14, 46, u.v * 13 + k, u.v * 13 + k + 1.2, false);
-              g.strokePath();
-            }
-          }, onComplete: () => g.destroy() });
+        case 'sand':
+          this.artFx('fx_sand_f', b.x, by - 10, { scale: big * 1.2, ms: 110 });
+          this.time.delayedCall(200, () => this.artFx('fx_sand_f', b.x, b.y - 10, { scale: big * 1.35, ms: 90, flip: true }));
           this.fx.dust.explode(12, b.x, by - 4);
           break;
-        }
         case 'fire':
           this.ringFx(b.x, by, 58, 0xff8a3c, 320, 7);
           this.poolFx(b.x, by, 50, 0xff6a2a, 2);
           this.fx.ember.explode(18, b.x, by - 10);
+          this.artFx('fx_fire_f', b.x, by - 10, { scale: big * 1.25, ms: 110 });
           break;
         case 'thunder':
           this.ringFx(b.x, by, 60, 0xffe45c, 260, 5);
-          this.boltFx(x, y - 150, x, y - 8, lv);
+          this.artFx('fx_thunder_f', b.x, by - 14, { scale: big * 1.3 });
+          this.artFx('fx_thunder_g', x, y + 4, { scale: big, oy: 0.95 });
           break;
       }
       return;
     }
+    // 내려찍기: 발밑에서 솟는 그림
+    const up = { scale: big * 1.15, oy: 0.93, ms: 100 };
     switch (id) {
       case 'leaf':
         this.ringFx(x, y, 56, 0x7ccf5a, 320, 6);
-        for (let i = 0; i < 6; i++) this.spikeFx(x + Math.cos(i * 1.05) * 34, y + Math.sin(i * 1.05) * 20, 0x5fae3f, 22, 7);
+        this.artFx('fx_leaf_g', x, y + 6, up);
+        this.fx.leaf.explode(12, x, y - 10);
         break;
       case 'bee':
-        for (let i = 0; i < 7; i++) {
-          const px = x + Math.cos(i * 0.9) * (14 + (i % 3) * 16);
-          const py = y + Math.sin(i * 0.9) * (8 + (i % 3) * 10);
-          this.time.delayedCall(i * 30, () => this.shotFx(sting, px - 20, py - 110, px, py - 4, 150, 1 + lv * 0.15));
-        }
+        this.artFx('fx_bee_g', x, y + 8, { ...up, scale: big * 1.25 });
         this.ringFx(x, y, 60, 0xffd24a, 300);
         break;
       case 'wood':
         this.ringFx(x, y, 76, 0xc9a26a, 380, 8);
-        this.ringFx(x, y, 46, 0x8a6a42, 300, 5);
+        this.artFx('fx_wood_g', x, y + 8, { ...up, scale: big * 1.3 });
         this.fx.dust.explode(22, x, y);
         break;
       case 'bubble':
-        this.pillarFx(x, y, 0x7fd0f5);
+        this.artFx('fx_bubble_g', x, y + 6, { ...up, scale: big * 1.3 });
         this.ringFx(x, y, 56, 0x7fd0f5);
         this.fx.splash.explode(16, x, y - 20);
         break;
       case 'rock':
         this.ringFx(x, y, 64, 0x9aa3ad, 320, 6);
         this.fx.pebble.explode(20, x, y - 6);
-        for (let i = 0; i < 8; i++) this.spikeFx(x + Math.cos(i * 0.785) * 44, y + Math.sin(i * 0.785) * 26, 0x9aa3ad, 14, 10);
+        this.artFx('fx_rock_g', x, y - 10, { scale: big * 1.3 });
         break;
       case 'poison':
         this.poolFx(x, y, 50, 0xa66cd9, 2);
         this.fx.spore.explode(18, x, y - 8);
+        this.artFx('fx_poison_g', x, y + 6, { ...up, scale: big * 1.25, ms: 130 });
         break;
       case 'ice':
-        for (let i = 0; i < 8; i++) this.spikeFx(x + Math.cos(i * 0.785) * 40, y + Math.sin(i * 0.785) * 24, 0xbfe8ff, 24, 10);
+        this.artFx('fx_ice_g', x, y + 10, { ...up, scale: big * 1.3, ms: 120 });
         this.ringFx(x, y, 56, 0xbfe8ff);
         break;
-      case 'sand': {
-        const g = this.add.graphics().setDepth(99986);
-        const u = { v: 0 };
-        this.tweens.add({ targets: u, v: 1, duration: 420, onUpdate: () => {
-          g.clear().lineStyle(4, 0xe2c27a, 0.9 - u.v * 0.5);
-          const r = 90 - 66 * u.v;
-          for (const k of [0, 1.6, 3.2, 4.8]) {
-            g.beginPath();
-            g.arc(x, y - 8, r, u.v * 9 + k, u.v * 9 + k + 1, false);
-            g.strokePath();
-          }
-        }, onComplete: () => g.destroy() });
+      case 'sand':
+        this.artFx('fx_sand_g', x, y + 6, { ...up, scale: big * 1.3, ms: 120 });
         this.fx.dust.explode(16, x, y);
         break;
-      }
       case 'fire':
-        this.pillarFx(x, y, 0xff7a2a, 34, 84);
+        this.artFx('fx_fire_g', x, y + 6, { ...up, scale: big * 1.3, ms: 110 });
         this.ringFx(x, y, 52, 0xff8a3c, 320, 6);
         this.fx.ember.explode(20, x, y - 20);
         break;
       case 'thunder':
+        this.artFx('fx_thunder_g', x, y + 6, { ...up, scale: big * 1.4 });
         this.boltFx(x - 10, y - 170, x, y - 4, lv);
-        this.boltFx(x + 12, y - 170, x, y - 4, lv);
         this.ringFx(x, y, 60, 0xffe45c, 280, 6);
         break;
     }
@@ -2294,6 +2266,8 @@ export class IslandScene extends Phaser.Scene {
       this.starFx(x, y - 12, 0xffe08a, 10, 30);
       this.glowFx(pl.x, pl.y - 12, 0xffe08a, 18);
       this.ringFx(pl.x, pl.y, 56, 0xffe08a, 280, 5);
+      this.artFx('fx_hit_f', pl.x + 20, pl.y - 14, { scale: 0.95, ms: 60 });
+      this.artFx('fx_hit_f', pl.x - 20, pl.y - 14, { scale: 0.95, ms: 60, flip: true });
       // 곰 둘레를 도는 칼바람
       const g = this.add.graphics().setDepth(99986);
       const u = { v: 0 };
@@ -2493,6 +2467,7 @@ export class IslandScene extends Phaser.Scene {
     this.glowFx(x, y - 8, 0xffe08a, 22);
     this.ringFx(x, y, 70, 0xffffff, 300, 4);
     this.fx.dust.explode(12, x, y);
+    this.artFx('fx_hit_g', x, y - 6, { scale: 1.3, ms: 70 });
     this.punchCam(0.045);
     const g = this.add.graphics().setDepth(y - 1);
     const u = { v: 0 };
@@ -2883,19 +2858,7 @@ export class IslandScene extends Phaser.Scene {
     this.toolSwing(from, itemKey(weapon), left, wind, heavy ? 1.2 : 0.95, true);
     // 칼이 지나간 자리
     this.time.delayedCall(wind * 1000, () => {
-      const g = this.add.graphics().setDepth(99986);
-      const cx = (from.x + m.x) / 2 + dir * 4;
-      const cy = m.y - 14;
-      const R = heavy ? 22 : 16;
-      g.lineStyle(heavy ? 5 : 3, 0xffffff, 0.95);
-      g.beginPath();
-      g.arc(cx - dir * 6, cy, R, left ? Math.PI * 0.7 : -Math.PI * 0.3, left ? Math.PI * 1.3 : Math.PI * 0.3, false);
-      g.strokePath();
-      g.lineStyle(heavy ? 2.5 : 1.5, heavy ? 0xb8c4d6 : 0xffe08a, 0.9);
-      g.beginPath();
-      g.arc(cx - dir * 9, cy, R - 3, left ? Math.PI * 0.75 : -Math.PI * 0.25, left ? Math.PI * 1.25 : Math.PI * 0.25, false);
-      g.strokePath();
-      this.tweens.add({ targets: g, alpha: 0, x: dir * 5, duration: 170, onComplete: () => g.destroy() });
+      this.artFx('fx_hit_f', (from.x + m.x) / 2 + dir * 6, m.y - 14, { scale: heavy ? 0.72 : 0.55, flip: left, ms: 50 });
       if (heavy && own) this.cameras.main.shake(90, 0.004);
     });
   }
