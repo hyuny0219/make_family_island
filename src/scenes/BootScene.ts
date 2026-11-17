@@ -42,6 +42,7 @@ export class BootScene extends Phaser.Scene {
     this.load.image('dungeon_gate', 'dungeon_gate.png');
     for (const ab of ABILITIES) this.load.image(hatKey(ab.id), `${hatKey(ab.id)}.png`);
     for (const k of Object.keys(MONSTERS)) this.load.image(`mon_${k}`, `mon_${k}.png`);
+    this.load.image('mon_dummy', 'mon_dummy.png');
     for (const t of BUILD_TEXTURES) this.load.image(t, `${t}.png`);
     for (const skin of SKINS) {
       this.load.spritesheet(`tiles_${skin}`, `tiles_${skin}.png`, { frameWidth: 24, frameHeight: 24, margin: 1, spacing: 2 });

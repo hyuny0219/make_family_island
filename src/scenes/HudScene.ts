@@ -1216,7 +1216,7 @@ export class HudScene extends Phaser.Scene {
       g.fillStyle(here ? 0xdff2e1 : 0xfff3d6).fillRoundedRect(-PW / 2 + 14, y - 20, PW - 28, 40, 12);
       box.add(g);
       box.add(this.add.image(-PW / 2 + 38, y + 2, `${r.id}_front`).setScale(1.1));
-      box.add(this.add.text(-PW / 2 + 62, y - 8, r.name, { fontFamily: FONT, fontSize: '13px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0, 0.5));
+      box.add(this.add.text(-PW / 2 + 62, y - 8, `${r.name}  💗${village.hearts(r.id)}`, { fontFamily: FONT, fontSize: '13px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0, 0.5));
       box.add(this.add.text(-PW / 2 + 62, y + 9, here ? '이 집에 살아요' : home ? '다른 집에 살아요' : '아직 집이 없어요', { fontFamily: FONT, fontSize: '10px', color: here ? '#3d8a5f' : '#a08a6a', fontStyle: 'bold' }).setOrigin(0, 0.5));
       const b = this.button(here ? '내보내기' : '살게 하기', true, () => {
         village.setHome(r.id, here ? null : key);
@@ -1256,7 +1256,7 @@ export class HudScene extends Phaser.Scene {
     const top = -PH / 2;
     box.add(this.add.image(-PW / 2 + 48, top + 50, `${id}_front`).setScale(2));
     box.add(this.add.text(-PW / 2 + 92, top + 30, r.name, { fontFamily: FONT, fontSize: '20px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0, 0.5));
-    const heartText = hearts === 0 ? '🤍 처음 만났어요' : `${'💗'.repeat(Math.min(hearts, 5))}${hearts > 5 ? ` ×${hearts}` : ''}`;
+    const heartText = hearts === 0 ? '🤍 호감도 0 · 처음 만났어요' : `${'💗'.repeat(Math.min(hearts, 5))} 호감도 ${hearts}`;
     box.add(this.add.text(-PW / 2 + 92, top + 56, heartText, { fontFamily: FONT, fontSize: '13px', color: '#e07a5f', fontStyle: 'bold' }).setOrigin(0, 0.5));
     if (!order) {
       box.add(

@@ -261,7 +261,7 @@ export class Bear {
       const k = Math.max(0.55, 1 - this.hop / 90);
       this.shadow.setVisible(this.sprite.visible).setPosition(Math.round(this.x), Math.round(this.y - 1)).setScale(k).setDepth(this.y - 0.5);
     } else if (this.shadow?.visible) this.shadow.setVisible(false);
-    this.label?.setPosition(this.sprite.x, this.sprite.y - this.sprite.height - 3).setDepth(this.y + 1);
+    this.label?.setPosition(this.sprite.x, this.sprite.y - this.sprite.height - 3).setDepth(this.y + 1).setVisible(this.sprite.visible);
     this.bubble?.setPosition(this.sprite.x, this.sprite.y - this.sprite.height - (this.label ? 14 : 4)).setDepth(99984);
     return arrived;
   }
