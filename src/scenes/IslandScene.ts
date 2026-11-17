@@ -246,6 +246,7 @@ export class IslandScene extends Phaser.Scene {
     dockImg.setInteractive({ useHandCursor: true });
     (dockImg as unknown as { isDock: boolean }).isDock = true;
     if (progress.hasBoat(this.islandIdx) || this.islandIdx > 0) this.showBoat(false);
+    this.placeDummy();
 
     // 표지판 · 낚시터 · 구름
     if (this.textures.exists('clouds')) this.textures.remove('clouds');
@@ -328,6 +329,7 @@ export class IslandScene extends Phaser.Scene {
     village.on('remote', this.syncPlaced, this);
     village.on('home-changed', this.syncRoomGuest, this);
     village.on('changed', this.rebuildRoads, this);
+    village.on('changed', this.heartLabels, this);
     this.rebuildRoads();
     family.on('presence', this.onPresence, this);
     family.on('status', this.sendPresence, this);
@@ -354,6 +356,7 @@ export class IslandScene extends Phaser.Scene {
       village.off('remote', this.syncPlaced, this);
       village.off('home-changed', this.syncRoomGuest, this);
       village.off('changed', this.rebuildRoads, this);
+      village.off('changed', this.heartLabels, this);
       family.off('presence', this.onPresence, this);
       family.off('status', this.sendPresence, this);
       family.off('mobs', this.onNetMobs, this);
@@ -785,11 +788,12 @@ export class IslandScene extends Phaser.Scene {
     if (!pl || this.registry.get('modal') || this.registry.get('view') === 'build') return;
     if (this.fishing) return this.onFishingTap();
     if (this.flying || this.resting || this.sleepWait) return;
+    this.airMode = false;
     const d2 = (x: number, y: number) => Math.hypot(x - pl.x, y - pl.y);
     const side = (x: number) => (pl.x <= x ? -1 : 1);
     // 조이스틱을 밀고 있는 중이면 멈추지 않고 그 자리에서 바로 한다 (달리면서 치고, 지나가며 줍기)
     const held = this.padOn;
-    const mon = this.monsters.filter((m) => !m.dead).sort((a, b) => d2(a.x, a.y) - d2(b.x, b.y))[0];
+    const mon = this.foes().sort((a, b) => d2(a.x, a.y) - d2(b.x, b.y))[0];
     if (held) {
       if (mon && d2(mon.x, mon.y) < 58) return this.attackMonster(mon, 58);
     } else if (mon && d2(mon.x, mon.y) < 110) {
@@ -853,9 +857,9 @@ export class IslandScene extends Phaser.Scene {
     if (g?.visible) add(g.x, g.y, () => go(g.x + side(g.x) * 26, g.y - 2, { gate: true }));
     cand.sort((a, b) => a.d - b.d);
     if (cand[0]) return cand[0].go();
-    // 아무것도 없으면 허공에 한 번 휘두른다
-    pl.act('swing');
-    sfx.tap();
+    // 아무것도 없으면 허공에 공격한다 (빈 곳에서 콤보 연습)
+    this.airMode = true;
+    this.airAttack();
   }
 
   private walkTo(x: number, y: number, hit: Hit | null) {
@@ -1822,15 +1826,106 @@ export class IslandScene extends Phaser.Scene {
     if (now - this.holdAt < 120) return;
     this.holdAt = now;
     if (this.registry.get('modal') || this.registry.get('view') === 'build' || this.fishing || this.flying || this.resting || this.sleepWait) return;
-    const mon = this.monsters.filter((m) => !m.dead).sort((a, b) => Math.hypot(a.x - pl.x, a.y - pl.y) - Math.hypot(b.x - pl.x, b.y - pl.y))[0];
-    if (!mon) return;
-    const d = Math.hypot(mon.x - pl.x, mon.y - pl.y);
+    const mon = this.foes().sort((a, b) => Math.hypot(a.x - pl.x, a.y - pl.y) - Math.hypot(b.x - pl.x, b.y - pl.y))[0];
+    const d = mon ? Math.hypot(mon.x - pl.x, mon.y - pl.y) : Infinity;
     const reach = Math.max(58, this.weapon()?.w.reach ?? 0);
-    if (this.padOn) {
-      if (d < reach) this.attackMonster(mon, reach);
-    } else if (d < 110 && this.autoTarget !== mon) {
-      this.autoTarget = mon;
-      this.walkTo(mon.x + (pl.x <= mon.x ? -1 : 1) * 18, mon.y, { monster: mon });
+    if (mon && this.padOn && d < reach) return this.attackMonster(mon, reach);
+    if (mon && !this.padOn && d < 110) {
+      if (this.autoTarget !== mon) {
+        this.autoTarget = mon;
+        this.walkTo(mon.x + (pl.x <= mon.x ? -1 : 1) * 18, mon.y, { monster: mon });
+      }
+      return;
+    }
+    // 허공 공격으로 시작했으면 누르고 있는 동안 계속 휘두른다
+    if (this.airMode) this.airAttack();
+  }
+
+  /** 공격 연습용 허수아비 (캠프 옆에 하나) */
+  private dummy?: Monster;
+
+  private placeDummy() {
+    const c = this.world.camp;
+    // 캠프 둘레에서 서 있을 만한 빈자리를 찾는다 (어느 기기에서나 같은 자리)
+    const spots: [number, number][] = [[4, 2], [-4, 2], [4, 0], [-4, 0], [5, 3], [-5, 3], [3, 4], [-3, 4], [6, 1], [-6, 1], [0, 5], [5, -2], [-5, -2]];
+    for (const [dx, dy] of spots) {
+      const x = (c.tx + dx + 0.5) * TILE;
+      const y = (c.ty + dy + 1) * TILE - 2;
+      const free = [-10, 0, 10].every((ox) => this.walkable(x + ox, y) && this.walkable(x + ox, y + 14));
+      if (!free || this.placedOcc.has(`${c.tx + dx},${c.ty + dy}`)) continue;
+      const m = new Monster(this, { id: 'dummy', name: '허수아비', hp: 9999, dmg: 0, speed: 0, drops: [], n: [0, 0] }, x, y);
+      m.kind = 'dummy';
+      m.id = 'dummy';
+      m.sprite.setDepth(y);
+      // 맞아도 밀려나지 않고 체력도 닳지 않는다 (무기의 밀어내기·콤보 마무리도 마찬가지)
+      const hit0 = m.hit.bind(m);
+      const raw = m as unknown as { bar: Phaser.GameObjects.Graphics; stun: number; chasing: boolean };
+      m.hit = (_d: number, fx: number, fy: number) => {
+        hit0(0, fx, fy, () => false);
+        m.x = x;
+        m.y = y;
+        raw.stun = 0;
+        raw.chasing = false;
+        raw.bar.setVisible(false);
+      };
+      this.dummy = m;
+      return;
+    }
+  }
+
+  /** 때릴 수 있는 것: 살아 있는 몬스터 + 허수아비 */
+  private foes() {
+    const list = this.monsters.filter((m) => !m.dead);
+    if (this.dummy && !this.room && !this.dungeon) list.push(this.dummy);
+    return list;
+  }
+
+  /** 주민 머리 위에 호감도를 보여 준다 */
+  private heartLabels() {
+    for (const b of this.bears) {
+      if (!b.resident) continue;
+      const txt = `💗${village.hearts(b.id)}`;
+      if (!b.label) b.label = this.add.text(b.x, b.y, txt, { fontFamily: 'sans-serif', fontSize: '9px', color: '#ffffff', fontStyle: 'bold', stroke: '#b5486b', strokeThickness: 3 }).setOrigin(0.5, 1);
+      else if (b.label.text !== txt) b.label.setText(txt);
+    }
+  }
+
+  /** 마지막으로 누른 행동이 허공 공격이었다 */
+  private airMode = false;
+
+  /** 허공 공격: 보는 쪽으로 무기(없으면 검·주먹)를 휘두른다. 맞는 것이 없어도 콤보가 이어진다 */
+  private airAttack() {
+    const pl = this.player;
+    if (!pl || pl.lying) return;
+    const wp = this.weapon();
+    const now = this.time.now;
+    if (now - this.lastHit < (260 * (wp?.w.slow ?? 1)) / (1 + abilities.power('bee') / 100)) return;
+    this.lastHit = now;
+    const pad = this.registry.get('pad') as { x: number; y: number } | null;
+    const left = pad && Math.abs(pad.x) > 0.2 ? pad.x < 0 : pl.sprite.flipX;
+    pl.face('side', left);
+    const tx = pl.x + (left ? -1 : 1) * Math.min(Math.max(30, (wp?.w.reach ?? 30) * 0.7), 70);
+    const ty = pl.y;
+    this.combo = now - this.comboAt < COMBO_GAP ? this.combo + 1 : 1;
+    this.comboAt = now;
+    const fin = this.combo % 3 === 0;
+    if (this.combo >= 2) this.game.events.emit('combo', this.combo, fin);
+    let delay = 0;
+    if (wp) {
+      this.tellAct(`W:${Math.round(tx)},${Math.round(ty)}`);
+      delay = this.weaponFx(pl, wp.id, wp.lv, tx, ty, true);
+    } else {
+      this.slashFx(pl, { x: tx, y: ty } as Monster);
+    }
+    sfx.tap();
+    if (fin) {
+      this.time.delayedCall(delay, () => {
+        this.cameras.main.shake(100, 0.004);
+        buzz(25);
+        this.fx.sparkle.explode(8, tx, ty - 12);
+        const ring = this.add.circle(tx, ty - 8, 6).setStrokeStyle(3, 0xfff1a8).setDepth(ty + 2);
+        this.tweens.add({ targets: ring, scale: 4, alpha: 0, duration: 260, ease: 'Cubic.easeOut', onComplete: () => ring.destroy() });
+      });
     }
   }
 
@@ -2386,6 +2481,18 @@ export class IslandScene extends Phaser.Scene {
   private damageMonster(m: Monster, dmg: number, extra = false) {
     const pl = this.player!;
     if (m.dead) return;
+    if (m === this.dummy) {
+      // 허수아비: 맞아도 닳지 않고 흔들리기만 한다
+      m.hit(0, pl.x, pl.y, this.walkable);
+      const left = pl.x > m.x;
+      this.tweens.killTweensOf(m.sprite);
+      m.sprite.setAngle(0).setScale(1);
+      this.tweens.add({ targets: m.sprite, angle: (left ? -1 : 1) * Math.min(22, 8 + dmg * 2), duration: 70, yoyo: true, ease: 'Quad.easeOut' });
+      this.fx.dust.explode(3, m.x, m.y - 14);
+      const cam = this.cameras.main;
+      this.game.events.emit('float', `${dmg}`, (m.x - cam.worldView.x) * cam.zoom, (m.y - 40 - cam.worldView.y) * cam.zoom);
+      return;
+    }
     const host = this.isHost();
     m.hit(dmg, pl.x, pl.y, this.walkable);
     let fz = 0;
@@ -3172,6 +3279,7 @@ export class IslandScene extends Phaser.Scene {
     const b = new Bear(this, id, x, y, 34);
     b.resident = true;
     this.bears.push(b);
+    this.heartLabels();
     this.npcTimers.set(b, 1 + Math.random() * 3);
     this.roomGuest = b;
     this.fx.heart.explode(4, x, y - 30);
@@ -4280,6 +4388,7 @@ export class IslandScene extends Phaser.Scene {
     const b = new Bear(this, id, x, y, 38);
     b.resident = true;
     this.bears.push(b);
+    this.heartLabels();
     this.npcTimers.set(b, 1 + Math.random() * 4);
     if (anim) {
       this.fx.puff.explode(8, x, y - 14);
