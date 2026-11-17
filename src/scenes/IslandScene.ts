@@ -3543,7 +3543,7 @@ export class IslandScene extends Phaser.Scene {
       this.zoneChanged();
       // 꾸미기 중에는 카메라가 곰을 따라가지 않으니, 방이 화면 위쪽에 오도록 직접 맞춘다 (아래는 꾸미기 창이 가린다)
       if (this.registry.get('view') === 'build') {
-        this.frameRoom();
+        this.frameRoom(false);
       }
       this.registry.set('room', true);
       // 방 모양이 바뀌어 바닥 밖에 놓이게 된 가구는 재료와 함께 창고로 돌려보낸다
@@ -3575,10 +3575,17 @@ export class IslandScene extends Phaser.Scene {
     return `${PIECES[p.id]?.floor ? 'f' : 'o'}${p.tx},${p.ty}`;
   }
 
-  /** 집 안 꾸미기: 방 전체가 꾸미기 창에 가리지 않고 한눈에 보이도록 카메라를 맞춘다 */
-  private frameRoom() {
+  /** 집 안 꾸미기에서 돋보기(멀리)를 눌러 방 전체를 보고 있는가 */
+  private roomFit = false;
+
+  /**
+   * 집 안 꾸미기의 카메라: 평소 크기 그대로 방의 왼쪽 위부터 보여 준다.
+   * fit(돋보기)이면 방 전체가 꾸미기 창에 가리지 않고 한눈에 보이도록 줄인다.
+   */
+  private frameRoom(fit = this.roomFit) {
     const rm = this.room;
     if (!rm) return;
+    this.roomFit = fit;
     const cam = this.cameras.main;
     const W = this.scale.width;
     const H = this.scale.height;
@@ -3586,11 +3593,15 @@ export class IslandScene extends Phaser.Scene {
     // 가로 화면: 꾸미기 창이 오른쪽 아래에 있으니 왼쪽에 · 세로 화면: 창 위쪽에
     const availW = wide ? 300 : W - 12;
     const availH = wide ? H - HUD_TOP_H - 16 : H - HUD_TOP_H - HUD_BOTTOM_H - 200;
-    const zoom = Math.max(0.8, Math.min(WORLD_ZOOM, availW / rm.w, availH / (rm.h + 30)));
-    const sx = wide ? 8 + availW / 2 : W / 2;
-    const sy = HUD_TOP_H + availH / 2 + 8;
+    const zoom = fit ? Math.max(0.8, Math.min(WORLD_ZOOM, availW / rm.w, availH / (rm.h + 30))) : WORLD_ZOOM;
+    // 자리에 다 안 들어가면 왼쪽 위에 맞춘다 (가운데에 두면 양쪽이 다 잘린다)
+    const rw = rm.w * zoom;
+    const rh = (rm.h + 30) * zoom;
+    const sx = rw > availW ? 8 + rw / 2 : (wide ? 8 : 6) + availW / 2;
+    const sy = HUD_TOP_H + 8 + (rh > availH ? rh / 2 : availH / 2);
     // 방이 섬 가장자리에 있어도 원하는 자리에 보이도록 카메라 울타리를 잠깐 푼다
     cam.removeBounds();
+    this.tweens.killTweensOf(cam);
     cam.setZoom(zoom);
     cam.centerOn(rm.x + rm.w / 2 + (W / 2 - sx) / zoom, rm.y + rm.h / 2 - 10 + (H / 2 - sy) / zoom);
   }
@@ -5120,7 +5131,7 @@ export class IslandScene extends Phaser.Scene {
     if (v === 'build') {
       cam.stopFollow();
       if (this.player) this.player.target = null;
-      this.frameRoom();
+      this.frameRoom(false);
     } else {
       this.buildDrag = null;
       this.closeRoomMenu();
@@ -5132,6 +5143,8 @@ export class IslandScene extends Phaser.Scene {
   }
 
   private onBuildZoom() {
+    // 집 안: 평소 크기 ↔ 방 전체 보기
+    if (this.room) return this.frameRoom(!this.roomFit);
     const cam = this.cameras.main;
     const far = cam.zoom > 1.2;
     this.tweens.add({ targets: cam, zoom: far ? 0.9 : WORLD_ZOOM, duration: 250, ease: 'Sine.easeInOut' });
