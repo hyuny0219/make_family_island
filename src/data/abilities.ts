@@ -40,7 +40,7 @@ const B = (i: number, name: string, drop: ItemId): MonsterDef => ({
   id: `boss${i}`,
   tex: `boss_${i}`,
   name,
-  hp: 24 + i * 10,
+  hp: 40 + i * 16,
   dmg: 10 + i * 2,
   speed: 44 + i * 2,
   drops: [[drop, 4], ['crystal', 1]],
