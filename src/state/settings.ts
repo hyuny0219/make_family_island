@@ -9,6 +9,8 @@ interface Settings {
   musicVol: number;
   /** 조작 안내를 봤다 */
   guide: boolean;
+  /** 선명한 화면 (캔버스를 화소가 촘촘하게 그린다. 느린 폰에서는 끌 수 있다) */
+  sharp: boolean;
   /** 곰을 고를 때 전체 화면으로 바꾸기 (지원하는 브라우저만) */
   fullscreen: boolean;
   /** 화면 방향: 가로가 기본 (세로는 설정에서 바꾼다) */
@@ -17,9 +19,9 @@ interface Settings {
 
 function load(): Settings {
   try {
-    return { sound: true, vibrate: true, music: true, soundVol: 1, musicVol: 1, guide: false, fullscreen: true, landscape: true, ...(JSON.parse(localStorage.getItem(KEY) ?? '{}') as Partial<Settings>) };
+    return { sound: true, vibrate: true, music: true, soundVol: 1, musicVol: 1, guide: false, sharp: true, fullscreen: true, landscape: true, ...(JSON.parse(localStorage.getItem(KEY) ?? '{}') as Partial<Settings>) };
   } catch {
-    return { sound: true, vibrate: true, music: true, soundVol: 1, musicVol: 1, guide: false, fullscreen: true, landscape: true };
+    return { sound: true, vibrate: true, music: true, soundVol: 1, musicVol: 1, guide: false, sharp: true, fullscreen: true, landscape: true };
   }
 }
 

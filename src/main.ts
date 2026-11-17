@@ -17,6 +17,7 @@ import { progress } from './state/progress';
 import { village } from './state/village';
 import { family } from './sync/family';
 import './sync/bridge';
+import { installHiRes } from './hires';
 
 /**
  * 화면의 기준 크기. 세로 화면은 360×640, 가로 화면은 640×360을 기준으로 삼는다.
@@ -45,6 +46,8 @@ const game = new Phaser.Game({
   },
   scene: [BootScene, IslandScene, MergeScene, HudScene, StoryScene],
 });
+
+installHiRes(game);
 
 // 폰을 돌리면 기준 크기를 바꾼다 (화면을 다시 짜는 일은 HUD가 크기 변화를 보고 한다)
 const typing = () => document.activeElement instanceof HTMLInputElement;
