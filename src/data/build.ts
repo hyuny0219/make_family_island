@@ -97,6 +97,27 @@ export const PIECE_LIST: Piece[] = [
   P('bathtub', '욕조', 'furniture', 2, 1, { stone: 6, shell: 2 }, 5, true),
   P('piano', '피아노', 'furniture', 2, 1, { plank: 5, crystal: 1 }, 8, true),
   P('toybox', '장난감 상자', 'furniture', 1, 1, { plank: 2, jelly: 2 }, 3, true),
+  // 부엌
+  P('fridge', '냉장고', 'furniture', 1, 1, { brick: 2, stone: 4, crystal: 1 }, 6, true),
+  P('sink', '싱크대', 'furniture', 1, 1, { plank: 2, stone: 4 }, 4, true),
+  P('dining', '식탁', 'furniture', 2, 1, { plank: 4, fruit: 2 }, 5, true),
+  P('cupboard', '찬장', 'furniture', 1, 1, { plank: 3, shell: 2 }, 4, true),
+  P('oven', '오븐', 'furniture', 1, 1, { brick: 3, coal: 2 }, 5, true),
+  P('counter', '조리대', 'furniture', 1, 1, { plank: 2, fruit: 2 }, 3, true),
+  // 거실·공부방
+  P('desk', '책상', 'furniture', 1, 1, { plank: 3, twig: 2 }, 4, true),
+  P('tv', '텔레비전', 'furniture', 1, 1, { plank: 2, coal: 2, crystal: 1 }, 7, true),
+  P('armchair', '안락의자', 'furniture', 1, 1, { plank: 1, flower: 4 }, 3, true),
+  P('dresser', '서랍장', 'furniture', 1, 1, { plank: 3, flower: 1 }, 4, true),
+  P('longsofa', '긴 소파', 'furniture', 2, 1, { plank: 3, flower: 6 }, 6, true),
+  P('teatable', '찻상', 'furniture', 1, 1, { log: 2, shell: 1 }, 3, true),
+  // 욕실·가전
+  P('washer', '세탁기', 'furniture', 1, 1, { brick: 2, stone: 4, jelly: 2 }, 6, true),
+  P('washstand', '세면대', 'furniture', 1, 1, { stone: 4, shell: 2 }, 4, true),
+  P('toilet', '변기', 'furniture', 1, 1, { stone: 5, plank: 1 }, 3, true),
+  P('vanity', '화장대', 'furniture', 1, 1, { plank: 3, shell: 2 }, 5, true),
+  P('clock', '괘종시계', 'furniture', 1, 1, { plank: 3, coal: 1, crystal: 1 }, 7, true),
+  P('aquarium', '어항', 'furniture', 1, 1, { stone: 3, shell: 3, jelly: 2 }, 6, true),
   // 실내 장식
   P('rug', '둥근 깔개', 'deco', 2, 2, { flower: 3, twig: 3 }, 2, false, true),
   P('floorlamp', '스탠드', 'deco', 1, 1, { stone: 2, coal: 1 }, 3, true),

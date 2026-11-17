@@ -248,6 +248,9 @@ if __name__ == "__main__":
     HOME = {
         "home_a.png": [("rug", 46), ("bookshelf", 36), ("fireplace", 38), ("wardrobe", 38), ("stove", 32), ("bathtub", 44)],
         "home_b.png": [("floorlamp", 38), ("plant", 34), ("toybox", 28), ("piano", 44), ("picture", 26), ("window", 28)],
+        "home_c.png": [("fridge", 40), ("sink", 34), ("dining", 46), ("cupboard", 38), ("oven", 34), ("counter", 32)],
+        "home_d.png": [("desk", 34), ("tv", 34), ("armchair", 30), ("dresser", 34), ("longsofa", 46), ("teatable", 28)],
+        "home_e.png": [("washer", 32), ("washstand", 36), ("toilet", 30), ("vanity", 38), ("clock", 42), ("aquarium", 36)],
     }
     for sheet, items in HOME.items():
         for i, (name, fit) in enumerate(items):
