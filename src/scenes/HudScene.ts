@@ -31,7 +31,11 @@ import type { IslandScene } from './IslandScene';
 
 // 위쪽 줄(섬 이름·창고 단추) 높이. 예전에는 그 아래에 가진 재료가 한 줄로 늘어서 있었다(96)
 export const HUD_TOP_H = 58;
-export const HUD_BOTTOM_H = 76;
+/** 아래 메뉴 줄의 높이. 가로 화면에는 메뉴 줄이 없어서(왼쪽 위 메뉴 단추로 옮김) 여백만 남긴다 */
+export let HUD_BOTTOM_H = 76;
+export const setHudWide = (wide: boolean) => {
+  HUD_BOTTOM_H = wide ? 10 : 76;
+};
 
 const FONT = '"Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif';
 
@@ -941,6 +945,9 @@ export class HudScene extends Phaser.Scene {
   }
 
   private makeTabBar(W: number, H: number) {
+    this.tabNodes = [];
+    // 가로 화면: 아래 메뉴 줄 없이 게임 화면을 넓게 쓴다 (화면 전환은 왼쪽 위 메뉴 단추에서)
+    if (this.wide) return;
     const y = H - HUD_BOTTOM_H + 8;
     this.panel(10, y, W - 20, HUD_BOTTOM_H - 18, 18);
     const slotW = (W - 20) / TABS.length;
@@ -2004,19 +2011,46 @@ export class HudScene extends Phaser.Scene {
       this.menuBtn.setVisible(this.view === 'explore');
       (this.menuBtn.list[1] as Phaser.GameObjects.Text).setText(open ? '✕' : '☰');
     }
+    this.backBtn?.setVisible(this.view !== 'explore');
     // 접혀 있어도 받을 선물이나 끝낸 퀘스트가 있으면 점으로 알려 준다
     this.menuDot?.setVisible(!open && (daily.ready || quests.claimable));
+  }
+
+  /** 가로 화면인가 (아래 메뉴 줄 대신 왼쪽 위 메뉴 단추를 쓴다) */
+  private get wide() {
+    return this.scale.width >= this.scale.height * 1.2;
+  }
+
+  private backBtn?: Phaser.GameObjects.Container;
+
+  /** 글자가 있는 알약 단추 (가로 화면의 화면 전환) */
+  private pillButton(x: number, y: number, label: string, w: number, color: number, onTap: () => void) {
+    const c = this.add.container(x, y);
+    const g = this.add.graphics();
+    g.fillStyle(0x000000, 0.15).fillRoundedRect(-w / 2, -18 + 3, w, 36, 18);
+    g.fillStyle(color).fillRoundedRect(-w / 2, -18, w, 36, 18);
+    g.lineStyle(2, 0xffffff, 0.9).strokeRoundedRect(-w / 2, -18, w, 36, 18);
+    c.add([g, this.add.text(0, 0, label, { fontFamily: FONT, fontSize: '13px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0.5)]);
+    c.setSize(w + 4, 40).setInteractive({ useHandCursor: true });
+    c.on('pointerdown', () => {
+      if (this.registry.get('modal')) return;
+      sfx.tap();
+      buzz(8);
+      this.tweens.add({ targets: c, scale: { from: 0.88, to: 1 }, duration: 240, ease: 'Back.easeOut' });
+      onTap();
+    });
+    return c;
   }
 
   private makeSideButtons(W: number) {
     this.sideBtns = [];
     const ST = HUD_TOP_H + 40;
-    this.roundButton(W - 30, ST + 30, '🏕️', () => {
+    const homeBtn = this.roundButton(W - 30, ST + 30, '🏕️', () => {
       if (!this.registry.get('bear')) return;
       this.game.events.emit('go-home');
       this.toast('🏕️ 캠프로 돌아왔어요');
     });
-    this.roundButton(W - 30, ST + 74, '⚙️', () => this.openSettings());
+    const setBtn = this.roundButton(W - 30, ST + 74, '⚙️', () => this.openSettings());
     // 말풍선: 누르면 이모지가 옆으로 펼쳐진다
     const EMOTES = ['👋', '❤️', '😆', '👍', '🙏', '❗'];
     const emoteBtn = this.roundButton(30, ST + 30, '💬', () => {
@@ -2045,14 +2079,14 @@ export class HudScene extends Phaser.Scene {
     this.sideBtns.push(row as Phaser.GameObjects.Container);
     this.emoteRow = row;
     // 변신 (보스를 잡아 얻은 능력)
-    this.roundButton(W - 30, ST + 162, '🎩', () => this.openAbilities());
-    this.roundButton(W - 30, ST + 206, '🗺️', () => this.openMap());
+    const abBtn = this.roundButton(W - 30, ST + 162, '🎩', () => this.openAbilities());
+    const mapBtn = this.roundButton(W - 30, ST + 206, '🗺️', () => this.openMap());
     // 퀘스트 수첩 (받을 보상이 있으면 빨간 점)
     const qb = this.roundButton(30, ST + 162, '📜', () => this.openQuestBook());
     this.questDot = this.add.circle(13, -13, 5, 0xe8604c).setStrokeStyle(1.5, 0xffffff).setVisible(false);
     qb.add(this.questDot);
     // 보물 도감
-    this.roundButton(30, ST + 118, '👑', () => {
+    const trBtn = this.roundButton(30, ST + 118, '👑', () => {
       if (this.registry.get('bear')) this.openTreasures();
     });
     // 매일 선물 (안 받았으면 빨간 점)
@@ -2073,6 +2107,21 @@ export class HudScene extends Phaser.Scene {
     this.menuDot = this.add.circle(13, -13, 5, 0xe8604c).setStrokeStyle(1.5, 0xffffff).setVisible(false);
     mb.add(this.menuDot);
     this.menuBtn = mb;
+    this.backBtn = undefined;
+    if (this.wide) {
+      // 가로 화면: 메뉴 단추 오른쪽으로 두 줄에 펼친다 → 아래의 조이스틱·행동 단추와 겹치지 않는다
+      const y1 = HUD_TOP_H + 26;
+      const y2 = y1 + 44;
+      const make = this.pillButton(30 + 26 + 44, y1, '🔨 만들기', 84, 0xffd166, () => this.setView('merge'));
+      const deco = this.pillButton(30 + 26 + 44 + 92, y1, '🏝️ 꾸미기', 84, 0xb9e3a1, () => this.setView('build'));
+      this.sideBtns.push(make, deco);
+      // 첫 줄은 짧게 (가운데 위의 퀘스트 알림과 겹치지 않게), 나머지는 둘째 줄
+      emoteBtn.setPosition(30 + 26 + 44 + 92 + 42 + 26, y1);
+      [homeBtn, setBtn, abBtn, mapBtn, this.giftBtn, trBtn, qb, this.feedBtn].forEach((b, i) => b.setPosition(30 + 44 * i, y2));
+      row.setPosition(30 + 26, y2 + 44);
+      // 만들기·꾸미기 화면에서는 같은 자리에 돌아가는 단추
+      this.backBtn = this.pillButton(52, y1, '↩ 탐험', 84, 0xffd166, () => this.setView('explore')).setDepth(31).setVisible(false);
+    }
     let saved = '1';
     try {
       saved = localStorage.getItem('mfi.v1.menu') ?? '1';
@@ -2629,7 +2678,7 @@ export class HudScene extends Phaser.Scene {
     g.fillStyle(COLORS.uiBg).fillRoundedRect(-PW / 2, -PH / 2, PW, PH, 26);
     g.lineStyle(3, 0xe8d5a9).strokeRoundedRect(-PW / 2, -PH / 2, PW, PH, 26);
     const title = this.add
-      .text(0, -PH / 2 + 30, 'BEAR LORD', { fontFamily: FONT, fontSize: '30px', color: '#ffd166', fontStyle: 'bold', stroke: '#7a4a2b', strokeThickness: 7 })
+      .text(0, -PH / 2 + 30, '베어로드', { fontFamily: FONT, fontSize: '30px', color: '#ffd166', fontStyle: 'bold', stroke: '#7a4a2b', strokeThickness: 7 })
       .setOrigin(0.5)
       .setLetterSpacing(2);
     const kor = this.add
