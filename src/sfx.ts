@@ -114,7 +114,72 @@ export const sfx = {
 };
 
 // ───────────────────────── 배경음악 ─────────────────────────
-// 파일 없이 WebAudio로 연주하는 잔잔한 오르골풍 반복곡 (8마디, 5음계).
+// 녹음된 곡(public/assets/music/<분위기>.mp3)을 분위기에 따라 바꿔 튼다: 낮 · 밤 · 보스전.
+// 곡을 못 받았을 때만, 파일 없이 WebAudio로 연주하는 오르골풍 반복곡(8마디, 5음계)으로 대신한다.
+
+export type MusicMood = 'day' | 'night' | 'boss';
+const TRACK_VOL: Record<MusicMood, number> = { day: 0.34, night: 0.32, boss: 0.36 };
+interface Track {
+  el: HTMLAudioElement;
+  gain: GainNode;
+}
+const tracks = new Map<MusicMood, Track>();
+let mood: MusicMood = 'day';
+/** 곡 파일을 쓸 수 없다 → 합성 음악으로 */
+let fileFailed = false;
+
+function track(m: MusicMood): Track | null {
+  if (!ctx) return null;
+  let t = tracks.get(m);
+  if (!t) {
+    const el = new Audio(`${import.meta.env.BASE_URL}assets/music/${m}.mp3`);
+    el.loop = true;
+    el.preload = 'auto';
+    // 아이폰은 audio.volume을 못 바꾸므로 WebAudio의 gain으로 크기를 조절한다
+    const gain = ctx.createGain();
+    gain.gain.value = 0.0001;
+    try {
+      ctx.createMediaElementSource(el).connect(gain).connect(ctx.destination);
+    } catch {
+      fileFailed = true;
+      return null;
+    }
+    el.addEventListener('error', () => {
+      fileFailed = true;
+      refreshMusic();
+    });
+    t = { el, gain };
+    tracks.set(m, t);
+  }
+  return t;
+}
+
+/** 분위기에 맞는 곡으로 바꾼다 (낮 · 밤 · 보스전). 부드럽게 넘어간다 */
+export function setMusicMood(m: MusicMood) {
+  if (m === mood) return;
+  mood = m;
+  refreshMusic();
+}
+
+function playTracks(want: boolean) {
+  if (!ctx) return;
+  const now = ctx.currentTime;
+  const cur = want && !fileFailed ? track(mood) : null;
+  tracks.forEach((t, m) => {
+    t.gain.gain.cancelScheduledValues(now);
+    if (t === cur) {
+      t.gain.gain.setTargetAtTime(TRACK_VOL[m], now, 0.5);
+      if (t.el.paused) {
+        void t.el.play().catch(() => {
+          /* 첫 터치 전에는 못 튼다 → 다음 refreshMusic에서 다시 */
+        });
+      }
+    } else {
+      t.gain.gain.setTargetAtTime(0.0001, now, 0.25);
+      if (!t.el.paused) window.setTimeout(() => tracks.get(mood) !== t || !settings.music || document.hidden ? t.el.pause() : undefined, 1200);
+    }
+  });
+}
 
 const BPM = 84;
 const BEAT = 60 / BPM / 2; // 8분음표 길이(초)
@@ -168,7 +233,10 @@ function schedule() {
 /** 설정·화면 상태에 맞춰 배경음악을 켜거나 끈다 */
 export function refreshMusic() {
   if (!ctx) return;
-  const want = settings.music && !document.hidden;
+  const on = settings.music && !document.hidden;
+  playTracks(on);
+  // 합성 음악은 곡 파일을 못 쓸 때만
+  const want = on && fileFailed;
   if (want && musicTimer === null) {
     if (!musicGain) {
       musicGain = ctx.createGain();

@@ -31,7 +31,7 @@ import { ENTERABLE, LIGHTS, PIECES, PIECE_LIST, houseKey, roomPlan, type Piece }
 import { Bear } from '../objects/Bear';
 import { Slime } from '../objects/Slime';
 import { TREASURES, treasureKey } from '../data/treasures';
-import { sfx, buzz } from '../sfx';
+import { sfx, buzz, setMusicMood } from '../sfx';
 import { withJosa } from '../util/korean';
 import { HUD_BOTTOM_H, HUD_TOP_H } from './HudScene';
 
@@ -926,6 +926,8 @@ export class IslandScene extends Phaser.Scene {
     this.updatePad();
     this.updateHold();
     this.updateJump();
+    // 배경음악: 던전에서는 보스전 곡, 밤에는 밤 곡
+    setMusicMood(this.dungeon ? 'boss' : this.wasNight ? 'night' : 'day');
     for (const bear of this.bears) {
       if (bear === this.player && this.flying) continue; // 날아가는 중에는 트램펄린이 움직인다
       const arrived = bear.step(dt, this.walkable);
@@ -5155,7 +5157,7 @@ export class IslandScene extends Phaser.Scene {
       },
       onComplete: () => {
         icon.destroy();
-        sfx.pop();
+        sfx.play('pickup', 0.45, 'pop');
         inventory.add(id, 1);
         quests.bump('gather');
         quests.bump(`gather:${id}`);
