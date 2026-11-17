@@ -22,10 +22,7 @@ export class BootScene extends Phaser.Scene {
   preload() {
     const W = this.scale.width;
     const H = this.scale.height;
-    const bar = this.add.rectangle(W / 2 - 80, H / 2, 0, 10, 0xffffff).setOrigin(0, 0.5);
-    this.add.rectangle(W / 2, H / 2, 164, 14).setStrokeStyle(2, 0xffffff);
-    this.load.on('progress', (p: number) => (bar.width = 160 * p));
-    this.add.text(W / 2, H / 2 + 26, '🏝️ 섬을 준비하고 있어요…', { fontFamily: 'sans-serif', fontSize: '13px', color: '#ffffff' }).setOrigin(0.5);
+    this.loadingScreen(W, H);
 
     this.load.setPath('assets/');
     this.load.spritesheet('tiles', 'tiles.png', { frameWidth: 24, frameHeight: 24, margin: 1, spacing: 2 });
@@ -59,6 +56,101 @@ export class BootScene extends Phaser.Scene {
     if (!story.seen('opening')) return void this.scene.start('Story', { pages: OPENING, key: 'opening', boot: true });
     this.scene.start('Island');
     this.scene.launch('Hud');
+  }
+
+  /**
+   * 움직이는 로딩 화면: 곰 가족의 배가 물결을 타고 섬 쪽으로 간다 (불러온 만큼 앞으로).
+   * 배와 곰 그림은 맨 먼저 불러와서, 도착하는 대로 그려 넣는다.
+   */
+  private loadingScreen(W: number, H: number) {
+    const FONT = '"Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif';
+    const cy = H * 0.52;
+    const x0 = W / 2 - Math.min(130, W * 0.36);
+    const x1 = W / 2 + Math.min(130, W * 0.36);
+    const g = this.add.graphics();
+    g.fillGradientStyle(0xbfe6f5, 0xbfe6f5, 0x8fd3ee, 0x8fd3ee, 1).fillRect(0, 0, W, cy + 6);
+    g.fillStyle(0x5bb3d6).fillRect(0, cy + 6, W, H - cy - 6);
+    // 해와 구름
+    const sun = this.add.circle(W * 0.8, H * 0.16, 22, 0xffe08a);
+    this.tweens.add({ targets: sun, scale: 1.12, duration: 1400, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+    for (const [fx, fy, sc, sp] of [[0.2, 0.2, 1, 26000], [0.62, 0.3, 0.7, 34000], [0.95, 0.12, 0.85, 30000]] as const) {
+      const c = this.add.container(W * fx, H * fy).setScale(sc);
+      const cg = this.add.graphics();
+      cg.fillStyle(0xffffff, 0.95).fillCircle(-16, 4, 12).fillCircle(0, -2, 16).fillCircle(17, 4, 11).fillRoundedRect(-26, 4, 52, 12, 6);
+      c.add(cg);
+      this.tweens.add({ targets: c, x: c.x - W * 0.5, duration: sp, repeat: -1, yoyo: true, ease: 'Sine.easeInOut' });
+    }
+    // 물결 세 줄 (서로 엇갈려 흐른다)
+    const waves: Phaser.GameObjects.Graphics[] = [];
+    for (let i = 0; i < 3; i++) {
+      const wv = this.add.graphics().setDepth(i === 0 ? 1 : 3);
+      const y = cy + i * 12;
+      wv.fillStyle([0x7ec8e3, 0x6cbfe0, 0x5bb3d6][i]);
+      wv.beginPath();
+      wv.moveTo(-80, y + 60);
+      for (let x = -80; x <= W + 80; x += 8) wv.lineTo(x, y + Math.sin((x / 40) * Math.PI) * 4);
+      wv.lineTo(W + 80, y + 60);
+      wv.closePath();
+      wv.fillPath();
+      this.tweens.add({ targets: wv, x: i % 2 ? 80 : -80, duration: 2600 + i * 700, repeat: -1, ease: 'Linear' });
+      waves.push(wv);
+    }
+    // 도착할 섬
+    const isle = this.add.graphics().setDepth(2);
+    isle.fillStyle(0xf3e0a6).fillEllipse(x1 + 26, cy + 4, 74, 22);
+    isle.fillStyle(0x8bd17c).fillEllipse(x1 + 26, cy - 3, 56, 18);
+    isle.fillStyle(0x8a6d4b).fillRect(x1 + 30, cy - 26, 4, 20);
+    isle.fillStyle(0x5fae52).fillCircle(x1 + 32, cy - 30, 11).fillCircle(x1 + 23, cy - 24, 8).fillCircle(x1 + 41, cy - 24, 8);
+    // 배 (그림이 오기 전에는 종이배 모양)
+    const boat = this.add.container(x0, cy + 4).setDepth(2).setScale(1.35);
+    const paper = this.add.graphics();
+    paper.fillStyle(0x9c6b3f).fillRoundedRect(-22, -8, 44, 12, 5);
+    paper.fillStyle(0xfff6e0).fillTriangle(0, -34, 0, -10, 18, -10);
+    paper.lineStyle(2, 0x8a6d4b).lineBetween(0, -36, 0, -8);
+    boat.add(paper);
+    this.tweens.add({ targets: boat, angle: { from: -4, to: 4 }, duration: 900, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+    const bob = this.tweens.add({ targets: boat, y: cy - 2, duration: 700, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+    const riders = ['dad', 'mom', 'kid', 'baby'];
+    this.load.setPath('assets/');
+    this.load.image('boat_side', 'boat_side.png');
+    for (const r of riders) this.load.image(`${r}_side`, `${r}_side.png`);
+    this.load.once('filecomplete-image-boat_side', () => {
+      paper.destroy();
+      boat.addAt(this.add.image(0, 6, 'boat_side').setOrigin(0.5, 1).setScale(1.5), 0);
+    });
+    riders.forEach((r, i) => {
+      this.load.once(`filecomplete-image-${r}_side`, () => {
+        const b = this.add.image(-24 + i * 15, -8 - (i % 2) * 2, `${r}_side`).setOrigin(0.5, 1).setScale(0.62).setAlpha(0);
+        boat.addAt(b, 0);
+        this.tweens.add({ targets: b, alpha: 1, duration: 200 });
+        this.tweens.add({ targets: b, y: b.y - 3, duration: 380, yoyo: true, repeat: -1, delay: i * 130, ease: 'Sine.easeInOut' });
+      });
+    });
+    // 뱃길 점선과 글자
+    const dots = this.add.graphics().setDepth(4);
+    const title = this.add.text(W / 2, H * 0.3, '🏝️ 가족 섬 만들기', { fontFamily: FONT, fontSize: '24px', color: '#ffffff', fontStyle: 'bold', stroke: '#3d8fb5', strokeThickness: 6 }).setOrigin(0.5).setDepth(5);
+    this.tweens.add({ targets: title, y: title.y - 5, duration: 1200, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+    const TIPS = ['섬으로 가는 중…', '모닥불을 피우는 중…', '물고기를 깨우는 중…', '구름을 걷어 내는 중…', '곰 가족이 준비하는 중…'];
+    const tip = this.add.text(W / 2, cy + 62, TIPS[0], { fontFamily: FONT, fontSize: '13px', color: '#ffffff', fontStyle: 'bold' }).setOrigin(0.5).setDepth(5);
+    const pct = this.add.text(W / 2, cy + 82, '0%', { fontFamily: FONT, fontSize: '11px', color: '#e6f6ff' }).setOrigin(0.5).setDepth(5);
+    let n = 0;
+    const tipTimer = this.time.addEvent({ delay: 1300, loop: true, callback: () => tip.setText(TIPS[++n % TIPS.length]) });
+    let shown = 0;
+    let want = 0;
+    const draw = () => {
+      shown += (want - shown) * 0.12;
+      boat.x = x0 + (x1 - 34 - x0) * shown;
+      pct.setText(`${Math.round(shown * 100)}%`);
+      dots.clear();
+      for (let x = x0; x < x1 - 30; x += 12) dots.fillStyle(0xffffff, x < boat.x ? 0.9 : 0.35).fillCircle(x, cy + 40, x < boat.x ? 2.5 : 2);
+    };
+    this.load.on('progress', (p: number) => (want = p));
+    this.events.on('update', draw);
+    this.events.once('shutdown', () => {
+      this.events.off('update', draw);
+      tipTimer.remove();
+      bob.remove();
+    });
   }
 
   private makeParticles() {
