@@ -69,13 +69,42 @@ export class Bear {
     (this.sprite as unknown as { bear: Bear }).bear = this;
   }
 
+  /** 입고 있는 변신 의상 (그 의상의 그림이 있을 때만 쓴다) */
+  private skin: string | null = null;
+
+  /** 의상을 입힌다(null이면 벗는다). 그 곰의 의상 그림이 없으면 false */
+  setSkin(skin: string | null) {
+    const ok = !!skin && this.sprite.scene.textures.exists(`${this.id}_${skin}_front`);
+    const next = ok ? skin : null;
+    if (next !== this.skin) {
+      this.skin = next;
+      this.sprite.setTexture(this.tex(this.facing, this.actFrame ? `_a${this.actFrame}` : this.walkFrame ? `_w${this.walkFrame}` : ''));
+    }
+    return ok;
+  }
+
+  get skinned() {
+    return this.skin !== null;
+  }
+
+  /** 지금 보여 줄 그림 이름: 의상 그림이 있으면 그것, 없는 동작은 평소 그림 */
+  private tex(dir: Facing, suffix: string) {
+    if (this.skin) {
+      const k = `${this.id}_${this.skin}_${dir}${suffix}`;
+      if (this.sprite.scene.textures.exists(k)) return k;
+      const idle = `${this.id}_${this.skin}_${dir}`;
+      if (this.sprite.scene.textures.exists(idle)) return idle;
+    }
+    return `${this.id}_${dir}${suffix}`;
+  }
+
   get moving() {
     return this.target !== null;
   }
 
   face(dir: Facing, left = false) {
     this.facing = dir;
-    this.sprite.setTexture(`${this.id}_${dir}${this.actFrame ? `_a${this.actFrame}` : this.walkFrame ? `_w${this.walkFrame}` : ''}`);
+    this.sprite.setTexture(this.tex(dir, this.actFrame ? `_a${this.actFrame}` : this.walkFrame ? `_w${this.walkFrame}` : ''));
     this.sprite.setFlipX(dir === 'side' && left);
   }
 
@@ -159,7 +188,7 @@ export class Bear {
       if (f !== this.actFrame) {
         this.actFrame = f;
         this.walkFrame = 0;
-        this.sprite.setTexture(`${this.id}_${this.facing}${f ? `_a${f}` : ''}`);
+        this.sprite.setTexture(this.tex(this.facing, f ? `_a${f}` : ''));
       }
       if (!f) this.actKind = null;
     }
@@ -177,7 +206,7 @@ export class Bear {
         const f = 1 + (Math.floor(this.walkT / 0.16) % 2);
         if (f !== this.walkFrame) {
           this.walkFrame = f;
-          this.sprite.setTexture(`${this.id}_${this.facing}_w${f}`);
+          this.sprite.setTexture(this.tex(this.facing, `_w${f}`));
         }
         bob = Math.abs(w) * 1.2;
       } else {
@@ -188,7 +217,7 @@ export class Bear {
     } else {
       if (this.walkFrame) {
         this.walkFrame = 0;
-        this.sprite.setTexture(`${this.id}_${this.facing}`);
+        this.sprite.setTexture(this.tex(this.facing, ''));
       }
       const b = Math.sin(performance.now() / 420 + this.x) * 0.025;
       sx = 1 + b;

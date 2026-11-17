@@ -152,6 +152,33 @@ if __name__ == "__main__":
         # 동작: 치켜들기(a1)·내려치기(a2) / 주먹(a3)·줍기(a4)
         slice_frames(bear, f"act_{bear}_a.png", ["a1", "a2"], 1)
         slice_frames(bear, f"act_{bear}_b.png", ["a3", "a4"], 0)
+    # 몸에 입는 변신 의상 (art/source/skin/<변신>_*.png — 평소 그림과 같은 배치)
+    for skin in ["bee"]:
+        if not (SRC / f"skin/{skin}_bears.png").exists():
+            continue
+        slice_grid(f"skin/{skin}_bears.png", 3, 4, [[f"{b}_{skin}_{f}" for f in ["front", "side", "back"]] for b in ["dad", "mom", "kid", "baby"]])
+        for bear in ["dad", "mom", "kid", "baby"]:
+            # 의상을 입어도 곰 크기는 그대로여야 한다: 평소 키 + 머리 장식(5px)에 맞춘다
+            for facing in ["front", "side", "back"]:
+                base = Image.open(OUT / f"{bear}_{facing}.png")
+                path = OUT / f"{bear}_{skin}_{facing}.png"
+                im = Image.open(path).convert("RGBA")
+                # 윗줄 곰의 그림자가 머리 위에 가로줄로 딸려 온 것을 지운다
+                arr = np.array(im)
+                lab, n = ndimage.label(arr[..., 3] > 0)
+                for i, sl in enumerate(ndimage.find_objects(lab), start=1):
+                    if sl[0].stop - sl[0].start <= 3 and sl[0].start < im.height * 0.15:
+                        arr[lab == i] = 0
+                ys = np.nonzero(arr[..., 3].any(axis=1))[0]
+                im = Image.fromarray(arr).crop((0, ys.min(), im.width, ys.max() + 1))
+                im.save(path)
+                k = (base.height + 5) / im.height
+                if abs(k - 1) > 0.03:
+                    clean_alpha(im.resize((max(1, round(im.width * k)), max(1, round(im.height * k))), Image.BOX)).save(path)
+            for sheet, rows, scale_row in [(f"walk_{bear}", ["w1", "w2"], -1), (f"act_{bear}_a", ["a1", "a2"], 1), (f"act_{bear}_b", ["a3", "a4"], 0)]:
+                if (SRC / f"skin/{skin}_{sheet}.png").exists():
+                    slice_frames(f"{bear}_{skin}", f"skin/{skin}_{sheet}.png", rows, scale_row)
+
     slice_grid(
         "objects.png", 4, 3,
         [
