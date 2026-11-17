@@ -154,7 +154,7 @@ if __name__ == "__main__":
         slice_frames(bear, f"act_{bear}_b.png", ["a3", "a4"], 0)
     # 몸에 입는 변신 의상 (art/source/skin/<변신>_*.png — 평소 그림과 같은 배치)
     (OUT / "skin").mkdir(exist_ok=True)
-    for skin in [f"{a}{n}" for a in ["leaf", "bee", "wood", "bubble", "rock"] for n in ["", "2", "3"]]:
+    for skin in [f"{a}{n}" for a in ["leaf", "bee", "wood", "bubble", "rock", "poison", "ice", "sand"] for n in ["", "2", "3"]]:
         # 13장(기본 + 걷기 4 + 동작 8)이 다 있는 의상만 만든다
         if len(list((SRC / "skin").glob(f"{skin}_*.png"))) < 13:
             continue
@@ -349,6 +349,17 @@ if __name__ == "__main__":
             grid = [[None] * 3, [None] * 3]
             grid[0][i] = name
             slice_grid("weapons2c.png", 3, 2, grid, fit=fit)
+    # 뒤 절반 섬의 무기: 폭탄·부메랑 / 철퇴·지팡이 (각 3단계)
+    for sheet, items in {
+        "weapons3a.png": [("weapon_bomb", 18), ("weapon_bomb2", 20), ("weapon_bomb3", 22), ("weapon_rang", 20), ("weapon_rang2", 22), ("weapon_rang3", 25)],
+        "weapons3b.png": [("weapon_mace", 25), ("weapon_mace2", 27), ("weapon_mace3", 30), ("weapon_staff", 26), ("weapon_staff2", 28), ("weapon_staff3", 31)],
+    }.items():
+        if not (SRC / sheet).exists():
+            continue
+        for i, (name, fit) in enumerate(items):
+            grid = [[None] * 3, [None] * 3]
+            grid[i // 3][i % 3] = name
+            slice_grid(sheet, 3, 2, grid, fit=fit)
     # 진화한 무기 (2·3단계)
     STAGE = {
         "weapons2a.png": [("weapon_sling2", 22), ("weapon_sling3", 24), ("weapon_hammer2", 28), ("weapon_hammer3", 31), ("weapon_water2", 22), ("weapon_water3", 25)],

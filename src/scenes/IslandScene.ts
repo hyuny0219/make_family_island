@@ -1851,6 +1851,47 @@ export class IslandScene extends Phaser.Scene {
           }
           break;
         }
+        case 'poison':
+          this.damageMonster(m, dmg);
+          near(30 + lv * 6).forEach((o) => this.damageMonster(o, Math.max(1, Math.round(dmg * 0.6)), true));
+          for (const o of [m, ...near(30 + lv * 6)]) {
+            if (o.dead) continue;
+            o.poisonT = 3;
+            o.poisonDps = Math.max(o.poisonDps, lv);
+            o.sprite.setTint(0xc79be8);
+            this.time.delayedCall(3000, () => !o.dead && o.sprite.clearTint());
+          }
+          break;
+        case 'ice':
+          this.damageMonster(m, dmg);
+          // 돌아오는 길에 한 번 더
+          this.time.delayedCall(240, () => {
+            if (m.dead || !this.player) return;
+            this.fx.sparkle.explode(4, m.x, m.y - 10);
+            this.damageMonster(m, dmg, true);
+          });
+          break;
+        case 'sand': {
+          this.damageMonster(m, dmg);
+          const R = 44 + lv * 6;
+          for (const o of this.monsters) if (o !== m && !o.dead && Math.hypot(o.x - pl.x, o.y - pl.y) < R) this.damageMonster(o, Math.max(1, Math.round(dmg * 0.7)), true);
+          break;
+        }
+        case 'thunder': {
+          this.damageMonster(m, dmg);
+          // 가까운 몬스터로 번개가 옮겨 간다 (단계만큼)
+          let from = m;
+          const hitSet = new Set<Monster>([m]);
+          for (let i = 0; i < lv; i++) {
+            const next = this.monsters.filter((o) => !o.dead && !hitSet.has(o) && Math.hypot(o.x - from.x, o.y - from.y) < 76).sort((a, b) => Math.hypot(a.x - from.x, a.y - from.y) - Math.hypot(b.x - from.x, b.y - from.y))[0];
+            if (!next) break;
+            hitSet.add(next);
+            this.boltFx(from.x, from.y - 10, next.x, next.y - 10, lv);
+            this.damageMonster(next, Math.max(1, Math.round(dmg * 0.6)), true);
+            from = next;
+          }
+          break;
+        }
         case 'fire':
           this.damageMonster(m, dmg);
           near(34 + lv * 4).forEach((o) => this.damageMonster(o, Math.max(1, Math.round(dmg * 0.6)), true));
@@ -1866,6 +1907,24 @@ export class IslandScene extends Phaser.Scene {
           this.damageMonster(m, dmg);
       }
     });
+  }
+
+  /** 지그재그 번개 한 줄기 */
+  private boltFx(x0: number, y0: number, x1: number, y1: number, lv: number) {
+    const g = this.add.graphics().setDepth(99987);
+    const n = 5;
+    const pts: Phaser.Math.Vector2[] = [];
+    for (let i = 0; i <= n; i++) {
+      const k = i / n;
+      const j = i === 0 || i === n ? 0 : 7;
+      pts.push(new Phaser.Math.Vector2(x0 + (x1 - x0) * k + Phaser.Math.Between(-j, j), y0 + (y1 - y0) * k + Phaser.Math.Between(-j, j)));
+    }
+    g.lineStyle(4 + lv, 0x8f7bff, 0.55).strokePoints(pts);
+    g.lineStyle(2, 0xffe066, 1).strokePoints(pts);
+    g.lineStyle(1, 0xffffff, 1).strokePoints(pts);
+    this.tweens.add({ targets: g, alpha: 0, duration: 200, onComplete: () => g.destroy() });
+    this.fx.sparkle.explode(3 + lv, x1, y1);
+    sfx.knock();
   }
 
   /**
@@ -1961,6 +2020,84 @@ export class IslandScene extends Phaser.Scene {
         if (own) this.cameras.main.shake(70, 0.003);
       });
       return wind * 1000 + 70;
+    }
+    if (id === 'poison') {
+      // 폭탄: 포물선으로 던져서 터진다
+      from.act('punch');
+      const b = this.add.image(hx, hy, wtex).setScale(sc * 0.9).setDepth(99986);
+      const flight = Phaser.Math.Clamp(Math.hypot(mx - hx, my - hy) * 2.6, 180, 320);
+      const t = { v: 0 };
+      this.tweens.add({
+        targets: t,
+        v: 1,
+        duration: flight,
+        onUpdate: () => b.setPosition(hx + (mx - hx) * t.v, hy + (my - 8 - hy) * t.v - Math.sin(t.v * Math.PI) * 26).setAngle(t.v * 360 * dir),
+        onComplete: () => {
+          b.destroy();
+          const R = 30 + lv * 6;
+          const g = this.add.graphics().setDepth(99958);
+          const u = { v: 0 };
+          this.tweens.add({ targets: u, v: 1, duration: 420, ease: 'Cubic.easeOut', onUpdate: () => g.clear().fillStyle(0xb07cd8, 0.35 * (1 - u.v)).fillEllipse(mx, my - 4, R * 2 * u.v, R * 1.3 * u.v).lineStyle(2, 0x7fe08a, 1 - u.v).strokeEllipse(mx, my - 4, R * 2 * u.v, R * 1.3 * u.v), onComplete: () => g.destroy() });
+          this.fx.puff.explode(10 + lv * 3, mx, my - 8);
+          this.fx.spore.explode(6 + lv * 2, mx, my - 10);
+        },
+      });
+      return flight;
+    }
+    if (id === 'ice') {
+      // 부메랑: 빙글빙글 날아가 맞히고 돌아온다
+      if (!from.act('swing', 0.05)) from.swing(left);
+      const b = this.add.image(hx, hy, wtex).setScale(sc).setDepth(99986);
+      const out = Phaser.Math.Clamp(Math.hypot(mx - hx, my - hy) * 2, 130, 230);
+      this.tweens.add({ targets: b, angle: 720 * dir, duration: out * 2 + 60 });
+      this.tweens.add({
+        targets: b,
+        x: mx + dir * 10,
+        y: my - 12,
+        duration: out,
+        ease: 'Sine.easeOut',
+        onComplete: () => {
+          this.fx.sparkle.explode(5 + lv * 2, mx, my - 10);
+          this.tweens.add({ targets: b, x: from.x + dir * 8, y: from.y - from.sprite.displayHeight * 0.45, duration: out, ease: 'Sine.easeIn', onComplete: () => b.destroy() });
+        },
+      });
+      if (from.costume) from.costume.hideHeldUntil = this.time.now + out * 2 + 60;
+      return out;
+    }
+    if (id === 'sand') {
+      // 철퇴: 머리 위로 한 바퀴 크게 돌린다
+      const wind = 0.1;
+      if (!from.act('swing', wind)) from.swing(left);
+      const R = 44 + lv * 6;
+      const mace = this.add.image(from.x, from.y, wtex).setScale(sc * 1.05).setOrigin(0.5, 0.9).setDepth(from.y + 3);
+      const t = { v: 0 };
+      this.tweens.add({
+        targets: t,
+        v: 1,
+        duration: 300,
+        delay: wind * 1000,
+        onUpdate: () => {
+          const a = (left ? Math.PI : 0) + dir * t.v * Math.PI * 2;
+          const cy = from.y - from.sprite.displayHeight * 0.5;
+          mace.setPosition(from.x + Math.cos(a) * 16, cy + Math.sin(a) * 9).setAngle(Phaser.Math.RadToDeg(a) + 90).setDepth(from.y + (Math.sin(a) > 0 ? 3 : -1));
+        },
+        onComplete: () => mace.destroy(),
+      });
+      this.time.delayedCall(wind * 1000 + 120, () => {
+        const g = this.add.graphics().setDepth(99958);
+        const u = { v: 0 };
+        this.tweens.add({ targets: u, v: 1, duration: 300, ease: 'Cubic.easeOut', onUpdate: () => g.clear().lineStyle(3, 0xe2c27a, 1 - u.v).strokeEllipse(from.x, from.y - 6, R * 2 * u.v, R * 1.3 * u.v), onComplete: () => g.destroy() });
+        this.fx.dust.explode(8 + lv * 2, from.x, from.y - 4);
+      });
+      return wind * 1000 + 120;
+    }
+    if (id === 'thunder') {
+      // 지팡이: 치켜들면 번개가 날아간다
+      from.act('punch');
+      const st = this.add.image(hx, hy + 4, wtex).setScale(sc).setFlipX(left).setOrigin(0.5, 0.85).setAngle(dir * 20).setDepth(from.y + 2);
+      this.time.delayedCall(240, () => st.destroy());
+      this.time.delayedCall(70, () => this.boltFx(hx + dir * 4, hy - 8, mx, my - 10, lv));
+      return 90;
     }
     if (id === 'fire') {
       // 불꽃 검: 넓게 베고 불꽃이 인다
