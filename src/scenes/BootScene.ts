@@ -52,6 +52,22 @@ export class BootScene extends Phaser.Scene {
 
   create() {
     this.makeParticles();
+    // 배가 섬에 닿으면 시작한다
+    const wait = this.time.addEvent({
+      delay: 50,
+      loop: true,
+      callback: () => {
+        if (this.sailed < 0.985) return;
+        wait.remove();
+        this.cameras.main.fadeOut(280, 126, 200, 227);
+        this.cameras.main.once('camerafadeoutcomplete', () => this.begin());
+      },
+    });
+  }
+
+  private sailed = 0;
+
+  private begin() {
     // 처음 켰을 때는 오프닝부터
     if (!story.seen('opening')) return void this.scene.start('Story', { pages: OPENING, key: 'opening', boot: true });
     this.scene.start('Island');
@@ -137,8 +153,10 @@ export class BootScene extends Phaser.Scene {
     const tipTimer = this.time.addEvent({ delay: 1300, loop: true, callback: () => tip.setText(TIPS[++n % TIPS.length]) });
     let shown = 0;
     let want = 0;
-    const draw = () => {
-      shown += (want - shown) * 0.12;
+    const draw = (_t: number, delta: number) => {
+      // 이미 받아 둔 그림이라 금방 끝나도, 배가 섬에 닿는 모습은 보이게 천천히(약 2초) 간다
+      shown = Math.min(want, shown + Math.min(delta, 50) / 2000);
+      this.sailed = shown;
       boat.x = x0 + (x1 - 34 - x0) * shown;
       pct.setText(`${Math.round(shown * 100)}%`);
       dots.clear();
