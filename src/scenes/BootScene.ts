@@ -3,7 +3,7 @@ import { OPENING } from '../data/story';
 import { story } from '../state/story';
 import Phaser from 'phaser';
 import { COLORS } from '../config';
-import { BUILD_TEXTURES } from '../data/build';
+import { BUILD_TEXTURES, TURN_TEXTURES } from '../data/build';
 import { MONSTERS } from '../data/monsters';
 import { ABILITIES, hatKey } from '../data/abilities';
 import { SKINS, SKIN_OBJECTS } from '../data/islands';
@@ -48,6 +48,7 @@ export class BootScene extends Phaser.Scene {
       for (const t of ['f', 'g']) for (const i of [1, 2, 3]) this.load.image(`fx_${id}_${t}${i}`, `fx/${id}_${t}${i}.png`);
     }
     for (const t of BUILD_TEXTURES) this.load.image(t, `${t}.png`);
+    for (const t of TURN_TEXTURES()) this.load.image(t, `${t}.png`);
     for (const skin of SKINS) {
       this.load.spritesheet(`tiles_${skin}`, `tiles_${skin}.png`, { frameWidth: 24, frameHeight: 24, margin: 1, spacing: 2 });
       for (const o of SKIN_OBJECTS) this.load.image(`${o}_${skin}`, `${o}_${skin}.png`);

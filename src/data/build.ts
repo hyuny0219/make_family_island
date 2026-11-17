@@ -178,7 +178,15 @@ export function roomPlan(id: string, tx: number, ty: number): RoomPlan {
 // ───────────────────────── 놓는 방향 ─────────────────────────
 
 /** 옆·뒤 그림(build_<id>_s, build_<id>_b)이 있어서 네 방향으로 돌릴 수 있는 가구 */
-export const ROTATABLE = new Set<string>([]);
+export const ROTATABLE = new Set<string>([
+  'bookshelf', 'fireplace', 'wardrobe', 'stove', 'bathtub', 'toybox', 'piano',
+  'fridge', 'sink', 'dining', 'cupboard', 'oven', 'counter',
+  'desk', 'tv', 'armchair', 'dresser', 'longsofa',
+  'washer', 'washstand', 'toilet', 'vanity', 'clock', 'aquarium',
+  'chair', 'bed',
+]);
+/** 돌린 가구 그림 (옆 _s · 뒤 _b) */
+export const TURN_TEXTURES = () => [...ROTATABLE].flatMap((id) => [`${PIECES[id].tex}_s`, `${PIECES[id].tex}_b`]);
 
 export interface Turn {
   f?: 1;
@@ -193,7 +201,8 @@ export function oriented(piece: Piece, t: Turn = {}) {
     w: side ? piece.h : piece.w,
     h: side ? piece.w : piece.h,
     tex: r === 0 ? piece.tex : `${piece.tex}_${side ? 's' : 'b'}`,
-    flip: r === 0 ? !!t.f : r === 3,
+    // 옆 그림은 앞이 왼쪽을 본다 → 오른쪽(1)을 볼 때 뒤집는다
+    flip: r === 0 ? !!t.f : r === 1,
   };
 }
 

@@ -3648,6 +3648,8 @@ export class IslandScene extends Phaser.Scene {
   private syncRoom() {
     const rm = this.room;
     if (!rm) return;
+    this.closeRoomMenu();
+    this.roomCarry = null;
     rm.imgs.forEach((i) => i.destroy());
     rm.imgs.clear();
     rm.occ.clear();
@@ -3699,9 +3701,27 @@ export class IslandScene extends Phaser.Scene {
   private roomGrab(p: Phaser.Input.Pointer) {
     const rm = this.room;
     const tool = (this.registry.get('buildTool') as string) ?? '';
-    if (!rm || (tool !== 'place' && tool !== 'move')) return false;
+    if (!rm) return false;
     const wp = this.cameras.main.getWorldPoint(p.x, p.y);
-    const from = this.roomPieceAt(Math.floor((wp.x - rm.x) / TILE), Math.floor((wp.y - rm.y) / TILE));
+    // 가구 단추(돌리기·옮기기·넣기)가 떠 있으면 그것부터
+    if (this.roomSel) {
+      const z = this.cameras.main.zoom;
+      const b = this.roomSel.btns.find((q) => Math.abs(wp.x - q.x) < q.w / 2 / z && Math.abs(wp.y - q.y) < q.h / 2 / z);
+      if (b) {
+        sfx.tap();
+        b.run();
+        return true;
+      }
+      this.closeRoomMenu();
+      if (!this.roomPieceAt(Math.floor((wp.x - rm.x) / TILE), Math.floor((wp.y - rm.y) / TILE))) return true;
+    }
+    if (tool === 'erase') return false;
+    // '옮기기'를 누른 가구: 누른 자리로 따라온다
+    const carry = this.roomCarry;
+    this.roomCarry = null;
+    const carried = carry && rm.imgs.get(this.roomKey(carry)) ? carry : undefined;
+    const from = carried ?? this.roomPieceAt(Math.floor((wp.x - rm.x) / TILE), Math.floor((wp.y - rm.y) / TILE));
+    if (!from && tool !== 'place') return false;
     let piece: Piece | undefined;
     let t: Turn = {};
     if (from) {
@@ -3717,7 +3737,7 @@ export class IslandScene extends Phaser.Scene {
     const ghost = this.add.image(0, 0, piece.tex).setAlpha(0.8).setDepth(99972);
     const marks = this.add.graphics().setDepth(99971);
     if (from) rm.imgs.get(this.roomKey(from))?.setAlpha(0.25);
-    this.roomDrag = { piece, t, from, ghost, marks, tx: 0, ty: 0, ok: false, moved: false, sx: p.x, sy: p.y };
+    this.roomDrag = { piece, t, from, ghost, marks, tx: 0, ty: 0, ok: false, moved: !!carried, sx: p.x, sy: p.y };
     this.roomDragTo(p);
     return true;
   }
@@ -3738,7 +3758,104 @@ export class IslandScene extends Phaser.Scene {
     for (const [cx, cy] of this.footprint(d.piece, tx, ty, d.t)) d.marks.fillRoundedRect(rm.x + cx * TILE + 1, rm.y + cy * TILE + 1, TILE - 2, TILE - 2, 4);
   }
 
-  /** 손을 뗐다: 놓기 · 옮기기 · (제자리에서 톡) 돌리기 */
+  /** 누른 가구 위에 뜬 단추 */
+  private roomSel: null | { p: Placed; objs: Phaser.GameObjects.GameObject[]; btns: { x: number; y: number; w: number; h: number; run: () => void }[] } = null;
+  /** '옮기기'를 눌러 들고 있는 가구 */
+  private roomCarry: Placed | null = null;
+
+  private closeRoomMenu() {
+    this.roomSel?.objs.forEach((o) => o.destroy());
+    this.roomSel = null;
+  }
+
+  /** 가구를 톡 눌렀다: 그 위에 돌리기 · 옮기기 · 넣기 단추 */
+  private openRoomMenu(p: Placed) {
+    this.closeRoomMenu();
+    const rm = this.room;
+    const piece = PIECES[p.id];
+    if (!rm || !piece) return;
+    const cam = this.cameras.main;
+    const z = cam.zoom;
+    const L = this.roomLook(piece, p.tx, p.ty, p);
+    const marks = this.add.graphics().setDepth(99969);
+    marks.lineStyle(2, 0xffd166, 1);
+    for (const [cx, cy] of this.footprint(piece, p.tx, p.ty, p)) marks.strokeRoundedRect(rm.x + cx * TILE + 1, rm.y + cy * TILE + 1, TILE - 2, TILE - 2, 4);
+    // (방금 놓여서 커지는 중일 수 있으니 그림의 실제 크기 대신 다 커진 크기로 잰다)
+    const th = this.textures.get(L.tex).getSourceImage().height * L.scale;
+    const topY = L.y - th * L.oy;
+    // 화면 밖으로 나가지 않게
+    const half = 96 / z;
+    const left = cam.worldView.x + 4 / z;
+    const right = cam.worldView.x + this.scale.width / z - 4 / z;
+    const bx = Phaser.Math.Clamp(L.x, left + half, right - half);
+    const by = Math.max(topY - 18 / z, cam.worldView.y + (HUD_TOP_H + 18) / z);
+    const box = this.add.container(bx, by).setDepth(99980).setScale(1 / z);
+    const btns: { x: number; y: number; w: number; h: number; run: () => void }[] = [];
+    const defs: [string, number, () => void][] = [
+      ['↻ 돌리기', 0x5a9bd4, () => {
+        const np = this.roomTurn(p);
+        if (np) this.openRoomMenu(np);
+      }],
+      ['✋ 옮기기', 0x6fae5a, () => {
+        this.closeRoomMenu();
+        this.roomCarry = p;
+        this.toast(`✋ ${piece.name}: 옮길 자리를 눌러요`);
+      }],
+      ['🧹 넣기', 0xc97b4a, () => {
+        this.closeRoomMenu();
+        village.remove(rm.key, p.tx, p.ty, p.id);
+        this.dropRoomPiece(p);
+        for (const [id, n] of Object.entries(piece.cost) as [ItemId, number][]) inventory.add(id, n);
+        sfx.pop();
+        this.toast(`${piece.name}을(를) 창고에 넣었어요`);
+      }],
+    ];
+    const w = 60;
+    const h = 26;
+    defs.forEach(([label, color, run], i) => {
+      const x = (i - 1) * (w + 4);
+      const g = this.add.graphics();
+      g.fillStyle(0x000000, 0.25).fillRoundedRect(x - w / 2, -h / 2 + 2, w, h, 13);
+      g.fillStyle(color).fillRoundedRect(x - w / 2, -h / 2, w, h, 13);
+      g.lineStyle(2, 0xffffff, 0.9).strokeRoundedRect(x - w / 2, -h / 2, w, h, 13);
+      box.add([g, this.add.text(x, 0, label, { fontFamily: FONT, fontSize: '12px', color: '#ffffff', fontStyle: 'bold' }).setOrigin(0.5)]);
+      btns.push({ x: bx + x / z, y: by, w, h: h + 8, run });
+    });
+    box.setAlpha(0);
+    this.tweens.add({ targets: box, alpha: 1, y: { from: by + 6 / z, to: by }, duration: 140 });
+    this.roomSel = { p, objs: [marks, box], btns };
+  }
+
+  /** 놓인 가구를 제자리에서 한 번 돌린다 (돌린 모양이 들어갈 자리가 없으면 다음 방향으로). 돌린 가구를 돌려준다 */
+  private roomTurn(p: Placed): Placed | null {
+    const rm = this.room;
+    const piece = PIECES[p.id];
+    if (!rm || !piece) return null;
+    const cur: Turn = {};
+    if (p.f) cur.f = 1;
+    if (p.r) cur.r = p.r;
+    let t = nextTurn(piece, cur);
+    let n = 0;
+    while (n < 3 && !this.roomFree(piece, p.tx, p.ty, t, p)) {
+      t = nextTurn(piece, t);
+      n++;
+    }
+    const same = !!t.f === !!cur.f && (t.r ?? 0) === (cur.r ?? 0);
+    if (same || !this.roomFree(piece, p.tx, p.ty, t, p)) {
+      this.toast('돌릴 자리가 모자라요 · 넓은 곳으로 옮겨서 돌려요');
+      return null;
+    }
+    const to: Placed = { id: p.id, tx: p.tx, ty: p.ty, ...t };
+    village.remove(rm.key, p.tx, p.ty, p.id);
+    this.dropRoomPiece(p);
+    this.addRoomPiece(to, true);
+    village.place(rm.key, to);
+    sfx.pop();
+    buzz(12);
+    return to;
+  }
+
+  /** 손을 뗐다: 놓기 · 옮기기 · (제자리에서 톡) 단추 띄우기 */
   private roomDrop() {
     const d = this.roomDrag;
     const rm = this.room;
@@ -3760,19 +3877,10 @@ export class IslandScene extends Phaser.Scene {
     if (d.from) {
       const img = rm.imgs.get(this.roomKey(d.from));
       if (!d.moved) {
-        // 제자리에서 톡: 돌린다 (돌린 모양이 들어갈 자리가 없으면 그대로)
-        let t = nextTurn(d.piece, d.t);
-        let n = 0;
-        while (n < 3 && !this.roomFree(d.piece, d.from.tx, d.from.ty, t, d.from)) {
-          t = nextTurn(d.piece, t);
-          n++;
-        }
-        const same = !!t.f === !!d.t.f && (t.r ?? 0) === (d.t.r ?? 0);
-        if (same || !this.roomFree(d.piece, d.from.tx, d.from.ty, t, d.from)) {
-          img?.setAlpha(1);
-          return void this.toast('돌릴 자리가 모자라요 · 넓은 곳으로 옮겨서 돌려요');
-        }
-        return swap(put(d.from.tx, d.from.ty, t));
+        // 제자리에서 톡: 돌리기 · 옮기기 · 넣기 단추를 띄운다
+        img?.setAlpha(1);
+        sfx.tap();
+        return this.openRoomMenu(d.from);
       }
       if (!d.ok || (d.tx === d.from.tx && d.ty === d.from.ty)) {
         img?.setAlpha(1);
@@ -3980,6 +4088,8 @@ export class IslandScene extends Phaser.Scene {
   private leaveRoom() {
     const rm = this.room;
     if (!rm) return;
+    this.closeRoomMenu();
+    this.roomCarry = null;
     rm.objs.forEach((o) => o.destroy());
     rm.imgs.forEach((i) => i.destroy());
     this.room = null;
@@ -4985,6 +5095,8 @@ export class IslandScene extends Phaser.Scene {
       this.frameRoom();
     } else {
       this.buildDrag = null;
+      this.closeRoomMenu();
+      this.roomCarry = null;
       cam.setBounds(0, 0, this.world.w * TILE, this.world.h * TILE);
       this.tweens.add({ targets: cam, zoom: WORLD_ZOOM, duration: 250 });
       if (this.player) cam.startFollow(this.player.sprite, true, 0.12, 0.12, 0, 20);
