@@ -2807,11 +2807,13 @@ export class HudScene extends Phaser.Scene {
     const w = t.width + 28;
     const g = this.add.graphics();
     g.fillStyle(0x4a3b2a, 0.88).fillRoundedRect(-w / 2, -17, w, 34, 17);
-    const c = this.add.container(W / 2, 112, [g, t]).setAlpha(0).setDepth(100);
+    // 가로 화면: 펼친 메뉴 두 줄 아래에 띄운다
+    const ty = this.wide ? 164 : 124;
+    const c = this.add.container(W / 2, ty - 12, [g, t]).setAlpha(0).setDepth(100);
     this.tweens.chain({
       targets: c,
       tweens: [
-        { alpha: 1, y: 124, duration: 200, ease: 'Back.easeOut' },
+        { alpha: 1, y: ty, duration: 200, ease: 'Back.easeOut' },
         { alpha: 0, delay: 1100, duration: 250 },
       ],
       onComplete: () => c.destroy(),
@@ -2866,8 +2868,15 @@ export class HudScene extends Phaser.Scene {
         this.time.delayedCall(180, () => this.closeTitle(box, dim));
         // 오늘 선물을 아직 안 받았으면 달력을 먼저 보여 준다
         this.time.delayedCall(1100, () => {
-          // 처음이면 조작 안내부터 (선물 달력은 다음에)
-          if (!settings.guide) return void this.openGuide();
+          // 처음이면 조작 안내부터 (선물 달력은 다음에). 첫 대화 같은 다른 창이 떠 있으면 닫힐 때까지 기다린다
+          if (!settings.guide) {
+            const tryGuide = () => {
+              if (settings.guide || !this.scene.isActive()) return;
+              if (this.registry.get('modal') || this.view !== 'explore') return void this.time.delayedCall(800, tryGuide);
+              this.openGuide();
+            };
+            return tryGuide();
+          }
           if (!daily.ready || this.registry.get('dailyShown')) return;
           this.registry.set('dailyShown', true);
           this.openDaily();
