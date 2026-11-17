@@ -69,6 +69,9 @@ const CLOUD_PX = 6; // 구름은 타일당 6px 저해상도로 그려 4배 확�
 /** 섬마다 생성 결과를 캐시 (다시 방문할 때 빠르게) */
 const worldCache = new Map<number, World>();
 
+/** 이 시간 안에 이어 치면 콤보가 이어진다 (ms) */
+const COMBO_GAP = 1600;
+
 export class IslandScene extends Phaser.Scene {
   private islandIdx = 0;
   private world!: World;
@@ -291,9 +294,16 @@ export class IslandScene extends Phaser.Scene {
     ge.on('pad-action', this.padAction, this);
     ge.on('dungeon-invite', this.inviteDungeon, this);
     ge.on('join-dungeon', this.joinDungeon, this);
+    ge.on('lobby-start', this.startLobby, this);
+    ge.on('lobby-leave', this.leaveLobby, this);
+    ge.on('pad-jump', this.jump, this);
+    ge.emit('lobby', null);
     this.events.once('shutdown', () => {
       ge.off('dungeon-invite', this.inviteDungeon, this);
       ge.off('join-dungeon', this.joinDungeon, this);
+      ge.off('lobby-start', this.startLobby, this);
+      ge.off('lobby-leave', this.leaveLobby, this);
+      ge.off('pad-jump', this.jump, this);
     });
     // 변신 모자를 쓰거나 벗으면 가족에게 바로 알린다
     let lastLv = abilities.equipped ? abilities.level(abilities.equipped) : 0;
@@ -310,8 +320,9 @@ export class IslandScene extends Phaser.Scene {
     abilities.on('changed', onHat);
     this.events.once('shutdown', () => abilities.off('changed', onHat));
     this.events.once('shutdown', () => ge.off('pad-action', this.padAction, this));
-    this.padKeys = this.input.keyboard?.addKeys('W,A,S,D,UP,DOWN,LEFT,RIGHT,SPACE') as Record<string, Phaser.Input.Keyboard.Key> | undefined;
+    this.padKeys = this.input.keyboard?.addKeys('W,A,S,D,UP,DOWN,LEFT,RIGHT,SPACE,J') as Record<string, Phaser.Input.Keyboard.Key> | undefined;
     this.padKeys?.SPACE.on('down', () => this.padAction());
+    this.padKeys?.J.on('down', () => this.jump());
     player.on('faint', this.onFaint, this);
     village.on('resident-joined', this.onResidentJoined, this);
     village.on('remote', this.syncPlaced, this);
@@ -363,7 +374,7 @@ export class IslandScene extends Phaser.Scene {
     const chosen = this.registry.get('bear') as BearId | undefined;
     if (chosen) this.choosePlayer(chosen);
     // 초대를 받고 건너온 섬이면 바로 던전으로
-    if (this.registry.get('joinDungeon') === this.islandIdx && chosen) this.time.delayedCall(1200, () => this.enterDungeon());
+    if (this.registry.get('joinDungeon') === this.islandIdx && chosen) this.time.delayedCall(1200, () => this.joinDungeon(this.islandIdx));
     this.registry.set('joinDungeon', null);
   }
 
@@ -892,6 +903,8 @@ export class IslandScene extends Phaser.Scene {
   update(_t: number, deltaMs: number) {
     const dt = Math.min(deltaMs / 1000, 0.05);
     this.updatePad();
+    this.updateHold();
+    this.updateJump();
     for (const bear of this.bears) {
       if (bear === this.player && this.flying) continue; // 날아가는 중에는 트램펄린이 움직인다
       const arrived = bear.step(dt, this.walkable);
@@ -1735,6 +1748,8 @@ export class IslandScene extends Phaser.Scene {
   /** 몬스터에게 맞았다 */
   private takeHit(m: Monster, base = m.def.dmg) {
     const pl = this.player!;
+    if (pl.air) return; // 뛰어올라 피했다
+    this.combo = 0;
     // 변신(물방울): 확률로 막기
     if (Math.random() * 100 < abilities.power('bubble')) {
       this.invulnUntil = this.time.now + 600;
@@ -1779,6 +1794,80 @@ export class IslandScene extends Phaser.Scene {
     return id && w ? { id, w, lv: abilities.level(id) } : null;
   }
 
+  private combo = 0;
+  private comboAt = 0;
+  private hitMul = 1;
+
+  /** 콤보 마무리: 쾅 하고 크게 밀어낸다 */
+  private finisherFx(m: Monster, delay: number) {
+    this.time.delayedCall(delay, () => {
+      const pl = this.player;
+      if (!pl) return;
+      this.cameras.main.shake(120, 0.005);
+      buzz(30);
+      this.fx.sparkle.explode(10, m.x, m.y - 12);
+      const ring = this.add.circle(m.x, m.y - 8, 6).setStrokeStyle(3, 0xfff1a8).setDepth(m.y + 2);
+      this.tweens.add({ targets: ring, scale: 4.5, alpha: 0, duration: 260, ease: 'Cubic.easeOut', onComplete: () => ring.destroy() });
+      if (!m.dead && !m.def.boss) m.hit(0, pl.x, pl.y, this.walkable);
+    });
+  }
+
+  private holdAt = 0;
+
+  /** 행동 단추를 누르고 있으면 가까운 몬스터를 계속 친다 */
+  private updateHold() {
+    const pl = this.player;
+    if (!pl || !this.registry.get('padHold')) return;
+    const now = this.time.now;
+    if (now - this.holdAt < 120) return;
+    this.holdAt = now;
+    if (this.registry.get('modal') || this.registry.get('view') === 'build' || this.fishing || this.flying || this.resting || this.sleepWait) return;
+    const mon = this.monsters.filter((m) => !m.dead).sort((a, b) => Math.hypot(a.x - pl.x, a.y - pl.y) - Math.hypot(b.x - pl.x, b.y - pl.y))[0];
+    if (!mon) return;
+    const d = Math.hypot(mon.x - pl.x, mon.y - pl.y);
+    const reach = Math.max(58, this.weapon()?.w.reach ?? 0);
+    if (this.padOn) {
+      if (d < reach) this.attackMonster(mon, reach);
+    } else if (d < 110 && this.autoTarget !== mon) {
+      this.autoTarget = mon;
+      this.walkTo(mon.x + (pl.x <= mon.x ? -1 : 1) * 18, mon.y, { monster: mon });
+    }
+  }
+
+  private jumpAt = -9999;
+  private wasAir = false;
+
+  /** 점프: 떠 있는 동안에는 몬스터의 공격을 피하고, 내려앉으며 바로 옆 몬스터를 밟는다 */
+  private jump() {
+    const pl = this.player;
+    if (!pl || this.registry.get('modal') || this.registry.get('view') === 'build') return;
+    if (this.fishing || this.flying || this.resting || this.sleepWait || this.sleeping) return;
+    const now = this.time.now;
+    if (now - this.jumpAt < 800) return;
+    if (!pl.leap()) return;
+    this.jumpAt = now;
+    sfx.boing();
+    this.tellAct('j');
+    this.game.events.emit('player-moved');
+  }
+
+  private updateJump() {
+    const pl = this.player;
+    if (!pl) return;
+    const air = pl.air;
+    if (this.wasAir && !air) {
+      this.fx.dust.explode(6, pl.x, pl.y);
+      const near = this.monsters.filter((m) => !m.dead && Math.hypot(m.x - pl.x, m.y - pl.y) < 30);
+      if (near.length) {
+        sfx.knock();
+        this.cameras.main.shake(90, 0.004);
+        const dmg = Math.max(1, Math.round(this.attackPower() / 2));
+        near.forEach((m) => this.damageMonster(m, dmg, true));
+      }
+    }
+    this.wasAir = air;
+  }
+
   private attackMonster(m: Monster, reach = 36) {
     const pl = this.player!;
     if (m.dead || this.resting) return;
@@ -1798,14 +1887,22 @@ export class IslandScene extends Phaser.Scene {
     if (now - this.lastHit >= (260 * (wp?.w.slow ?? 1)) / (1 + abilities.power('bee') / 100)) {
       this.lastHit = now;
       pl.face('side', m.x < pl.x);
+      // 콤보: 쉬지 않고 이어 치면 숫자가 오르고, 세 번째마다 크게 친다
+      this.combo = now - this.comboAt < COMBO_GAP ? this.combo + 1 : 1;
+      this.comboAt = now;
+      const fin = this.combo % 3 === 0;
+      this.hitMul = fin ? 2 : 1;
+      if (this.combo >= 2) this.game.events.emit('combo', this.combo, fin);
       if (wp) {
         this.weaponAttack(pl, m, wp);
       } else {
         this.slashFx(pl, m);
         sfx.boing();
-        this.fx.splash.explode(6, m.x, m.y - 10);
-        this.damageMonster(m, this.attackPower());
+        this.fx.splash.explode(fin ? 14 : 6, m.x, m.y - 10);
+        this.damageMonster(m, this.attackPower() * this.hitMul);
       }
+      if (fin) this.finisherFx(m, wp ? 140 : 0);
+      this.hitMul = 1;
     }
     // 한 번 누르면 잡을 때까지 계속 싸운다 (다른 곳을 누르면 그만둔다)
     if (!m.dead) this.time.delayedCall(abilities.power('bee') > 0 ? 170 : 300, () => this.autoTarget === m && !m.dead && this.attackMonster(m));
@@ -1814,7 +1911,7 @@ export class IslandScene extends Phaser.Scene {
   /** 보스 무기로 때리기: 모습을 보여 주고, 무기마다 다른 방식으로 피해를 준다 */
   private weaponAttack(pl: Bear, m: Monster, wp: { id: string; w: Weapon; lv: number }) {
     const { id, w, lv } = wp;
-    const dmg = Math.max(1, Math.round(this.attackPower() * w.dmg));
+    const dmg = Math.max(1, Math.round(this.attackPower() * w.dmg * this.hitMul));
     this.tellAct(`W:${Math.round(m.x)},${Math.round(m.y)}`);
     const delay = this.weaponFx(pl, id, lv, m.x, m.y, true);
     const near = (r: number) => this.monsters.filter((o) => o !== m && !o.dead && Math.hypot(o.x - m.x, o.y - m.y) < r);
@@ -2238,6 +2335,7 @@ export class IslandScene extends Phaser.Scene {
       this.gatherAt(b, k === 'k' ? 'pick' : k === 'c' ? 'chop' : 'mine', left);
       return;
     }
+    if (k === 'j') return void b.leap();
     if (k === 'x') return this.skillShow(b, arg);
     if (k === 'W' && b.hat) {
       const [x, y] = arg.split(',').map(Number);
@@ -3159,17 +3257,75 @@ export class IslandScene extends Phaser.Scene {
   private myInvite = 0;
   private seenInvite = new Map<string, number>();
 
-  /** 가족을 부르고 먼저 들어간다 (가족 화면에 초대 알림이 뜬다) */
+  /** 던전 대기방: 방을 연 가족의 기기 id (내가 열었으면 내 id) */
+  private lobby: null | { host: string } = null;
+  private lobbySeen = 0;
+
+  /** 불꽃 검을 주는 던전은 검이 있어야 들어갈 수 있다 */
+  private dungeonLocked(island = this.islandIdx) {
+    if (ABILITIES[island]?.id !== 'fire' || inventory.get('sword') > 0 || inventory.get('stone_sword') > 0) return false;
+    this.toast('🗡️ 검이 있어야 들어갈 수 있어요 (만들기에서 나무 검을 만들어요)');
+    return true;
+  }
+
+  private setLobby(lb: null | { host: string }) {
+    this.lobby = lb;
+    this.lobbySeen = this.time.now;
+    if (!lb) this.myInvite = 0;
+    this.sendPresence();
+    this.lobbyChanged();
+  }
+
+  /** 대기방에 모인 가족을 화면에 알린다 */
+  private lobbyChanged() {
+    const lb = this.lobby;
+    if (!lb) return void this.game.events.emit('lobby', null);
+    const mine = lb.host === family.device;
+    const others = Object.entries(family.others).filter(([dev, p]) => p.lb === lb.host && (dev === lb.host || p.island === this.islandIdx));
+    const hostBear = mine ? this.player?.id : family.others[lb.host]?.bear;
+    const bears = [hostBear, ...others.filter(([dev]) => dev !== lb.host).map(([, p]) => p.bear), ...(mine ? [] : [this.player?.id])].filter((b): b is string => !!b);
+    this.game.events.emit('lobby', { host: mine, bears, island: this.islandIdx });
+  }
+
+  /** 가족을 부르고 대기방에서 기다린다 (가족 화면에 초대 알림이 뜬다) */
   private inviteDungeon() {
+    if (this.dungeon || this.lobby || this.dungeonLocked()) return;
     this.myInvite = family.now();
-    family.post(`⚔️ ${ISLANDS[this.islandIdx].name} 보스 던전에서 같이 싸워요!`);
+    family.post(`⚔️ ${ISLANDS[this.islandIdx].name} 보스 던전 대기방을 열었어요. 같이 싸워요!`);
+    this.setLobby({ host: family.device });
+  }
+
+  /** 방을 연 사람이 시작을 누르면 모두 함께 들어간다 */
+  private startLobby() {
+    if (!this.lobby || this.lobby.host !== family.device) return;
     this.enterDungeon();
-    this.time.delayedCall(700, () => this.sendPresence());
+  }
+
+  private leaveLobby() {
+    if (!this.lobby) return;
+    this.setLobby(null);
+  }
+
+  /** 대기방 살피기: 방을 연 가족이 들어가면 따라 들어가고, 방이 없어지면 나온다 */
+  private checkLobby(others: Record<string, Presence>) {
+    const lb = this.lobby;
+    if (!lb) return;
+    this.lobbyChanged();
+    if (lb.host === family.device || this.dungeon) return;
+    const h = others[lb.host];
+    if (h && h.island === this.islandIdx && h.z === 'd') return this.enterDungeon();
+    if (h && h.lb === lb.host) return void (this.lobbySeen = this.time.now);
+    // 방을 연 가족이 잠깐 안 보일 수 있으니 조금 기다려 본다
+    if (this.time.now - this.lobbySeen > 6000) {
+      this.setLobby(null);
+      this.toast('대기방이 닫혔어요');
+    }
   }
 
   /** 초대를 받아 들어간다. 다른 섬이면 그 섬으로 건너가서 들어간다 */
   private joinDungeon(island: number) {
     if (this.dungeon || this.sleeping || this.sleepWait) return;
+    if (this.dungeonLocked(island)) return;
     if (island !== this.islandIdx) {
       if (!progress.canVisit(island)) return this.toast('아직 갈 수 없는 섬이에요');
       if (this.resting || this.flying) return;
@@ -3178,28 +3334,33 @@ export class IslandScene extends Phaser.Scene {
       return this.onTravel(island);
     }
     if (this.fishing) this.endFishing(false);
+    // 아직 대기방에서 기다리는 중이면 거기에 낀다. 벌써 들어갔으면 바로 따라 들어간다
+    const waiting = Object.entries(family.others).find(([dev, p]) => p.lb === dev && p.island === island && p.z !== 'd');
+    const go = () => (waiting ? this.setLobby({ host: waiting[0] }) : this.enterDungeon());
     if (this.room) {
       this.exitHouse();
-      this.time.delayedCall(1100, () => this.enterDungeon());
+      this.time.delayedCall(1100, go);
       return;
     }
-    this.enterDungeon();
+    go();
   }
 
   /** 가족이 방금 보낸 던전 초대가 있으면 알림을 띄운다 */
   private checkInvites(others: Record<string, Presence>) {
     for (const [dev, p] of Object.entries(others)) {
-      if (!p.iv || p.z !== 'd' || this.seenInvite.get(dev) === p.iv) continue;
+      if (!p.iv || (p.z !== 'd' && p.lb !== dev) || this.seenInvite.get(dev) === p.iv) continue;
       this.seenInvite.set(dev, p.iv);
       if (family.now() - p.iv > 90_000) continue;
-      if (this.dungeon || this.sleeping) continue;
+      if (this.dungeon || this.sleeping || this.lobby) continue;
       this.game.events.emit('dungeon-invited', { bear: p.bear, island: p.island, iv: p.iv });
     }
   }
 
   private enterDungeon() {
     const pl = this.player;
-    if (!pl || this.dungeon || this.resting || this.flying || this.fishing) return;
+    if (!pl || this.dungeon || this.resting || this.flying) return;
+    if (this.dungeonLocked()) return;
+    if (this.fishing) this.endFishing(false);
     const RW = 22;
     const RH = 26;
     const [cx, cy] = this.seaCorner(RW, RH);
@@ -3230,6 +3391,10 @@ export class IslandScene extends Phaser.Scene {
       const title = this.add.text(ax + aw / 2, ay - 12, `☠ ${boss.name}의 던전`, { fontFamily: FONT, fontSize: '10px', color: '#e8d5a9', fontStyle: 'bold' }).setOrigin(0.5).setDepth(-50);
       this.dungeon = { x: ax, y: ay, w: aw, h: ah, back: { x: pl.x, y: pl.y }, objs: [g, torch1, torch2, title], phase: 'wave', slamT: 4, called: false, waved: false };
       this.registry.set('dungeon', true);
+      if (this.lobby) {
+        this.lobby = null;
+        this.game.events.emit('lobby', null);
+      }
       pl.x = ax + aw / 2 + Phaser.Math.Between(-36, 36); // 가족과 겹쳐 서지 않게
       pl.y = ay + ah - 30;
       cam.setBounds(cx * TILE, cy * TILE, RW * TILE, RH * TILE);
@@ -3775,13 +3940,14 @@ export class IslandScene extends Phaser.Scene {
     // 함께 싸우는 중에는 자리를 더 자주 알린다 (몬스터가 가까운 곰을 쫓으니까)
     const z = this.zoneKey();
     this.presenceTimer = this.monsters.length && this.peersIn(z).length ? 1 : pl.moving ? 2 : 30;
-    family.setPresence({ bear: pl.id, island: this.islandIdx, x: pl.x, y: pl.y, tx: pl.target?.x ?? pl.x, ty: pl.target?.y ?? pl.y, ...(this.myEmote ?? {}), ...(z ? { z } : {}), ...(this.sleepWait || this.sleeping || this.time.now < this.sleepHold ? { sl: 1 as const } : {}), ...(abilities.equipped ? { h: abilities.equipped, hl: abilities.level(abilities.equipped) } : {}), ...(this.myAct ?? {}), ...(this.myInvite && this.dungeon ? { iv: this.myInvite } : {}), ...(this.fishing ? { f: `${Math.round(this.fishing.spot.x)},${Math.round(this.fishing.spot.y)}` } : {}), zt: this.zt });
+    family.setPresence({ bear: pl.id, island: this.islandIdx, x: pl.x, y: pl.y, tx: pl.target?.x ?? pl.x, ty: pl.target?.y ?? pl.y, ...(this.myEmote ?? {}), ...(z ? { z } : {}), ...(this.sleepWait || this.sleeping || this.time.now < this.sleepHold ? { sl: 1 as const } : {}), ...(abilities.equipped ? { h: abilities.equipped, hl: abilities.level(abilities.equipped) } : {}), ...(this.myAct ?? {}), ...(this.myInvite && (this.dungeon || this.lobby) ? { iv: this.myInvite } : {}), ...(this.lobby ? { lb: this.lobby.host } : {}), ...(this.fishing ? { f: `${Math.round(this.fishing.spot.x)},${Math.round(this.fishing.spot.y)}` } : {}), zt: this.zt });
   }
 
   /** 같은 섬에 있는 다른 가족의 곰을 보여 주고, 그쪽이 누른 곳으로 걸어가게 한다 */
   private onPresence(others: Record<string, Presence>) {
     if (!this.player) return; // 곰을 고르기 전에는 가족 곰이 모두 캠프에 있다
     this.checkInvites(others);
+    this.checkLobby(others);
     // 같은 섬, 같은 곳(밖·던전·같은 집)에 있는 가족만 보인다
     const zone = this.zoneKey();
     const onIsland = Object.entries(others).filter(([, p]) => p.island === this.islandIdx && BEARS.some((b) => b.id === p.bear));

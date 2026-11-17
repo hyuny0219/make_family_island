@@ -57,6 +57,8 @@ export interface Presence {
   at?: number;
   /** 보스 던전에 가족을 부른 시각(ms, 서버 시각 기준) — 던전 안에 있는 동안만 뜻이 있다 */
   iv?: number;
+  /** 던전 대기방: 방을 연 가족의 기기 id (방을 연 사람은 자기 id) */
+  lb?: string;
   /** 낚시 중이면 찌가 떠 있는 자리 "x,y" */
   f?: string;
   /** 보낸 시각(ms) */

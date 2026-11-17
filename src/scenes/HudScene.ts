@@ -117,6 +117,8 @@ export class HudScene extends Phaser.Scene {
       ['open-sleep', this.openSleep],
       ['open-dungeon', this.openDungeon],
       ['dungeon-invited', this.onDungeonInvited],
+      ['lobby', this.onLobby],
+      ['combo', this.onCombo],
       ['build-refresh', this.rebuildBuildTray],
       ['open-friend', this.openFriend],
       ['float', this.onFloat],
@@ -1056,7 +1058,10 @@ export class HudScene extends Phaser.Scene {
     });
 
     // 4) 지을 것 (한 쪽에 6개, 여러 쪽이면 5개 + 앞뒤 화살표)
+    // 집 안 가구는 만들기에서 만든 것만 놓을 수 있다 → 가진 것을 앞에 보여 준다
+    const owned = (p: Piece) => inventory.get(p.id as ItemId);
     const list = PIECE_LIST.filter((p) => p.cat === cat);
+    if (inRoom) list.sort((a, b) => Number(owned(b) > 0) - Number(owned(a) > 0));
     const per = list.length > 6 ? 5 : 6;
     const pages = Math.ceil(list.length / per);
     const page = Math.min((this.registry.get('buildPage') as number) ?? 0, pages - 1);
@@ -1087,6 +1092,7 @@ export class HudScene extends Phaser.Scene {
         redraw();
       });
       tray.add([g, ic, hit]);
+      if (inRoom && owned(p) > 0) tray.add(this.add.text(x + 20, y - 20, `${owned(p)}`, { fontFamily: FONT, fontSize: '9px', color: '#ffffff', fontStyle: 'bold', backgroundColor: '#4f8f43', padding: { x: 3, y: 1 } }).setOrigin(1, 0));
     });
     this.registry.set('buildPageFor', `${cat}:${page}`);
     if (pages > 1) {
@@ -1107,7 +1113,7 @@ export class HudScene extends Phaser.Scene {
       cx -= 26;
       tray.add([t, ic]);
     });
-    tray.add(this.add.text(W / 2, top + 167, !tool ? `아래에서 ${inRoom ? '가구' : '지을 것'}를 골라요 · 그냥 화면을 누르면 탐험으로 돌아가요` : inRoom ? '🏠 집 안 꾸미기 · 바닥을 톡 눌러 놓아요 · 치우면 재료를 돌려받아요' : '화면을 끌어서 둘러보고, 땅을 톡 눌러 지어요 · 집을 누르면 들어가요', { fontFamily: FONT, fontSize: '8px', color: '#a08a6a' }).setOrigin(0.5));
+    tray.add(this.add.text(W / 2, top + 167, inRoom && !canPay(sel) ? `🔨 ${sel.name}: 아직 없어요 · 만들기에서 만들면 여기서 놓을 수 있어요` : !tool ? `아래에서 ${inRoom ? '가구' : '지을 것'}를 골라요 · 그냥 화면을 누르면 탐험으로 돌아가요` : inRoom ? '🏠 집 안 꾸미기 · 만든 가구를 바닥에 톡 눌러 놓아요 · 치우면 가구를 돌려받아요' : '화면을 끌어서 둘러보고, 땅을 톡 눌러 지어요 · 집을 누르면 들어가요', { fontFamily: FONT, fontSize: '8px', color: '#a08a6a' }).setOrigin(0.5));
   }
 
   /** 주민의 부탁 */
@@ -1501,8 +1507,16 @@ export class HudScene extends Phaser.Scene {
       close();
       this.time.delayedCall(200, () => this.game.events.emit(ev));
     };
+    // 불꽃 검을 주는 던전은 검이 있어야 들어갈 수 있다
+    if (ab.id === 'fire' && inventory.get('sword') < 1 && inventory.get('stone_sword') < 1) {
+      box.add(this.add.text(0, PH / 2 - 74, '🗡️ 검이 있어야 들어갈 수 있어요\n만들기에서 나무 검을 만들어요', { fontFamily: FONT, fontSize: '10px', color: '#d1495b', fontStyle: 'bold', align: 'center', lineSpacing: 3, backgroundColor: '#fff6e0', padding: { x: 6, y: 3 } }).setOrigin(0.5));
+      const no = this.button('🔒 검이 필요해요', false, () => {}, 200);
+      no.setPosition(0, PH / 2 - 40);
+      box.add(no);
+      return;
+    }
     if (canInvite) {
-      const inv = this.button('📣 가족 부르고 들어가기', true, go('dungeon-invite'), 150);
+      const inv = this.button('📣 가족 불러 대기방 열기', true, go('dungeon-invite'), 150);
       inv.setPosition(-64, PH / 2 - 40);
       (inv.list[1] as Phaser.GameObjects.Text).setFontSize(11);
       const solo = this.button('혼자 들어가기', true, go('enter-dungeon'), 112);
@@ -1518,6 +1532,75 @@ export class HudScene extends Phaser.Scene {
   }
 
   private inviteCard?: Phaser.GameObjects.Container;
+  private lobbyCard?: Phaser.GameObjects.Container;
+  private lobbyKey = '';
+
+  /** 던전 대기방: 모인 가족을 보여 주고, 방을 연 사람이 시작을 누르면 함께 들어간다 */
+  private onLobby(d: { host: boolean; bears: string[]; island: number } | null) {
+    const key = d ? `${d.host}|${d.bears.join(',')}|${d.island}` : '';
+    if (key === this.lobbyKey && (!d || this.lobbyCard?.active)) return;
+    this.lobbyKey = key;
+    this.lobbyCard?.destroy();
+    this.lobbyCard = undefined;
+    if (!d) return;
+    this.inviteCard?.destroy();
+    this.inviteCard = undefined;
+    const W = this.scale.width;
+    const PW = Math.min(W - 24, 330);
+    const PH = 96;
+    const c = this.add.container(W / 2, HUD_TOP_H + 12 + PH / 2).setDepth(160);
+    this.lobbyCard = c;
+    const g = this.add.graphics();
+    g.fillStyle(0x000000, 0.2).fillRoundedRect(-PW / 2, -PH / 2 + 4, PW, PH, 18);
+    g.fillStyle(0x5a4d6b).fillRoundedRect(-PW / 2, -PH / 2, PW, PH, 18);
+    g.lineStyle(3, 0xf2a93b).strokeRoundedRect(-PW / 2, -PH / 2, PW, PH, 18);
+    c.add(g);
+    c.add(this.add.text(-PW / 2 + 14, -PH / 2 + 16, `⚔️ ${ISLANDS[d.island]?.name ?? ''} 던전 대기방`, { fontFamily: FONT, fontSize: '12px', color: '#ffffff', fontStyle: 'bold' }).setOrigin(0, 0.5));
+    c.add(this.add.text(PW / 2 - 14, -PH / 2 + 16, `${d.bears.length}명`, { fontFamily: FONT, fontSize: '11px', color: '#f2d9a0', fontStyle: 'bold' }).setOrigin(1, 0.5));
+    d.bears.slice(0, 4).forEach((b, i) => {
+      const id = BEARS.some((x) => x.id === b) ? b : 'dad';
+      const x = -PW / 2 + 28 + i * 34;
+      c.add(this.add.circle(x, 14, 15, 0xfff6e0, i === 0 ? 1 : 0.85).setStrokeStyle(2, i === 0 ? 0xf2a93b : 0xffffff));
+      c.add(this.add.image(x, 28, `${id}_front`).setOrigin(0.5, 1).setScale(0.82));
+    });
+    const hint = d.host ? (d.bears.length > 1 ? '모였으면 시작을 눌러요' : '가족을 기다리는 중…') : '방을 연 가족이 시작하면 함께 들어가요';
+    c.add(this.add.text(-PW / 2 + 14, PH / 2 - 10, hint, { fontFamily: FONT, fontSize: '9px', color: '#e8d5a9', fontStyle: 'bold' }).setOrigin(0, 0.5));
+    const gray = (b: Phaser.GameObjects.Container, w: number) => {
+      (b.list[0] as Phaser.GameObjects.Graphics).clear().fillStyle(0x8f839e).fillRoundedRect(-w / 2, -20, w, 40, 20);
+      (b.list[1] as Phaser.GameObjects.Text).setStroke('#5a4d6b', 3);
+    };
+    if (d.host) {
+      const start = this.button('시작', true, () => this.game.events.emit('lobby-start'), 84);
+      start.setPosition(PW / 2 - 124, 12).setScale(0.8);
+      const stop = this.button('닫기', true, () => this.game.events.emit('lobby-leave'), 70);
+      stop.setPosition(PW / 2 - 46, 12).setScale(0.8);
+      gray(stop, 70);
+      c.add([start, stop]);
+    } else {
+      const out = this.button('나가기', true, () => this.game.events.emit('lobby-leave'), 84);
+      out.setPosition(PW / 2 - 52, 12).setScale(0.8);
+      gray(out, 84);
+      c.add(out);
+    }
+    c.setScale(0.9);
+    this.tweens.add({ targets: c, scale: 1, duration: 180, ease: 'Back.easeOut' });
+  }
+
+  private comboText?: Phaser.GameObjects.Text;
+  private comboTween?: Phaser.Tweens.Tween;
+
+  /** 콤보 숫자: 이어 칠 때마다 커졌다 돌아오고, 잠시 쉬면 사라진다 */
+  private onCombo(n: number, fin: boolean) {
+    const W = this.scale.width;
+    if (!this.comboText?.active) {
+      this.comboText = this.add.text(0, 0, '', { fontFamily: FONT, fontSize: '20px', color: '#ffe08a', fontStyle: 'bold', stroke: '#b5532f', strokeThickness: 6, align: 'right' }).setOrigin(1, 0.5).setDepth(45);
+    }
+    const t = this.comboText;
+    t.setPosition(W - 64, HUD_TOP_H + 150).setText(fin ? `${n} 콤보!\n쾅!` : `${n} 콤보`).setColor(fin ? '#ffffff' : '#ffe08a').setAlpha(1);
+    this.comboTween?.remove();
+    this.tweens.add({ targets: t, scale: { from: fin ? 1.7 : 1.3, to: 1 }, duration: 180, ease: 'Back.easeOut' });
+    this.comboTween = this.tweens.add({ targets: t, alpha: 0, delay: 1500, duration: 300 });
+  }
 
   /** 가족이 보스 던전에 불렀을 때 뜨는 알림 (하던 일을 막지 않는다) */
   private onDungeonInvited(d: { bear: string; island: number }) {
@@ -1748,10 +1831,28 @@ export class HudScene extends Phaser.Scene {
     this.pad = undefined;
     this.padRelease = undefined;
     this.registry.set('pad', null);
-    if (W < H * 1.2) return;
+    this.registry.set('padHold', false);
     this.input.addPointer(1);
     const c = this.add.container(0, 0).setDepth(40).setVisible(false);
     this.pad = c;
+    // 점프 단추 (세로 화면에서는 이것만 나온다)
+    const wide = W >= H * 1.2;
+    const JR = wide ? 24 : 22;
+    const jb = this.add.container(wide ? W - 196 : W - 40, wide ? H - HUD_BOTTOM_H - 46 - 16 + 34 : H - HUD_BOTTOM_H - 150);
+    const jg = this.add.graphics();
+    jg.fillStyle(0x000000, 0.16).fillCircle(0, 3, JR);
+    jg.fillStyle(0x5bb8e8).fillCircle(0, 0, JR);
+    jg.lineStyle(3, 0xffffff, 0.95).strokeCircle(0, 0, JR);
+    jb.add([jg, this.add.text(0, -4, '⤴', { fontFamily: FONT, fontSize: '17px', color: '#ffffff', fontStyle: 'bold' }).setOrigin(0.5), this.add.text(0, 12, '점프', { fontFamily: FONT, fontSize: '8px', color: '#ffffff', fontStyle: 'bold' }).setOrigin(0.5)]);
+    jb.setSize(JR * 2 + 12, JR * 2 + 12).setInteractive();
+    jb.on('pointerdown', (_p: Phaser.Input.Pointer, _x: number, _y: number, e: Phaser.Types.Input.EventData) => {
+      e.stopPropagation();
+      buzz(12);
+      this.tweens.add({ targets: jb, scale: { from: 0.86, to: 1 }, duration: 160, ease: 'Back.easeOut' });
+      this.game.events.emit('pad-jump');
+    });
+    c.add(jb);
+    if (!wide) return;
     const R = 46;
     const jx = 128;
     const jy = H - HUD_BOTTOM_H - R - 16;
@@ -1825,10 +1926,32 @@ export class HudScene extends Phaser.Scene {
     ag.lineStyle(3, 0xffffff, 0.95).strokeCircle(0, 0, AR);
     ab.add([ag, this.add.text(0, -5, '🐾', { fontSize: '22px' }).setOrigin(0.5), this.add.text(0, 17, '행동', { fontFamily: FONT, fontSize: '9px', color: '#ffffff', fontStyle: 'bold' }).setOrigin(0.5)]);
     ab.setSize(AR * 2 + 16, AR * 2 + 16).setInteractive();
-    ab.on('pointerdown', () => {
+    let apid = -1;
+    ab.on('pointerdown', (p: Phaser.Input.Pointer) => {
       buzz(15);
       this.tweens.add({ targets: ab, scale: { from: 0.86, to: 1 }, duration: 160, ease: 'Back.easeOut' });
       this.game.events.emit('pad-action');
+      // 누르고 있으면 계속 친다
+      apid = p.id;
+      this.registry.set('padHold', true);
+    });
+    const aUp = (p: Phaser.Input.Pointer) => {
+      if (p.id !== apid) return;
+      apid = -1;
+      this.registry.set('padHold', false);
+    };
+    this.input.on('pointerup', aUp);
+    this.input.on('pointerupoutside', aUp);
+    const prevRelease = this.padRelease;
+    this.padRelease = () => {
+      prevRelease?.();
+      apid = -1;
+      this.registry.set('padHold', false);
+    };
+    this.events.once('shutdown', () => {
+      this.input.off('pointerup', aUp);
+      this.input.off('pointerupoutside', aUp);
+      this.registry.set('padHold', false);
     });
     c.add([base, knob, zone, ab]);
   }

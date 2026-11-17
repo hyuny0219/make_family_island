@@ -134,6 +134,21 @@ export class Bear {
     this.hopV = power;
   }
 
+  /** 높이 뛰기 (점프 단추). 이미 떠 있으면 false */
+  leap() {
+    if (this.hop > 0.5 || this.lying) return false;
+    this.hopV = 250;
+    return true;
+  }
+
+  /** 발이 땅에서 충분히 떨어져 있다 (몬스터의 공격이 닿지 않는다) */
+  get air() {
+    return this.hop > 8;
+  }
+
+  /** 높이 뛰었을 때 발밑에 생기는 그림자 */
+  private shadow?: Phaser.GameObjects.Ellipse;
+
   /**
    * 한 프레임 이동. walkable 판정으로 막히면 축별로 미끄러지고, 완전히 막히면 멈춘다.
    * @returns 이번 프레임에 목적지에 도착했으면 true
@@ -241,6 +256,11 @@ export class Bear {
       this.sprite.setPosition(Math.round(this.x - this.sprite.height / 2), Math.round(this.y - 5));
     }
     this.sprite.setDepth(this.y);
+    if (this.hop > 3) {
+      if (!this.shadow) this.shadow = this.sprite.scene.add.ellipse(0, 0, 18, 7, 0x000000, 0.28);
+      const k = Math.max(0.55, 1 - this.hop / 90);
+      this.shadow.setVisible(this.sprite.visible).setPosition(Math.round(this.x), Math.round(this.y - 1)).setScale(k).setDepth(this.y - 0.5);
+    } else if (this.shadow?.visible) this.shadow.setVisible(false);
     this.label?.setPosition(this.sprite.x, this.sprite.y - this.sprite.height - 3).setDepth(this.y + 1);
     this.bubble?.setPosition(this.sprite.x, this.sprite.y - this.sprite.height - (this.label ? 14 : 4)).setDepth(99984);
     return arrived;
@@ -271,6 +291,7 @@ export class Bear {
   destroy() {
     this.bubble?.destroy();
     this.label?.destroy();
+    this.shadow?.destroy();
     this.sprite.destroy();
   }
 }
