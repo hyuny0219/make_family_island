@@ -153,15 +153,17 @@ if __name__ == "__main__":
         slice_frames(bear, f"act_{bear}_a.png", ["a1", "a2"], 1)
         slice_frames(bear, f"act_{bear}_b.png", ["a3", "a4"], 0)
     # 몸에 입는 변신 의상 (art/source/skin/<변신>_*.png — 평소 그림과 같은 배치)
-    for skin in ["bee", "bee2", "bee3"]:
-        if not (SRC / f"skin/{skin}_bears.png").exists():
+    (OUT / "skin").mkdir(exist_ok=True)
+    for skin in [f"{a}{n}" for a in ["leaf", "bee", "wood", "bubble", "rock"] for n in ["", "2", "3"]]:
+        # 13장(기본 + 걷기 4 + 동작 8)이 다 있는 의상만 만든다
+        if len(list((SRC / "skin").glob(f"{skin}_*.png"))) < 13:
             continue
-        slice_grid(f"skin/{skin}_bears.png", 3, 4, [[f"{b}_{skin}_{f}" for f in ["front", "side", "back"]] for b in ["dad", "mom", "kid", "baby"]])
+        slice_grid(f"skin/{skin}_bears.png", 3, 4, [[f"skin/{b}_{skin}_{f}" for f in ["front", "side", "back"]] for b in ["dad", "mom", "kid", "baby"]])
         for bear in ["dad", "mom", "kid", "baby"]:
             # 의상을 입어도 곰 크기는 그대로여야 한다: 평소 키 + 머리 장식(5px, 진화하면 +2씩)에 맞춘다
             for facing in ["front", "side", "back"]:
                 base = Image.open(OUT / f"{bear}_{facing}.png")
-                path = OUT / f"{bear}_{skin}_{facing}.png"
+                path = OUT / f"skin/{bear}_{skin}_{facing}.png"
                 im = Image.open(path).convert("RGBA")
                 # 윗줄 곰의 그림자가 머리 위에 가로줄로 딸려 온 것을 지운다
                 arr = np.array(im)
@@ -179,7 +181,7 @@ if __name__ == "__main__":
                     clean_alpha(im.resize((max(1, round(im.width * k)), max(1, round(im.height * k))), Image.BOX)).save(path)
             for sheet, rows, scale_row in [(f"walk_{bear}", ["w1", "w2"], -1), (f"act_{bear}_a", ["a1", "a2"], 1), (f"act_{bear}_b", ["a3", "a4"], 0)]:
                 if (SRC / f"skin/{skin}_{sheet}.png").exists():
-                    slice_frames(f"{bear}_{skin}", f"skin/{skin}_{sheet}.png", rows, scale_row)
+                    slice_frames(f"skin/{bear}_{skin}", f"skin/{skin}_{sheet}.png", rows, scale_row)
 
     slice_grid(
         "objects.png", 4, 3,
@@ -341,6 +343,12 @@ if __name__ == "__main__":
         grid = [[None] * 3, [None] * 3]
         grid[i // 3][i % 3] = name
         slice_grid("weapons.png", 3, 2, grid, fit=fit)
+    # 조약돌 변신의 곡괭이 (3단계)
+    if (SRC / "weapons2c.png").exists():
+        for i, (name, fit) in enumerate([("weapon_pick", 24), ("weapon_pick2", 26), ("weapon_pick3", 29)]):
+            grid = [[None] * 3, [None] * 3]
+            grid[0][i] = name
+            slice_grid("weapons2c.png", 3, 2, grid, fit=fit)
     # 진화한 무기 (2·3단계)
     STAGE = {
         "weapons2a.png": [("weapon_sling2", 22), ("weapon_sling3", 24), ("weapon_hammer2", 28), ("weapon_hammer3", 31), ("weapon_water2", 22), ("weapon_water3", 25)],

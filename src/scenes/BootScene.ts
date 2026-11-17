@@ -1,4 +1,4 @@
-import { BEAR_SKINS, WEAPON_STAGE_TEX } from '../data/weapons';
+import { WEAPON_STAGE_TEX } from '../data/weapons';
 import { OPENING } from '../data/story';
 import { story } from '../state/story';
 import Phaser from 'phaser';
@@ -30,9 +30,7 @@ export class BootScene extends Phaser.Scene {
     for (const b of BEARS) for (const f of FACINGS) this.load.image(`${b.id}_${f}`, `${b.id}_${f}.png`);
     // 동작 그림 네 장씩 (치켜들기, 내려치기, 주먹, 줍기)과 도구
     for (const b of BEARS) for (const f of FACINGS) for (const n of [1, 2, 3, 4]) this.load.image(`${b.id}_${f}_a${n}`, `${b.id}_${f}_a${n}.png`);
-    for (const k of ['tool_axe', 'tool_pickaxe', 'fx_star', 'weapon_hammer', 'weapon_sling', 'weapon_water', 'weapon_flame', 'weapon_whip', 'fx_sting', ...WEAPON_STAGE_TEX]) this.load.image(k, `${k}.png`);
-    // 변신 의상 (서 있기·걷기·동작)
-    for (const sk of BEAR_SKINS) for (const b of BEARS) for (const f of FACINGS) for (const x of ['', '_w1', '_w2', '_a1', '_a2', '_a3', '_a4']) this.load.image(`${b.id}_${sk}_${f}${x}`, `${b.id}_${sk}_${f}${x}.png`);
+    for (const k of ['tool_axe', 'tool_pickaxe', 'fx_star', 'weapon_hammer', 'weapon_sling', 'weapon_water', 'weapon_flame', 'weapon_whip', 'weapon_pick', 'fx_sting', ...WEAPON_STAGE_TEX]) this.load.image(k, `${k}.png`);
     // 걷는 그림 두 장씩
     for (const b of BEARS) for (const f of FACINGS) for (const w of [1, 2]) this.load.image(`${b.id}_${f}_w${w}`, `${b.id}_${f}_w${w}.png`);
     for (const r of RESIDENTS) for (const f of FACINGS) this.load.image(`${r.id}_${f}`, `${r.id}_${f}.png`);
