@@ -1145,7 +1145,7 @@ export class HudScene extends Phaser.Scene {
       cx -= 26;
       tray.add([t, ic]);
     });
-    tray.add(this.add.text(W / 2, top + 167, !canPay(sel) ? `🔨 ${sel.name}: 아직 없어요 · 만들기에서 만들면 여기서 놓을 수 있어요` : !tool ? `아래에서 ${inRoom ? '가구' : '지을 것'}를 골라요 · 그냥 화면을 누르면 탐험으로 돌아가요` : inRoom ? '🏠 바닥을 눌러 놓아요 · 놓인 가구를 누르면 돌리기·옮기기 단추가 나와요 (끌어도 옮겨져요)' : '만든 것을 땅에 톡 눌러 놓아요 · 치우면 돌려받아요 · 집을 누르면 들어가요', { fontFamily: FONT, fontSize: '8px', color: '#a08a6a' }).setOrigin(0.5));
+    tray.add(this.add.text(W / 2, top + 167, !canPay(sel) ? `🔨 ${sel.name}: 아직 없어요 · 만들기에서 만들면 여기서 놓을 수 있어요` : !tool ? `아래에서 ${inRoom ? '가구' : '지을 것'}를 골라요 · 그냥 화면을 누르면 탐험으로 돌아가요` : inRoom ? '🏠 놓인 가구를 누르면 붕 떠요 → 옮길 자리를 누르거나 끌어요 · 돌리기·넣기 단추도 나와요' : '만든 것을 땅에 톡 눌러 놓아요 · 치우면 돌려받아요 · 집을 누르면 들어가요', { fontFamily: FONT, fontSize: '8px', color: '#a08a6a' }).setOrigin(0.5));
   }
 
   /** 주민의 부탁 */
