@@ -1,3 +1,4 @@
+import { matchKorean } from '../util/korean';
 import { quests } from '../state/quests';
 import Phaser from 'phaser';
 import { COLORS } from '../config';
@@ -305,7 +306,7 @@ export class MergeScene extends Phaser.Scene {
     if (this.searchEl) return this.searchEl;
     const el = document.createElement('input');
     el.type = 'search';
-    el.placeholder = '만들 것 이름 (예: 사탕)';
+    el.placeholder = '이름이나 초성 (예: 사탕, ㅅㅌ)';
     el.value = this.query;
     el.autocomplete = 'off';
     el.setAttribute('enterkeyhint', 'search');
@@ -376,7 +377,7 @@ export class MergeScene extends Phaser.Scene {
     sg.fillStyle(0xffffff).fillRoundedRect(14, headTop + 2, W - 28, 30, 15);
     sg.lineStyle(2, this.query ? 0xe8b84a : 0xe8d5a9).strokeRoundedRect(14, headTop + 2, W - 28, 30, 15);
     head.add(sg);
-    head.add(this.add.text(28, headTop + 17, this.query ? `🔍 ${this.query}` : '🔍 이름으로 찾기 (조합·합치기·작업대)', { fontFamily: FONT, fontSize: '12px', color: this.query ? COLORS.uiText : '#b3a283', fontStyle: 'bold' }).setOrigin(0, 0.5));
+    head.add(this.add.text(28, headTop + 17, this.query ? `🔍 ${this.query}` : '🔍 이름이나 초성으로 찾기 (예: 사탕, ㅅㅌ)', { fontFamily: FONT, fontSize: '12px', color: this.query ? COLORS.uiText : '#b3a283', fontStyle: 'bold' }).setOrigin(0, 0.5));
     const sHit = this.add.rectangle(W / 2 - 20, headTop + 17, W - 70, 34, 0, 0).setInteractive({ useHandCursor: true });
     sHit.on('pointerup', () => {
       if (this.registry.get('modal') || this.mode !== 'ready' || this.readyDrag?.moved) return;
@@ -410,7 +411,7 @@ export class MergeScene extends Phaser.Scene {
     const q = this.query.replace(/\s+/g, '');
     const items = q
       ? this.makeables(true)
-          .filter((m) => ITEMS[m.out].name.replace(/\s+/g, '').includes(q))
+          .filter((m) => matchKorean(ITEMS[m.out].name, q))
           .sort((a, b) => Number(b.n > 0) - Number(a.n > 0))
       : this.makeables();
     list.add(
@@ -421,7 +422,7 @@ export class MergeScene extends Phaser.Scene {
     if (!items.length) {
       list.add(
         this.add
-          .text(W / 2, top + 110, q ? `'${this.query}'(으)로 만들 수 있는 걸\n찾지 못했어요\n\n이름의 일부만 넣어 보세요 (예: 꿀, 주스)` : '지금 창고 재료로는\n만들 수 있는 게 없어요\n\n섬에서 재료를 더 모아 오거나\n위에서 이름으로 찾아보세요', { fontFamily: FONT, fontSize: '13px', color: '#a08a6a', align: 'center', lineSpacing: 5 })
+          .text(W / 2, top + 110, q ? `'${this.query}'(으)로 만들 수 있는 걸\n찾지 못했어요\n\n이름의 일부나 초성만 넣어도 돼요 (예: 꿀, ㅈㅅ)` : '지금 창고 재료로는\n만들 수 있는 게 없어요\n\n섬에서 재료를 더 모아 오거나\n위에서 이름으로 찾아보세요', { fontFamily: FONT, fontSize: '13px', color: '#a08a6a', align: 'center', lineSpacing: 5 })
           .setOrigin(0.5),
       );
       this.readyMax = 0;
