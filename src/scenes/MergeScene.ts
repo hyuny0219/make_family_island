@@ -58,6 +58,9 @@ export class MergeScene extends Phaser.Scene {
   /** 이름으로 찾기: 찾는 말과, 글자를 치는 동안 화면 위에 띄우는 입력 칸 */
   private query = '';
   private searchEl: HTMLInputElement | null = null;
+  /** 찾기 칸이 놓인 곳 (가로 화면에서는 오른쪽 칸) */
+  private readyX = 0;
+  private readyW = 0;
   private readyScroll = 0;
   private readyMax = 0;
   private readyDrag: null | { y: number; s: number; moved: boolean } = null;
@@ -164,7 +167,20 @@ export class MergeScene extends Phaser.Scene {
     this.input.on('pointermove', this.onMove, this);
     this.input.on('pointerup', this.onUp, this);
     inventory.on('changed', this.onInventory, this);
+    // 찾기 입력 칸은 만들기 목록이 보이는 동안만 그 자리에 놓는다
+    const place = () => this.placeSearch();
+    const hide = () => {
+      if (!this.searchEl) return;
+      this.searchEl.blur();
+      this.searchEl.style.display = 'none';
+    };
+    this.events.on('update', place);
+    this.events.on('sleep', hide);
+    this.events.on('pause', hide);
     this.events.once('shutdown', () => {
+      this.events.off('update', place);
+      this.events.off('sleep', hide);
+      this.events.off('pause', hide);
       inventory.off('changed', this.onInventory, this);
       this.searchEl?.remove();
       this.searchEl = null;
@@ -281,14 +297,20 @@ export class MergeScene extends Phaser.Scene {
   }
 
   /** 이름으로 찾기: 화면 위에 입력 칸을 띄운다 (글자를 치는 대로 목록이 바뀐다) */
-  private openSearch() {
-    if (this.searchEl) return void this.searchEl.focus();
+  /**
+   * 찾기 칸: 그림 위에 진짜 입력 칸을 투명하게 겹쳐 둔다.
+   * 손가락이 입력 칸을 직접 누르므로 어느 폰에서나 자판이 올라온다 (게임 쪽에서 대신 눌러 주는 방식은 폰에 따라 막힌다).
+   */
+  private ensureSearch() {
+    if (this.searchEl) return this.searchEl;
     const el = document.createElement('input');
     el.type = 'search';
     el.placeholder = '만들 것 이름 (예: 사탕)';
     el.value = this.query;
+    el.autocomplete = 'off';
     el.setAttribute('enterkeyhint', 'search');
-    Object.assign(el.style, { position: 'fixed', left: '50%', top: '12px', transform: 'translateX(-50%)', width: 'min(86vw, 340px)', height: '46px', fontSize: '18px', padding: '0 16px', borderRadius: '23px', border: '3px solid #e8b84a', background: '#fffdf5', color: '#5a4632', zIndex: '9999', outline: 'none', boxShadow: '0 4px 14px rgba(0,0,0,.28)', boxSizing: 'border-box', fontFamily: 'inherit' });
+    Object.assign(el.style, { position: 'fixed', display: 'none', opacity: '0', margin: '0', fontSize: '16px', padding: '0 14px', borderRadius: '18px', border: '2px solid #e8b84a', background: '#fffdf5', color: '#5a4632', zIndex: '9999', outline: 'none', boxSizing: 'border-box', fontFamily: 'inherit', appearance: 'none' });
+    (el.style as unknown as Record<string, string>).webkitAppearance = 'none';
     document.body.appendChild(el);
     this.searchEl = el;
     el.addEventListener('input', () => {
@@ -300,11 +322,41 @@ export class MergeScene extends Phaser.Scene {
       e.stopPropagation();
       if (e.key === 'Enter') el.blur();
     });
-    el.addEventListener('blur', () => {
-      el.remove();
-      if (this.searchEl === el) this.searchEl = null;
+    el.addEventListener('focus', () => {
+      el.style.opacity = '1';
+      sfx.tap();
     });
-    el.focus();
+    el.addEventListener('blur', () => {
+      el.style.opacity = '0';
+      // 자판이 내려가 화면 크기가 돌아온 뒤에 목록을 다시 맞춘다
+      window.setTimeout(() => this.searchEl === el && this.scene.isActive() && this.mode === 'ready' && this.rebuildReady(), 500);
+    });
+    return el;
+  }
+
+  /** 입력 칸을 찾기 칸 그림 위에 맞춰 놓는다 (만들기 목록이 보일 때만) */
+  private placeSearch() {
+    const el = this.searchEl;
+    if (!el) return;
+    const show = this.mode === 'ready' && !this.registry.get('modal') && this.scene.isActive() && this.registry.get('view') === 'merge';
+    if (!show) {
+      if (el.style.display !== 'none') {
+        el.blur();
+        el.style.display = 'none';
+      }
+      return;
+    }
+    const r = this.game.canvas.getBoundingClientRect();
+    const k = r.width / this.scale.width;
+    const headTop = HUD_TOP_H + 42;
+    const W = this.readyW;
+    const box = { left: r.left + (this.readyX + 14) * k, top: r.top + (headTop + 2) * k, width: (W - 28 - (this.query ? 40 : 0)) * k, height: 30 * k };
+    const css = `${Math.round(box.left)}|${Math.round(box.top)}|${Math.round(box.width)}|${Math.round(box.height)}`;
+    if (el.dataset.box !== css) {
+      el.dataset.box = css;
+      Object.assign(el.style, { left: `${box.left}px`, top: `${box.top}px`, width: `${box.width}px`, height: `${Math.max(30, box.height)}px` });
+    }
+    if (el.style.display !== 'block') el.style.display = 'block';
   }
 
   private rebuildReady() {
@@ -313,6 +365,9 @@ export class MergeScene extends Phaser.Scene {
     const W = this.scale.width;
     const H = this.scale.height;
     const headTop = HUD_TOP_H + 42;
+    this.readyX = 0;
+    this.readyW = W;
+    this.ensureSearch();
     // 맨 위에 찾기 칸을 두고, 목록은 그 아래에서 밀려 다닌다
     const head = this.add.container(0, 0);
     this.readyHead = head;
@@ -325,8 +380,7 @@ export class MergeScene extends Phaser.Scene {
     const sHit = this.add.rectangle(W / 2 - 20, headTop + 17, W - 70, 34, 0, 0).setInteractive({ useHandCursor: true });
     sHit.on('pointerup', () => {
       if (this.registry.get('modal') || this.mode !== 'ready' || this.readyDrag?.moved) return;
-      sfx.tap();
-      this.openSearch();
+      this.ensureSearch().focus();
     });
     head.add(sHit);
     if (this.query) {

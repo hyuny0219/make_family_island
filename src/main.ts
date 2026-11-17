@@ -44,7 +44,10 @@ const game = new Phaser.Game({
 });
 
 // 폰을 돌리면 기준 크기를 바꾼다 (화면을 다시 짜는 일은 HUD가 크기 변화를 보고 한다)
+const typing = () => document.activeElement instanceof HTMLInputElement;
 const applyBase = () => {
+  // 글자를 넣는 중에는 자판 때문에 화면이 줄어든 것이니 가로·세로를 바꾸지 않는다
+  if (typing()) return;
   const [w, h] = baseSize();
   const c = game.config as unknown as { width: number; height: number };
   if (c.width === w && c.height === h) return;
@@ -53,6 +56,8 @@ const applyBase = () => {
   game.scale.refresh();
 };
 window.addEventListener('resize', applyBase);
+// 자판이 내려간 뒤 한 번 더 맞춘다
+window.addEventListener('focusout', () => window.setTimeout(applyBase, 350));
 window.addEventListener('orientationchange', () => window.setTimeout(applyBase, 200));
 
 // 디버그/테스트용 핸들

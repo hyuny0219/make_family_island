@@ -230,6 +230,8 @@ export class HudScene extends Phaser.Scene {
   private onResize() {
     this.resizeTimer?.remove();
     this.resizeTimer = this.time.delayedCall(180, () => {
+      // 글자를 넣는 중(자판이 올라온 동안)에는 화면을 다시 짜지 않고, 끝난 뒤에 다시 본다
+      if (document.activeElement instanceof HTMLInputElement) return void this.onResize();
       if (this.scale.width === this.laidW && this.scale.height === this.laidH) return;
       this.scene.restart();
     });
