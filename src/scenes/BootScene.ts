@@ -146,8 +146,9 @@ export class BootScene extends Phaser.Scene {
     });
     // 뱃길 점선과 글자
     const dots = this.add.graphics().setDepth(4);
-    const title = this.add.text(W / 2, H * 0.3, '🏝️ 가족 섬 만들기', { fontFamily: FONT, fontSize: '24px', color: '#ffffff', fontStyle: 'bold', stroke: '#3d8fb5', strokeThickness: 6 }).setOrigin(0.5).setDepth(5);
-    this.tweens.add({ targets: title, y: title.y - 5, duration: 1200, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+    const title = this.add.text(W / 2, H * 0.3 - 8, 'BEAR LORD', { fontFamily: FONT, fontSize: '32px', color: '#ffd166', fontStyle: 'bold', stroke: '#7a4a2b', strokeThickness: 8 }).setOrigin(0.5).setDepth(5).setLetterSpacing(3);
+    const korTitle = this.add.text(W / 2, H * 0.3 + 22, '열 개의 섬', { fontFamily: FONT, fontSize: '16px', color: '#ffffff', fontStyle: 'bold', stroke: '#3d8fb5', strokeThickness: 5 }).setOrigin(0.5).setDepth(5);
+    this.tweens.add({ targets: [title, korTitle], y: '-=5', duration: 1200, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
     const TIPS = ['섬으로 가는 중…', '모닥불을 피우는 중…', '물고기를 깨우는 중…', '구름을 걷어 내는 중…', '곰 가족이 준비하는 중…'];
     const tip = this.add.text(W / 2, cy + 62, TIPS[0], { fontFamily: FONT, fontSize: '13px', color: '#ffffff', fontStyle: 'bold' }).setOrigin(0.5).setDepth(5);
     const pct = this.add.text(W / 2, cy + 82, '0%', { fontFamily: FONT, fontSize: '11px', color: '#e6f6ff' }).setOrigin(0.5).setDepth(5);
