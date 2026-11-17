@@ -15,6 +15,56 @@ export function unlockAudio() {
   }
   if (ctx.state === 'suspended') void ctx.resume();
   refreshMusic();
+  loadSamples();
+}
+
+// ───────────────────────── 녹음된 효과음 ─────────────────────────
+// public/assets/sfx/<이름>.mp3 — 첫 터치 뒤에 뒤에서 조용히 받아 둔다. 아직 못 받았으면 합성음으로 대신한다.
+
+/** 기본 효과음 */
+const BASE_SAMPLES = ['punch', 'slash', 'heavy', 'swing', 'hit', 'finisher', 'chop', 'mine', 'pick', 'pickup', 'fish_cast', 'fish_catch', 'mon_die', 'boss_roar', 'boss_slam', 'boss_down', 'hurt', 'jump', 'land', 'slam', 'evolve'];
+/** 보스 무기마다: w_(기본 공격) f_(3타 마무리) g_(내려찍기) */
+const WEAPON_IDS = ['leaf', 'bee', 'wood', 'bubble', 'rock', 'poison', 'ice', 'sand', 'fire', 'thunder'];
+const SAMPLES = [...BASE_SAMPLES, ...WEAPON_IDS.flatMap((id) => [`w_${id}`, `f_${id}`, `g_${id}`])];
+const buffers = new Map<string, AudioBuffer>();
+let samplesAsked = false;
+
+function loadSamples() {
+  if (samplesAsked || !ctx) return;
+  samplesAsked = true;
+  const ac = ctx;
+  for (const name of SAMPLES) {
+    fetch(`${import.meta.env.BASE_URL}assets/sfx/${name}.mp3`)
+      .then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(String(r.status)))))
+      .then((b) => ac.decodeAudioData(b))
+      .then((buf) => buffers.set(name, buf))
+      .catch(() => {
+        /* 못 받으면 합성음으로 */
+      });
+  }
+}
+
+const lastPlayed = new Map<string, number>();
+
+/**
+ * 녹음된 효과음을 낸다. 같은 소리가 너무 촘촘히 겹치지 않게 하고, 칠 때마다 높낮이를 살짝 바꾼다.
+ * @returns 소리를 냈거나 낼 필요가 없으면 true, 아직 파일이 없으면 false (→ 합성음으로 대신)
+ */
+function sample(name: string, vol = 0.6, rate = 1) {
+  if (!settings.sound || !ctx || ctx.state !== 'running') return true;
+  const buf = buffers.get(name);
+  if (!buf) return false;
+  const now = performance.now();
+  if (now - (lastPlayed.get(name) ?? -1e9) < 70) return true;
+  lastPlayed.set(name, now);
+  const src = ctx.createBufferSource();
+  src.buffer = buf;
+  src.playbackRate.value = rate * (0.94 + Math.random() * 0.12);
+  const gain = ctx.createGain();
+  gain.gain.value = vol;
+  src.connect(gain).connect(ctx.destination);
+  src.start();
+  return true;
 }
 
 function tone(freq: number, dur: number, type: OscillatorType, vol: number, slideTo?: number) {
@@ -52,6 +102,14 @@ export const sfx = {
   },
   fanfare: () => {
     [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => tone(f, 0.18, 'triangle', 0.09), i * 110));
+  },
+  /**
+   * 녹음된 효과음 (없으면 합성음 fallback).
+   * 이름: punch·slash·heavy·swing·hit·finisher·chop·mine·pick·pickup·fish_cast·fish_catch·mon_die·boss_roar·boss_slam·boss_down·hurt·jump·land·slam·evolve,
+   * 보스 무기는 w_<id>·f_<id>·g_<id>
+   */
+  play: (name: string, vol = 0.6, fallback: 'tap' | 'rustle' | 'knock' | 'boing' | 'pop' | null = null, rate = 1) => {
+    if (!sample(name, vol, rate) && fallback) sfx[fallback]();
   },
 };
 

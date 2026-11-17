@@ -41,12 +41,18 @@ export default defineConfig({
       workbox: {
         globPatterns: ['**/*.{js,css,html,png,jpg,svg,webmanifest}'],
         // 변신 의상 그림은 수가 많아서 처음에 다 받지 않고, 입을 때 받아서 그때부터 저장해 둔다
-        globIgnores: ['**/assets/skin/**'],
+        globIgnores: ['**/assets/skin/**', '**/assets/sfx/**'],
         runtimeCaching: [
           {
             urlPattern: /\/assets\/skin\/.*\.png$/,
             handler: 'CacheFirst',
             options: { cacheName: 'skins', expiration: { maxEntries: 4000 } },
+          },
+          // 효과음은 첫 터치 뒤에 받아서 저장해 둔다 (다시 만든 소리는 다음에 켤 때 바뀐다)
+          {
+            urlPattern: /\/assets\/sfx\/.*\.mp3$/,
+            handler: 'StaleWhileRevalidate',
+            options: { cacheName: 'sfx', expiration: { maxEntries: 200 } },
           },
         ],
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
