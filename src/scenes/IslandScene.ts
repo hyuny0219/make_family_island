@@ -69,6 +69,20 @@ const CLOUD_PX = 6; // 구름은 타일당 6px 저해상도로 그려 4배 확�
 /** 섬마다 생성 결과를 캐시 (다시 방문할 때 빠르게) */
 const worldCache = new Map<number, World>();
 
+/** 보스 무기의 연속기 이름: [3타 마무리, 공중 공격 뒤 내려찍기] */
+const COMBO_MOVES: Record<string, [string, string]> = {
+  leaf: ['덩굴 묶기', '덩굴 솟구침'],
+  bee: ['침 연사', '침 소나기'],
+  wood: ['대지 강타', '대지 붕괴'],
+  bubble: ['물대포', '물기둥'],
+  rock: ['바위 가시', '돌 파편'],
+  poison: ['독 웅덩이', '독 안개'],
+  ice: ['얼음 회오리', '얼음 가시'],
+  sand: ['철퇴 회오리', '모래 폭풍'],
+  fire: ['불꽃 회전 베기', '불기둥'],
+  thunder: ['연쇄 번개', '벼락'],
+};
+
 /** 이 시간 안에 이어 치면 콤보가 이어진다 (ms) */
 const COMBO_GAP = 1000;
 
@@ -115,7 +129,7 @@ export class IslandScene extends Phaser.Scene {
   private hpBar?: Phaser.GameObjects.Graphics;
   private hat?: Phaser.GameObjects.Image;
   private thunderAcc = 0;
-  private dungeon: null | { x: number; y: number; w: number; h: number; back: { x: number; y: number }; objs: Phaser.GameObjects.GameObject[]; phase: 'wave' | 'boss' | 'clear'; boss?: Monster; slamT: number; called: boolean; waved: boolean } = null;
+  private dungeon: null | { x: number; y: number; w: number; h: number; back: { x: number; y: number }; objs: Phaser.GameObjects.GameObject[]; phase: 'wave' | 'boss' | 'clear'; boss?: Monster; slamT: number; called: boolean; called2?: boolean; waved: boolean } = null;
   private monsterTimer = 6;
   /** 지금 들어와 있는 집에 사는 주민 */
   private roomGuest: Bear | null = null;
@@ -1814,19 +1828,354 @@ export class IslandScene extends Phaser.Scene {
   private nextMove() {
     const pl = this.player!;
     const now = this.time.now;
+    const wp = this.weapon();
     if (pl.air) {
-      // 공중 베기: 연속기는 끊기지 않고, 내려앉으며 내려찍기로 이어진다
+      // 공중 공격: 연속기는 끊기지 않고, 내려앉으며 내려찍기로 이어진다
       this.airHit = true;
       this.comboAt = now;
       this.hitMul = 1.2;
-      this.game.events.emit('combo', '공중 베기', false);
+      this.game.events.emit('combo', wp ? '공중 공격' : '공중 베기', false);
       return -1;
     }
     this.combo = now - this.comboAt < COMBO_GAP ? (this.combo + 1) % 3 : 0;
     this.comboAt = now;
-    this.hitMul = [1, 1.2, 2][this.combo];
-    this.game.events.emit('combo', ['1타', '2타 연속 베기', '3타 회전 베기!'][this.combo], this.combo === 2);
+    // 보스 무기의 마무리는 무기 기술이 따로 피해를 준다 → 3타 자체는 보통 세기
+    this.hitMul = wp ? [1, 1.2, 1][this.combo] : [1, 1.2, 2][this.combo];
+    const names = wp ? ['1타', '2타', `3타 ${COMBO_MOVES[wp.id]?.[0] ?? '마무리'}!`] : ['1타', '2타 연속 베기', '3타 회전 베기!'];
+    this.game.events.emit('combo', names[this.combo], this.combo === 2);
     return this.combo;
+  }
+
+  // ───────────────────────── 보스 무기 연속기 ─────────────────────────
+
+  /** 퍼지는 고리 */
+  private ringFx(x: number, y: number, r: number, color: number, dur = 300, w = 4) {
+    const g = this.add.graphics().setDepth(y - 1);
+    const u = { v: 0 };
+    this.tweens.add({ targets: u, v: 1, duration: dur, ease: 'Cubic.easeOut', onUpdate: () => g.clear().lineStyle(w * (1 - u.v) + 1, color, 1 - u.v * 0.8).strokeEllipse(x, y - 2, r * 2 * (0.3 + 0.7 * u.v), r * 1.3 * (0.3 + 0.7 * u.v)), onComplete: () => g.destroy() });
+  }
+
+  /** 바닥에 잠깐 남는 웅덩이·불길 */
+  private poolFx(x: number, y: number, r: number, color: number, sec: number) {
+    const g = this.add.graphics().setDepth(-35);
+    g.fillStyle(color, 0.45).fillEllipse(x, y - 2, r * 2, r * 1.3);
+    g.lineStyle(2, color, 0.9).strokeEllipse(x, y - 2, r * 2, r * 1.3);
+    this.tweens.add({ targets: g, alpha: { from: 1, to: 0.55 }, duration: 320, yoyo: true, repeat: Math.max(0, Math.floor((sec * 1000) / 640) - 1), onComplete: () => this.tweens.add({ targets: g, alpha: 0, duration: 200, onComplete: () => g.destroy() }) });
+  }
+
+  /** 땅에서 솟는 가시 */
+  private spikeFx(x: number, y: number, color: number, h = 20, w = 12) {
+    const g = this.add.graphics().setDepth(y + 1);
+    g.fillStyle(color).fillTriangle(-w / 2, 0, w / 2, 0, 0, -h);
+    g.lineStyle(1.5, 0x4a3b2a, 0.9).strokeTriangle(-w / 2, 0, w / 2, 0, 0, -h);
+    g.setPosition(x, y).setScale(1, 0);
+    this.tweens.add({ targets: g, scaleY: 1, duration: 90, ease: 'Back.easeOut', onComplete: () => this.tweens.add({ targets: g, alpha: 0, delay: 260, duration: 160, onComplete: () => g.destroy() }) });
+  }
+
+  /** 솟는 기둥 (물기둥·불기둥) */
+  private pillarFx(x: number, y: number, color: number, w = 30, h = 76) {
+    const g = this.add.graphics().setDepth(99986);
+    g.fillStyle(color, 0.75).fillRoundedRect(-w / 2, -h, w, h, w / 2);
+    g.fillStyle(0xffffff, 0.5).fillRoundedRect(-w / 6, -h + 6, w / 3, h - 12, w / 6);
+    g.setPosition(x, y).setScale(0.6, 0);
+    this.tweens.add({ targets: g, scaleY: 1, scaleX: 1, duration: 130, ease: 'Cubic.easeOut', onComplete: () => this.tweens.add({ targets: g, alpha: 0, scaleX: 0.3, delay: 120, duration: 220, onComplete: () => g.destroy() }) });
+  }
+
+  /** 날아가는 그림 하나 */
+  private shotFx(tex: string, x0: number, y0: number, x1: number, y1: number, dur: number, scale = 1) {
+    const s = this.add.image(x0, y0, tex).setScale(scale).setDepth(99986).setRotation(Math.atan2(y1 - y0, x1 - x0));
+    this.tweens.add({ targets: s, x: x1, y: y1, duration: dur, ease: 'Quad.easeIn', onComplete: () => s.destroy() });
+  }
+
+  /**
+   * 보스 무기 연속기의 모습 (다른 가족의 곰이 쓸 때도 같은 그림).
+   * F: 3타 마무리 (x,y = 노린 자리), G: 공중 공격 뒤 내려찍기 (x,y = 내려앉은 자리)
+   */
+  private comboFx(kind: 'F' | 'G', b: Bear, id: string, lv: number, x: number, y: number) {
+    const dir = b.sprite.flipX ? -1 : 1;
+    const by = b.y;
+    const tex = weaponTex(this.textures, id, lv);
+    const sting = this.textures.exists(`fx_sting${lv}`) ? `fx_sting${lv}` : 'fx_sting';
+    if (kind === 'F') {
+      switch (id) {
+        case 'leaf':
+          this.ringFx(b.x, by, 56 + lv * 6, 0x7ccf5a, 320, 6);
+          this.fx.leaf.explode(14, b.x, by - 12);
+          break;
+        case 'bee':
+          for (let i = 0; i < 3 + lv; i++) {
+            const a = ((i / (2 + lv)) * 2 - 1) * 0.5;
+            this.shotFx(sting, b.x + dir * 8, by - 16, b.x + dir * Math.cos(a) * 150, by - 12 + Math.sin(a) * 150, 220, 1 + lv * 0.15);
+          }
+          break;
+        case 'wood':
+          this.ringFx(x, y, 60 + lv * 8, 0xc9a26a, 360, 7);
+          this.fx.dust.explode(18, x, y);
+          break;
+        case 'bubble': {
+          const g = this.add.graphics().setDepth(99986);
+          g.fillStyle(0x7fd0f5, 0.8).fillRoundedRect(dir > 0 ? 0 : -170, -8, 170, 16, 8);
+          g.fillStyle(0xffffff, 0.7).fillRoundedRect(dir > 0 ? 6 : -164, -3, 158, 6, 3);
+          g.setPosition(b.x + dir * 10, by - 14).setScale(0.1, 1);
+          this.tweens.add({ targets: g, scaleX: 1, duration: 120, onComplete: () => this.tweens.add({ targets: g, alpha: 0, scaleY: 0.2, delay: 100, duration: 180, onComplete: () => g.destroy() }) });
+          this.fx.splash.explode(12, b.x + dir * 150, by - 12);
+          break;
+        }
+        case 'rock':
+          for (let i = 0; i < 4 + lv; i++) this.time.delayedCall(i * 55, () => this.spikeFx(b.x + dir * (26 + i * 24), by, 0x9aa3ad, 18 + lv * 3));
+          break;
+        case 'poison':
+          this.poolFx(x, y, 44 + lv * 6, 0xa66cd9, 3);
+          this.fx.spore.explode(14, x, y - 8);
+          break;
+        case 'ice': {
+          const n = lv > 1 ? 3 : 2;
+          const imgs = Array.from({ length: n }, () => this.add.image(b.x, by, tex).setScale(0.8 + lv * 0.1).setDepth(99986));
+          this.tweens.addCounter({
+            from: 0,
+            to: 1,
+            duration: 1200,
+            onUpdate: (tw) => {
+              const v = tw.getValue() ?? 0;
+              imgs.forEach((im, i) => {
+                const a = v * 14 + (i / n) * Math.PI * 2;
+                im.setPosition(b.x + Math.cos(a) * 44, b.y - 14 + Math.sin(a) * 26).setAngle(v * 2400).setAlpha(v > 0.85 ? (1 - v) / 0.15 : 1);
+              });
+            },
+            onComplete: () => imgs.forEach((im) => im.destroy()),
+          });
+          break;
+        }
+        case 'sand': {
+          const g = this.add.graphics().setDepth(99986);
+          const u = { v: 0 };
+          this.tweens.add({ targets: u, v: 1, duration: 480, onUpdate: () => {
+            g.clear().lineStyle(5, 0xe2c27a, 1 - u.v * 0.5);
+            for (const k of [0, 2.1, 4.2]) {
+              g.beginPath();
+              g.arc(b.x, b.y - 14, 46, u.v * 13 + k, u.v * 13 + k + 1.2, false);
+              g.strokePath();
+            }
+          }, onComplete: () => g.destroy() });
+          this.fx.dust.explode(12, b.x, by - 4);
+          break;
+        }
+        case 'fire':
+          this.ringFx(b.x, by, 58, 0xff8a3c, 320, 7);
+          this.poolFx(b.x, by, 50, 0xff6a2a, 2);
+          this.fx.ember.explode(18, b.x, by - 10);
+          break;
+        case 'thunder':
+          this.ringFx(b.x, by, 60, 0xffe45c, 260, 5);
+          this.boltFx(x, y - 150, x, y - 8, lv);
+          break;
+      }
+      return;
+    }
+    switch (id) {
+      case 'leaf':
+        this.ringFx(x, y, 56, 0x7ccf5a, 320, 6);
+        for (let i = 0; i < 6; i++) this.spikeFx(x + Math.cos(i * 1.05) * 34, y + Math.sin(i * 1.05) * 20, 0x5fae3f, 22, 7);
+        break;
+      case 'bee':
+        for (let i = 0; i < 7; i++) {
+          const px = x + Math.cos(i * 0.9) * (14 + (i % 3) * 16);
+          const py = y + Math.sin(i * 0.9) * (8 + (i % 3) * 10);
+          this.time.delayedCall(i * 30, () => this.shotFx(sting, px - 20, py - 110, px, py - 4, 150, 1 + lv * 0.15));
+        }
+        this.ringFx(x, y, 60, 0xffd24a, 300);
+        break;
+      case 'wood':
+        this.ringFx(x, y, 76, 0xc9a26a, 380, 8);
+        this.ringFx(x, y, 46, 0x8a6a42, 300, 5);
+        this.fx.dust.explode(22, x, y);
+        break;
+      case 'bubble':
+        this.pillarFx(x, y, 0x7fd0f5);
+        this.ringFx(x, y, 56, 0x7fd0f5);
+        this.fx.splash.explode(16, x, y - 20);
+        break;
+      case 'rock':
+        this.ringFx(x, y, 64, 0x9aa3ad, 320, 6);
+        this.fx.pebble.explode(20, x, y - 6);
+        for (let i = 0; i < 8; i++) this.spikeFx(x + Math.cos(i * 0.785) * 44, y + Math.sin(i * 0.785) * 26, 0x9aa3ad, 14, 10);
+        break;
+      case 'poison':
+        this.poolFx(x, y, 50, 0xa66cd9, 2);
+        this.fx.spore.explode(18, x, y - 8);
+        break;
+      case 'ice':
+        for (let i = 0; i < 8; i++) this.spikeFx(x + Math.cos(i * 0.785) * 40, y + Math.sin(i * 0.785) * 24, 0xbfe8ff, 24, 10);
+        this.ringFx(x, y, 56, 0xbfe8ff);
+        break;
+      case 'sand': {
+        const g = this.add.graphics().setDepth(99986);
+        const u = { v: 0 };
+        this.tweens.add({ targets: u, v: 1, duration: 420, onUpdate: () => {
+          g.clear().lineStyle(4, 0xe2c27a, 0.9 - u.v * 0.5);
+          const r = 90 - 66 * u.v;
+          for (const k of [0, 1.6, 3.2, 4.8]) {
+            g.beginPath();
+            g.arc(x, y - 8, r, u.v * 9 + k, u.v * 9 + k + 1, false);
+            g.strokePath();
+          }
+        }, onComplete: () => g.destroy() });
+        this.fx.dust.explode(16, x, y);
+        break;
+      }
+      case 'fire':
+        this.pillarFx(x, y, 0xff7a2a, 34, 84);
+        this.ringFx(x, y, 52, 0xff8a3c, 320, 6);
+        this.fx.ember.explode(20, x, y - 20);
+        break;
+      case 'thunder':
+        this.boltFx(x - 10, y - 170, x, y - 4, lv);
+        this.boltFx(x + 12, y - 170, x, y - 4, lv);
+        this.ringFx(x, y, 60, 0xffe45c, 280, 6);
+        break;
+    }
+  }
+
+  /** 범위 안의 모두를 친다 */
+  private hitAround(x: number, y: number, r: number, dmg: number, each?: (o: Monster) => void) {
+    for (const o of this.foes()) {
+      if (o.dead || Math.hypot(o.x - x, (o.y - y) * 1.3) > r) continue;
+      this.damageMonster(o, Math.max(1, Math.round(dmg)), true);
+      if (!o.dead) each?.(o);
+    }
+  }
+
+  /** 잠깐 묶거나 얼린다 (보스는 훨씬 짧게) */
+  private bind(o: Monster, sec: number, tint: number) {
+    if (!o.dead) o.freeze(o.def.boss ? sec / 3 : sec, tint);
+  }
+
+  /** 몇 번에 걸쳐 치는 기술 */
+  private ticks(n: number, gap: number, fn: () => void) {
+    for (let i = 0; i < n; i++) this.time.delayedCall(i * gap, () => this.player && !this.resting && fn());
+  }
+
+  /** 보스 무기 연속기: 모습을 그리고(가족에게도 알리고) 피해를 준다 */
+  private weaponCombo(kind: 'F' | 'G', wp: { id: string; w: Weapon; lv: number }, x: number, y: number, delay: number) {
+    const pl = this.player;
+    if (!pl) return;
+    const { id, lv } = wp;
+    this.time.delayedCall(delay, () => {
+      if (this.player !== pl || this.resting) return;
+      const dir = pl.sprite.flipX ? -1 : 1;
+      const px = pl.x;
+      const py = pl.y;
+      this.tellAct(`${kind}:${Math.round(x)},${Math.round(y)}`);
+      this.comboFx(kind, pl, id, lv, x, y);
+      buzz(30);
+      const ap = this.attackPower();
+      const burn = (o: Monster, tint: number) => {
+        o.poisonT = 3;
+        o.poisonDps = Math.max(o.poisonDps, lv);
+        o.sprite.setTint(tint);
+        this.time.delayedCall(3000, () => !o.dead && o.sprite.clearTint());
+      };
+      const knock = (o: Monster, n: number) => {
+        if (!o.def.boss) for (let i = 0; i < n; i++) o.hit(0, px, py, this.walkable);
+      };
+      if (kind === 'F') {
+        const D = ap * 2;
+        this.cameras.main.shake(120, 0.005);
+        switch (id) {
+          case 'leaf':
+            return this.hitAround(px, py, 56 + lv * 6, D, (o) => this.bind(o, 0.6 + lv * 0.2, 0xa8e07c));
+          case 'bee':
+            for (const o of this.foes()) {
+              const dx = (o.x - px) * dir;
+              if (dx > -6 && dx < 150 && Math.abs(o.y - py) < dx * 0.6 + 18) this.damageMonster(o, Math.round(D), true);
+            }
+            return;
+          case 'wood':
+            return this.hitAround(x, y, 60 + lv * 8, D, (o) => this.bind(o, 0.8, 0xd8d2c4));
+          case 'bubble':
+            for (const o of this.foes()) {
+              const dx = (o.x - px) * dir;
+              if (dx > -6 && dx < 176 && Math.abs(o.y - py) < 20) {
+                this.damageMonster(o, Math.round(D), true);
+                if (!o.dead) knock(o, 1 + lv);
+              }
+            }
+            return;
+          case 'rock':
+            for (const o of this.foes()) {
+              const dx = (o.x - px) * dir;
+              if (dx > 4 && dx < 40 + (4 + lv) * 24 && Math.abs(o.y - py) < 18) this.time.delayedCall(Math.max(0, ((dx - 26) / 24) * 55), () => this.damageMonster(o, Math.round(D), true));
+            }
+            return;
+          case 'poison': {
+            const R = 44 + lv * 6;
+            this.hitAround(x, y, R, D, (o) => burn(o, 0xc79be8));
+            this.time.delayedCall(500, () => this.ticks(5, 500, () => this.hitAround(x, y, R, D * 0.15, (o) => burn(o, 0xc79be8))));
+            return;
+          }
+          case 'ice':
+            return this.ticks(4, 300, () => this.hitAround(pl.x, pl.y, 58, D * 0.35, (o) => this.bind(o, 0.5, 0x9fd8ff)));
+          case 'sand':
+            return this.ticks(3, 150, () => this.hitAround(pl.x, pl.y, 56, D * 0.45));
+          case 'fire':
+            this.hitAround(px, py, 58, D, (o) => burn(o, 0xffa05c));
+            this.time.delayedCall(500, () => this.ticks(4, 500, () => this.hitAround(px, py, 50, D * 0.15, (o) => burn(o, 0xffa05c))));
+            return;
+          case 'thunder': {
+            // 가까운 몬스터부터 번개가 차례로 옮겨 간다
+            let from = { x: px, y: py };
+            const seen = new Set<Monster>();
+            for (let i = 0; i < 3 + lv; i++) {
+              const next = this.foes().filter((o) => !o.dead && !seen.has(o) && Math.hypot(o.x - from.x, o.y - from.y) < (i ? 90 : 130)).sort((a, c) => Math.hypot(a.x - from.x, a.y - from.y) - Math.hypot(c.x - from.x, c.y - from.y))[0];
+              if (!next) break;
+              seen.add(next);
+              this.boltFx(from.x, from.y - 12, next.x, next.y - 10, lv);
+              this.damageMonster(next, Math.round(D * 0.8), true);
+              from = next;
+            }
+            return;
+          }
+        }
+        return;
+      }
+      const S = ap * 1.5;
+      switch (id) {
+        case 'leaf':
+          return this.hitAround(x, y, 56, S, (o) => this.bind(o, 0.8, 0xa8e07c));
+        case 'bee':
+          return this.hitAround(x, y, 60, S);
+        case 'wood':
+          return this.hitAround(x, y, 76, S, (o) => this.bind(o, 0.6, 0xd8d2c4));
+        case 'bubble':
+          return this.hitAround(x, y, 56, S, (o) => knock(o, 3));
+        case 'rock':
+          return this.hitAround(x, y, 64, S);
+        case 'poison':
+          this.hitAround(x, y, 50, S * 0.7, (o) => burn(o, 0xc79be8));
+          this.time.delayedCall(500, () => this.ticks(3, 500, () => this.hitAround(x, y, 50, S * 0.2, (o) => burn(o, 0xc79be8))));
+          return;
+        case 'ice':
+          return this.hitAround(x, y, 56, S, (o) => this.bind(o, 1.2, 0x9fd8ff));
+        case 'sand':
+          // 모래 폭풍이 끌어당긴 뒤 친다
+          for (const o of this.foes()) {
+            const d = Math.hypot(o.x - x, o.y - y);
+            if (o.def.boss || o === this.dummy || d > 90 || d < 26) continue;
+            const k = 24 / d;
+            const nx = x + (o.x - x) * k;
+            const ny = y + (o.y - y) * k;
+            if (this.walkable(nx, ny)) {
+              o.x = nx;
+              o.y = ny;
+            }
+          }
+          return void this.time.delayedCall(120, () => this.hitAround(x, y, 60, S));
+        case 'fire':
+          return this.hitAround(x, y, 52, S * 1.3, (o) => burn(o, 0xffa05c));
+        case 'thunder':
+          return this.hitAround(x, y, 60, S, (o) => this.bind(o, 0.3, 0xffe45c));
+      }
+    });
   }
 
   /** 연속기 마무리: 한 바퀴 돌며 둘레를 모두 치고 크게 밀어낸다 */
@@ -1973,7 +2322,8 @@ export class IslandScene extends Phaser.Scene {
       if (step === 1 && !lift) this.time.delayedCall(90, () => this.player === pl && this.slashAt(pl, tx, ty - 9, this.swordId(), true));
     }
     sfx.tap();
-    if (fin) this.finisherFx(tx, ty, delay);
+    if (fin && wp) this.weaponCombo('F', wp, tx, ty, Math.max(160, delay));
+    else if (fin) this.finisherFx(tx, ty, delay);
   }
 
   private jumpAt = -9999;
@@ -2002,6 +2352,17 @@ export class IslandScene extends Phaser.Scene {
       const slam = this.airHit;
       this.airHit = false;
       this.fx.dust.explode(slam ? 14 : 6, pl.x, pl.y);
+      const swp = slam ? this.weapon() : null;
+      if (swp) {
+        // 보스 무기: 무기마다 다른 내려찍기
+        this.comboAt = this.time.now;
+        this.game.events.emit('combo', `${COMBO_MOVES[swp.id]?.[1] ?? '내려찍기'}!`, true);
+        sfx.knock();
+        this.cameras.main.shake(140, 0.007);
+        this.weaponCombo('G', swp, pl.x, pl.y, 0);
+        this.wasAir = air;
+        return;
+      }
       const near = this.foes().filter((m) => Math.hypot(m.x - pl.x, m.y - pl.y) < (slam ? 52 : 30));
       if (slam) {
         this.comboAt = this.time.now;
@@ -2061,7 +2422,8 @@ export class IslandScene extends Phaser.Scene {
         this.fx.splash.explode(fin ? 14 : 6, m.x, m.y - 10);
         this.damageMonster(m, Math.max(1, Math.round(this.attackPower() * this.hitMul)));
       }
-      if (fin) this.finisherFx(m.x, m.y, wp ? 140 : 0, m);
+      if (fin && wp) this.weaponCombo('F', wp, m.x, m.y, 160);
+      else if (fin) this.finisherFx(m.x, m.y, 0, m);
       this.hitMul = 1;
     }
     // 한 번 누르면 잡을 때까지 계속 싸운다 (다른 곳을 누르면 그만둔다)
@@ -2497,6 +2859,12 @@ export class IslandScene extends Phaser.Scene {
     }
     if (k === 'j') return void b.leap();
     if (k === 'J') return this.slamFx(b.x, b.y);
+    if ((k === 'F' || k === 'G') && b.hat) {
+      const [x, y] = arg.split(',').map(Number);
+      if (!Number.isFinite(x) || !Number.isFinite(y) || Math.hypot(x - b.x, y - b.y) > 220) return;
+      if (k === 'F') b.face('side', x < b.x);
+      return this.comboFx(k, b, b.hat.id, b.hat.lv, x, y);
+    }
     if (k === 'x') return this.skillShow(b, arg);
     if (k === 'W' && b.hat) {
       const [x, y] = arg.split(',').map(Number);
@@ -3628,43 +3996,57 @@ export class IslandScene extends Phaser.Scene {
       dg.phase = 'wave';
       dg.boss = undefined;
       dg.called = false;
+      dg.called2 = false;
       dg.waved = this.monsters.length > 0;
       return;
     }
-    // 체력이 절반 아래로 내려가면 부하를 한 번 부른다
-    if (!dg.called && boss.hp <= boss.def.hp / 2) {
+    // 체력이 절반 아래로 내려가면 화가 나서 부하를 부르고, 1/4 아래에서 한 번 더 부른다
+    const rage = boss.hp <= boss.def.hp / 2;
+    if (!dg.called && rage) {
       dg.called = true;
       if (host) for (const dx of [-50, 50]) this.spawnMonster(minion, boss.x + dx, boss.y + 10, 3);
-      this.toast(`${boss.def.name}이(가) 부하를 불렀어요!`);
+      this.toast(`💢 ${boss.def.name}이(가) 화가 나서 부하를 불렀어요!`);
+      boss.sprite.setTint(0xffb0a0);
+      this.cameras.main.shake(260, 0.008);
     }
-    // 내려찍기: 곰이 서 있는 자리에 붉은 원 → 1초 뒤 쾅
+    if (!dg.called2 && boss.hp <= boss.def.hp / 4) {
+      dg.called2 = true;
+      if (host) for (const dx of [-56, 0, 56]) this.spawnMonster(minion, boss.x + dx, boss.y + 14, 3);
+      this.toast(`${boss.def.name}이(가) 부하를 또 불렀어요!`);
+    }
+    // 내려찍기: 곰이 서 있는 자리에 붉은 원 → 잠시 뒤 쾅. 화가 나면 더 자주, 세 번 연달아 쫓아오며 찍는다
     dg.slamT -= dt;
     if (dg.slamT > 0) return;
-    dg.slamT = 4.2;
-    const sx = pl.x;
-    const sy = pl.y - 4;
-    const R = 38;
-    const ring = this.add.graphics().setDepth(-40);
-    const t = { v: 0 };
-    this.tweens.add({
-      targets: t,
-      v: 1,
-      duration: 1000,
-      onUpdate: () => {
-        ring.clear();
-        ring.fillStyle(0xe8604c, 0.18 + t.v * 0.3).fillEllipse(sx, sy, R * 2, R * 1.3);
-        ring.lineStyle(2, 0xe8604c, 0.9).strokeEllipse(sx, sy, R * 2 * t.v, R * 1.3 * t.v);
-      },
-      onComplete: () => {
-        ring.destroy();
-        if (!this.dungeon || boss.dead) return;
-        this.cameras.main.shake(180, 0.01);
-        sfx.knock();
-        this.fx.dust.explode(14, sx, sy);
-        const p2 = this.player!;
-        if (Math.hypot(p2.x - sx, (p2.y - 4 - sy) * 1.5) < R && this.time.now > this.invulnUntil && !this.resting) this.takeHit(boss, Math.round(boss.def.dmg * 1.4));
-      },
-    });
+    dg.slamT = rage ? 3 : 3.4;
+    const slam = (R: number, warn: number) => {
+      const p0 = this.player;
+      if (!p0 || !this.dungeon || boss.dead) return;
+      const sx = p0.x;
+      const sy = p0.y - 4;
+      const ring = this.add.graphics().setDepth(-40);
+      const t = { v: 0 };
+      this.tweens.add({
+        targets: t,
+        v: 1,
+        duration: warn,
+        onUpdate: () => {
+          ring.clear();
+          ring.fillStyle(0xe8604c, 0.18 + t.v * 0.3).fillEllipse(sx, sy, R * 2, R * 1.3);
+          ring.lineStyle(2, 0xe8604c, 0.9).strokeEllipse(sx, sy, R * 2 * t.v, R * 1.3 * t.v);
+        },
+        onComplete: () => {
+          ring.destroy();
+          if (!this.dungeon || boss.dead) return;
+          this.cameras.main.shake(180, 0.01);
+          sfx.knock();
+          this.fx.dust.explode(14, sx, sy);
+          const p2 = this.player!;
+          if (Math.hypot(p2.x - sx, (p2.y - 4 - sy) * 1.5) < R && this.time.now > this.invulnUntil && !this.resting) this.takeHit(boss, Math.round(boss.def.dmg * 1.4));
+        },
+      });
+    };
+    if (rage) [0, 450, 900].forEach((d, i) => this.time.delayedCall(d, () => slam(i === 2 ? 48 : 38, 850)));
+    else slam(40, 950);
   }
 
   private onBossDown(boss: Monster) {
