@@ -24,6 +24,19 @@ export class BootScene extends Phaser.Scene {
     const W = this.scale.width;
     const H = this.scale.height;
     this.loadingScreen(W, H);
+    // 받는 도중에 화면 크기가 바뀌면(전체 화면 전환, 회전) 그려 둔 로딩 화면이 잘리지 않게 카메라로 맞춘다
+    const cam = this.cameras.main;
+    cam.setBackgroundColor(0x5bb3d6);
+    const onResize = () => {
+      const w = this.scale.width;
+      const h = this.scale.height;
+      // 가로·세로가 뒤바뀌었으면 전체가 보이게 줄이고, 조금 달라진 정도면 빈 곳 없이 채운다
+      const flipped = W > H !== w > h;
+      cam.setZoom(flipped ? Math.min(w / W, h / H) : Math.max(w / W, h / H));
+      cam.centerOn(W / 2, H / 2);
+    };
+    this.scale.on('resize', onResize);
+    this.events.once('shutdown', () => this.scale.off('resize', onResize));
 
     this.load.setPath('assets/');
     this.load.spritesheet('tiles', 'tiles.png', { frameWidth: 24, frameHeight: 24, margin: 1, spacing: 2 });
@@ -171,6 +184,8 @@ export class BootScene extends Phaser.Scene {
       for (let x = x0; x < x1 - 30; x += 12) dots.fillStyle(0xffffff, x < boat.x ? 0.9 : 0.35).fillCircle(x, cy + 40, x < boat.x ? 2.5 : 2);
     };
     this.load.on('progress', (p: number) => (want = p));
+    // 받을 것이 없거나 다 받았으면 끝까지 간다
+    this.load.once('complete', () => (want = 1));
     this.events.on('update', draw);
     this.events.once('shutdown', () => {
       this.events.off('update', draw);
