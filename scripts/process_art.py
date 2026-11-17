@@ -154,7 +154,7 @@ if __name__ == "__main__":
         slice_frames(bear, f"act_{bear}_b.png", ["a3", "a4"], 0)
     # 몸에 입는 변신 의상 (art/source/skin/<변신>_*.png — 평소 그림과 같은 배치)
     (OUT / "skin").mkdir(exist_ok=True)
-    for skin in [f"{a}{n}" for a in ["leaf", "bee", "wood", "bubble", "rock", "poison", "ice", "sand"] for n in ["", "2", "3"]]:
+    for skin in [f"{a}{n}" for a in ["leaf", "bee", "wood", "bubble", "rock", "poison", "ice", "sand", "fire", "thunder"] for n in ["", "2", "3"]]:
         # 13장(기본 + 걷기 4 + 동작 8)이 다 있는 의상만 만든다
         if len(list((SRC / "skin").glob(f"{skin}_*.png"))) < 13:
             continue
