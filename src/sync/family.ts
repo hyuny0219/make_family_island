@@ -49,6 +49,9 @@ export interface Presence {
   zt?: number;
   /** 잠자리에 들었으면 1 — 접속한 가족이 모두 잠들어야 잠이 든다 */
   sl?: 1;
+  /** 쓰고 있는 변신 모자(변신 이름)와 진화 단계 — 다른 가족 화면에도 보이게 */
+  h?: string;
+  hl?: number;
   /** 보낸 시각(ms) */
   t: number;
 }

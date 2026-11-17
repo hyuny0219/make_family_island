@@ -286,6 +286,10 @@ export class IslandScene extends Phaser.Scene {
     ge.on('exit-house', this.exitHouse, this);
     ge.on('exit-dungeon', this.exitDungeon, this);
     ge.on('pad-action', this.padAction, this);
+    // 변신 모자를 쓰거나 벗으면 가족에게 바로 알린다
+    const onHat = () => this.sendPresence();
+    abilities.on('changed', onHat);
+    this.events.once('shutdown', () => abilities.off('changed', onHat));
     this.events.once('shutdown', () => ge.off('pad-action', this.padAction, this));
     this.padKeys = this.input.keyboard?.addKeys('W,A,S,D,UP,DOWN,LEFT,RIGHT,SPACE') as Record<string, Phaser.Input.Keyboard.Key> | undefined;
     this.padKeys?.SPACE.on('down', () => this.padAction());
@@ -2051,6 +2055,14 @@ export class IslandScene extends Phaser.Scene {
       this.hat.destroy();
       this.hat = undefined;
     }
+    // 다른 가족 곰의 변신 모자
+    for (const b of this.remotes.values()) {
+      const h = b.hat;
+      if (!h) continue;
+      const bs = b.sprite;
+      if (!h.img) h.img = this.add.image(0, 0, hatKey(h.id)).setOrigin(0.5, 1);
+      h.img.setVisible(bs.visible && !b.lying).setScale(0.9 + h.lv * 0.1).setPosition(bs.x, bs.y - bs.displayHeight + 9).setDepth(bs.depth + 0.5).setFlipX(bs.flipX);
+    }
     // 체력바 (숫자 없이 막대만)
     if (!this.hpBar) this.hpBar = this.add.graphics().setDepth(99956);
     const g = this.hpBar.clear();
@@ -3205,7 +3217,7 @@ export class IslandScene extends Phaser.Scene {
     // 함께 싸우는 중에는 자리를 더 자주 알린다 (몬스터가 가까운 곰을 쫓으니까)
     const z = this.zoneKey();
     this.presenceTimer = this.monsters.length && this.peersIn(z).length ? 1 : pl.moving ? 2 : 30;
-    family.setPresence({ bear: pl.id, island: this.islandIdx, x: pl.x, y: pl.y, tx: pl.target?.x ?? pl.x, ty: pl.target?.y ?? pl.y, ...(this.myEmote ?? {}), ...(z ? { z } : {}), ...(this.sleepWait || this.sleeping || this.time.now < this.sleepHold ? { sl: 1 as const } : {}), zt: this.zt });
+    family.setPresence({ bear: pl.id, island: this.islandIdx, x: pl.x, y: pl.y, tx: pl.target?.x ?? pl.x, ty: pl.target?.y ?? pl.y, ...(this.myEmote ?? {}), ...(z ? { z } : {}), ...(this.sleepWait || this.sleeping || this.time.now < this.sleepHold ? { sl: 1 as const } : {}), ...(abilities.equipped ? { h: abilities.equipped, hl: abilities.level(abilities.equipped) } : {}), zt: this.zt });
   }
 
   /** 같은 섬에 있는 다른 가족의 곰을 보여 주고, 그쪽이 누른 곳으로 걸어가게 한다 */
@@ -3220,6 +3232,7 @@ export class IslandScene extends Phaser.Scene {
       const p = others[dev];
       if (p && p.island === this.islandIdx && p.bear === bear.id && (p.z ?? '') === zone) continue;
       this.fx.puff.explode(5, bear.x, bear.y - 14);
+      bear.hat?.img?.destroy();
       bear.destroy();
       this.remotes.delete(dev);
       this.bears.splice(this.bears.indexOf(bear), 1);
@@ -3242,6 +3255,14 @@ export class IslandScene extends Phaser.Scene {
         bear.y = p.y;
       }
       bear.target = Math.hypot(p.tx - bear.x, p.ty - bear.y) > 2 ? { x: p.tx, y: p.ty } : null;
+      // 변신 모자
+      const hid = p.h && ABILITIES.some((a) => a.id === p.h) ? p.h : '';
+      if ((bear.hat?.id ?? '') !== hid || (hid && bear.hat?.lv !== (p.hl ?? 1))) {
+        const had = !!bear.hat;
+        bear.hat?.img?.destroy();
+        bear.hat = hid ? { id: hid, lv: Phaser.Math.Clamp(p.hl ?? 1, 1, 3) } : undefined;
+        if (had || hid) this.fx.sparkle.explode(6, bear.x, bear.y - 30);
+      }
       // 잠자리에 든 가족은 누워 있다
       if (bear.lying !== !!p.sl) {
         bear.lying = !!p.sl;
