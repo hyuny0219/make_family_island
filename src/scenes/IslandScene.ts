@@ -1,6 +1,6 @@
 import { ABILITIES, BOSSES, hatKey } from '../data/abilities';
 import { abilities } from '../state/abilities';
-import { BEAR_SKINS, COSTUME, SKIN_FRAMES, WEAPONS, skinNames, weaponTex, type Weapon } from '../data/weapons';
+import { BEAR_SKINS, COSTUME, SKIN_FRAMES, WEAPONS, islandLocked, skinNames, weaponTex, type Weapon } from '../data/weapons';
 import { Costume } from '../objects/Costume';
 import { Monster } from '../objects/Monster';
 import { BIOME_MONSTER, MONSTERS, SKIN_MONSTER } from '../data/monsters';
@@ -555,7 +555,7 @@ export class IslandScene extends Phaser.Scene {
         best = { x: c.x, y: c.y - 20, kind: 'sign' };
       }
     }
-    if (!best && !progress.hasBoat(this.islandIdx) && this.islandIdx < ISLANDS.length - 1) {
+    if (!best && !progress.hasBoat(this.islandIdx) && this.islandIdx < ISLANDS.length - 1 && !islandLocked(this.islandIdx + 1)) {
       const dk = this.world.dock;
       best = { x: dk.tx * TILE + TILE / 2, y: dk.ty * TILE, kind: 'dock' };
     }

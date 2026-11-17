@@ -1,3 +1,4 @@
+import { ABILITIES } from './abilities';
 /**
  * 보스 무기 — 변신(보스에게서 얻은 능력)을 입으면 기본 공격이 그 보스의 무기로 바뀐다.
  * 변신이 진화하면 무기도 같이 커지고 세진다.
@@ -63,3 +64,12 @@ export function weaponTex(textures: { exists: (k: string) => boolean }, id: stri
 
 /** 진화한 무기 그림 이름들 (불러올 때 쓴다) */
 export const WEAPON_STAGE_TEX = Object.values(WEAPONS).flatMap((w) => [`${w.tex}2`, `${w.tex}3`]).concat(['fx_sting2', 'fx_sting3']);
+
+/**
+ * 아직 준비 중인 섬: 그 섬 보스가 주는 변신의 의상 그림이 아직 없으면 잠가 둔다.
+ * 의상을 그려 BEAR_SKINS에 넣으면 저절로 열린다.
+ */
+export const islandLocked = (island: number) => {
+  const ab = ABILITIES[island];
+  return !!ab && !BEAR_SKINS.includes(ab.id);
+};

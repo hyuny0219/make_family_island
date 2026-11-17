@@ -1,4 +1,4 @@
-import { WEAPONS, weaponTex } from '../data/weapons';
+import { WEAPONS, weaponTex, islandLocked } from '../data/weapons';
 import { lockOrientation, orientationOk } from '../util/orient';
 import { ENDING, OPENING, talkLines, type CutPage } from '../data/story';
 import { story } from '../state/story';
@@ -547,6 +547,28 @@ export class HudScene extends Phaser.Scene {
     if (this.registry.get('modal')) return;
     const isl = ISLANDS[island];
     const last = island === ISLANDS.length - 1;
+    // 다음 섬이 아직 준비 중이면 배를 만들 수 없다
+    if (!progress.hasBoat(island) && !last && islandLocked(island + 1)) {
+      const PW = Math.min(320, this.scale.width - 30);
+      const PH = island > 0 ? 250 : 200;
+      const { box, close } = this.modal(PW, PH);
+      const next = ISLANDS[island + 1];
+      box.add(this.add.text(0, -PH / 2 + 34, '🚧 다음 섬은 준비 중', { fontFamily: FONT, fontSize: '19px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0.5));
+      box.add(this.add.text(0, -PH / 2 + 92, `${next.emoji} ${next.name}은 아직 준비하고 있어요.\n준비가 끝나면 배를 만들어 떠날 수 있어요!`, { fontFamily: FONT, fontSize: '13px', color: '#8a6d4b', fontStyle: 'bold', align: 'center', lineSpacing: 6, wordWrap: { width: PW - 40 } }).setOrigin(0.5));
+      if (island > 0) {
+        const back = this.button('지나온 섬으로 가기', true, () => {
+          close();
+          this.time.delayedCall(200, () => this.openIslandList(true));
+        }, 190);
+        back.setPosition(0, PH / 2 - 88);
+        (back.list[1] as Phaser.GameObjects.Text).setFontSize(13);
+        box.add(back);
+      }
+      const ok = this.button('알겠어요', true, close, 140);
+      ok.setPosition(0, PH / 2 - 38);
+      box.add(ok);
+      return;
+    }
     if (!progress.hasBoat(island) && !last) {
       const PW = Math.min(330, this.scale.width - 30);
       const rows = Math.ceil(Object.keys(isl.boat).length / 3);
@@ -607,8 +629,9 @@ export class HudScene extends Phaser.Scene {
       const y = top + 66 + i * rowH + rowH / 2;
       const here = i === progress.current;
       const open = progress.canVisit(i);
-      const label = open ? `${isl.emoji} ${i + 1}. ${isl.name}` : `🔒 ${i + 1}. ???`;
-      const sub = open ? `${progress.unlockedCount(i)}/${isl.regions}` : '';
+      const soon = islandLocked(i);
+      const label = open ? `${isl.emoji} ${i + 1}. ${isl.name}` : soon ? `🚧 ${i + 1}. ${isl.name}` : `🔒 ${i + 1}. ???`;
+      const sub = open ? `${progress.unlockedCount(i)}/${isl.regions}` : soon ? '준비 중' : '';
       const g = this.add.graphics();
       g.fillStyle(here ? 0xffe39a : open ? 0xfdf0cf : 0xece6d8).fillRoundedRect(-PW / 2 + 14, y - rowH / 2 + 3, PW - 28, rowH - 6, 10);
       box.add(g);
