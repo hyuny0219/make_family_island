@@ -29,7 +29,8 @@ export default defineConfig({
         start_url: './',
         scope: './',
         display: 'fullscreen',
-        orientation: 'any',
+        // 홈 화면 앱은 처음부터 가로로 열린다 (설정에서 세로를 고르면 켜진 뒤에 세로로 돌린다)
+        orientation: 'landscape',
         background_color: '#7ec8e3',
         theme_color: '#7ec8e3',
         icons: [
