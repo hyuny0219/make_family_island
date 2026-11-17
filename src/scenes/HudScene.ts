@@ -2622,24 +2622,28 @@ export class HudScene extends Phaser.Scene {
   private makeTitle(W: number, H: number) {
     const dim = this.add.rectangle(0, 0, W, H, 0x1b4965, 0.4).setOrigin(0).setDepth(200).setInteractive();
     const PW = 300;
-    const PH = 210;
+    const PH = 232;
     const box = this.add.container(W / 2, H * 0.44).setDepth(201);
     const g = this.add.graphics();
     g.fillStyle(0x000000, 0.2).fillRoundedRect(-PW / 2, -PH / 2 + 4, PW, PH, 26);
     g.fillStyle(COLORS.uiBg).fillRoundedRect(-PW / 2, -PH / 2, PW, PH, 26);
     g.lineStyle(3, 0xe8d5a9).strokeRoundedRect(-PW / 2, -PH / 2, PW, PH, 26);
     const title = this.add
-      .text(0, -PH / 2 + 36, '가족 섬 만들기', { fontFamily: FONT, fontSize: '28px', color: COLORS.uiText, fontStyle: 'bold' })
+      .text(0, -PH / 2 + 30, 'BEAR LORD', { fontFamily: FONT, fontSize: '30px', color: '#ffd166', fontStyle: 'bold', stroke: '#7a4a2b', strokeThickness: 7 })
+      .setOrigin(0.5)
+      .setLetterSpacing(2);
+    const kor = this.add
+      .text(0, -PH / 2 + 57, '— 열 개의 섬 —', { fontFamily: FONT, fontSize: '13px', color: COLORS.uiText, fontStyle: 'bold' })
       .setOrigin(0.5);
     const sub = this.add
-      .text(0, -PH / 2 + 72, '누구로 놀까요?', { fontFamily: FONT, fontSize: '15px', color: '#e07a5f', fontStyle: 'bold' })
+      .text(0, -PH / 2 + 80, '누구로 놀까요?', { fontFamily: FONT, fontSize: '14px', color: '#e07a5f', fontStyle: 'bold' })
       .setOrigin(0.5);
-    box.add([g, title, sub]);
+    box.add([g, title, kor, sub]);
 
     const slot = 66;
     BEARS.forEach((b, i) => {
       const x = (i - 1.5) * slot;
-      const y = 27;
+      const y = 40;
       const card = this.add.container(x, y);
       const bg = this.add.graphics();
       bg.fillStyle(0xfde8b0).fillRoundedRect(-29, -42, 58, 92, 14);

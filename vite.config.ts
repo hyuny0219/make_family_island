@@ -22,8 +22,8 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['icons/*.png'],
       manifest: {
-        name: '가족 섬 만들기',
-        short_name: '가족 섬',
+        name: 'BEAR LORD: 열 개의 섬',
+        short_name: 'BEAR LORD',
         description: '가족이 함께 만드는 우리 섬',
         lang: 'ko',
         start_url: './',
