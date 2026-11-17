@@ -70,7 +70,7 @@ const CLOUD_PX = 6; // 구름은 타일당 6px 저해상도로 그려 4배 확�
 const worldCache = new Map<number, World>();
 
 /** 이 시간 안에 이어 치면 콤보가 이어진다 (ms) */
-const COMBO_GAP = 1600;
+const COMBO_GAP = 1000;
 
 export class IslandScene extends Phaser.Scene {
   private islandIdx = 0;
@@ -1753,7 +1753,8 @@ export class IslandScene extends Phaser.Scene {
   private takeHit(m: Monster, base = m.def.dmg) {
     const pl = this.player!;
     if (pl.air) return; // 뛰어올라 피했다
-    this.combo = 0;
+    this.combo = -1;
+    this.comboAt = 0;
     // 변신(물방울): 확률로 막기
     if (Math.random() * 100 < abilities.power('bubble')) {
       this.invulnUntil = this.time.now + 600;
@@ -1798,21 +1799,73 @@ export class IslandScene extends Phaser.Scene {
     return id && w ? { id, w, lv: abilities.level(id) } : null;
   }
 
-  private combo = 0;
+  /** 연속기의 몇 번째 동작인가 (0: 1타, 1: 2타, 2: 마무리) */
+  private combo = -1;
   private comboAt = 0;
   private hitMul = 1;
+  /** 공중에서 공격했다 → 내려앉을 때 내려찍기가 된다 */
+  private airHit = false;
 
-  /** 콤보 마무리: 쾅 하고 크게 밀어낸다 */
-  private finisherFx(m: Monster, delay: number) {
+  private swordId(): 'sword' | 'stone_sword' | null {
+    return inventory.get('stone_sword') > 0 ? 'stone_sword' : inventory.get('sword') > 0 ? 'sword' : null;
+  }
+
+  /** 다음 연속기 동작을 정하고 화면에 알린다. 세기(hitMul)도 맞춘다 */
+  private nextMove() {
+    const pl = this.player!;
+    const now = this.time.now;
+    if (pl.air) {
+      // 공중 베기: 연속기는 끊기지 않고, 내려앉으며 내려찍기로 이어진다
+      this.airHit = true;
+      this.comboAt = now;
+      this.hitMul = 1.2;
+      this.game.events.emit('combo', '공중 베기', false);
+      return -1;
+    }
+    this.combo = now - this.comboAt < COMBO_GAP ? (this.combo + 1) % 3 : 0;
+    this.comboAt = now;
+    this.hitMul = [1, 1.2, 2][this.combo];
+    this.game.events.emit('combo', ['1타', '2타 연속 베기', '3타 회전 베기!'][this.combo], this.combo === 2);
+    return this.combo;
+  }
+
+  /** 연속기 마무리: 한 바퀴 돌며 둘레를 모두 치고 크게 밀어낸다 */
+  private finisherFx(x: number, y: number, delay: number, main?: Monster) {
+    const pl = this.player;
+    if (!pl) return;
+    // 곰이 빙글 돈다
+    const left = pl.sprite.flipX;
+    [60, 120, 180, 240].forEach((t, i) => this.time.delayedCall(t, () => this.player === pl && pl.face('side', i % 2 === 0 ? !left : left)));
+    const dmg = Math.max(1, Math.round(this.attackPower()));
     this.time.delayedCall(delay, () => {
-      const pl = this.player;
-      if (!pl) return;
+      if (this.player !== pl) return;
       this.cameras.main.shake(120, 0.005);
       buzz(30);
-      this.fx.sparkle.explode(10, m.x, m.y - 12);
-      const ring = this.add.circle(m.x, m.y - 8, 6).setStrokeStyle(3, 0xfff1a8).setDepth(m.y + 2);
-      this.tweens.add({ targets: ring, scale: 4.5, alpha: 0, duration: 260, ease: 'Cubic.easeOut', onComplete: () => ring.destroy() });
-      if (!m.dead && !m.def.boss) m.hit(0, pl.x, pl.y, this.walkable);
+      this.fx.sparkle.explode(10, x, y - 12);
+      // 곰 둘레를 도는 칼바람
+      const g = this.add.graphics().setDepth(99986);
+      const u = { v: 0 };
+      this.tweens.add({
+        targets: u,
+        v: 1,
+        duration: 240,
+        ease: 'Cubic.easeOut',
+        onUpdate: () => {
+          g.clear();
+          g.lineStyle(4 * (1 - u.v) + 1.5, 0xffffff, 1 - u.v * 0.7);
+          g.beginPath();
+          g.arc(pl.x, pl.y - 14, 26 + 16 * u.v, u.v * 7, u.v * 7 + 4.2, false);
+          g.strokePath();
+          g.lineStyle(2, 0xffe08a, 0.9 * (1 - u.v));
+          g.strokeCircle(pl.x, pl.y - 12, 20 + 34 * u.v);
+        },
+        onComplete: () => g.destroy(),
+      });
+      for (const o of this.foes()) {
+        if (o === main || Math.hypot(o.x - pl.x, o.y - pl.y) > 56) continue;
+        this.damageMonster(o, dmg, true);
+      }
+      if (main && !main.dead && !main.def.boss) main.hit(0, pl.x, pl.y, this.walkable);
     });
   }
 
@@ -1906,27 +1959,21 @@ export class IslandScene extends Phaser.Scene {
     pl.face('side', left);
     const tx = pl.x + (left ? -1 : 1) * Math.min(Math.max(30, (wp?.w.reach ?? 30) * 0.7), 70);
     const ty = pl.y;
-    this.combo = now - this.comboAt < COMBO_GAP ? this.combo + 1 : 1;
-    this.comboAt = now;
-    const fin = this.combo % 3 === 0;
-    if (this.combo >= 2) this.game.events.emit('combo', this.combo, fin);
+    const step = this.nextMove();
+    const fin = step === 2;
+    this.hitMul = 1;
+    // 공중에서는 곰이 떠 있는 높이에서 휘두른다
+    const lift = pl.air ? pl.y - pl.sprite.y : 0;
     let delay = 0;
     if (wp) {
-      this.tellAct(`W:${Math.round(tx)},${Math.round(ty)}`);
-      delay = this.weaponFx(pl, wp.id, wp.lv, tx, ty, true);
+      this.tellAct(`W:${Math.round(tx)},${Math.round(ty - lift)}`);
+      delay = this.weaponFx(pl, wp.id, wp.lv, tx, ty - lift, true);
     } else {
-      this.slashFx(pl, { x: tx, y: ty } as Monster);
+      this.slashFx(pl, { x: tx, y: ty - lift } as Monster);
+      if (step === 1 && !lift) this.time.delayedCall(90, () => this.player === pl && this.slashAt(pl, tx, ty - 9, this.swordId(), true));
     }
     sfx.tap();
-    if (fin) {
-      this.time.delayedCall(delay, () => {
-        this.cameras.main.shake(100, 0.004);
-        buzz(25);
-        this.fx.sparkle.explode(8, tx, ty - 12);
-        const ring = this.add.circle(tx, ty - 8, 6).setStrokeStyle(3, 0xfff1a8).setDepth(ty + 2);
-        this.tweens.add({ targets: ring, scale: 4, alpha: 0, duration: 260, ease: 'Cubic.easeOut', onComplete: () => ring.destroy() });
-      });
-    }
+    if (fin) this.finisherFx(tx, ty, delay);
   }
 
   private jumpAt = -9999;
@@ -1951,16 +1998,34 @@ export class IslandScene extends Phaser.Scene {
     if (!pl) return;
     const air = pl.air;
     if (this.wasAir && !air) {
-      this.fx.dust.explode(6, pl.x, pl.y);
-      const near = this.monsters.filter((m) => !m.dead && Math.hypot(m.x - pl.x, m.y - pl.y) < 30);
-      if (near.length) {
-        sfx.knock();
-        this.cameras.main.shake(90, 0.004);
-        const dmg = Math.max(1, Math.round(this.attackPower() / 2));
-        near.forEach((m) => this.damageMonster(m, dmg, true));
+      // 공중에서 공격했으면 내려찍기: 더 넓게, 더 세게
+      const slam = this.airHit;
+      this.airHit = false;
+      this.fx.dust.explode(slam ? 14 : 6, pl.x, pl.y);
+      const near = this.foes().filter((m) => Math.hypot(m.x - pl.x, m.y - pl.y) < (slam ? 52 : 30));
+      if (slam) {
+        this.comboAt = this.time.now;
+        this.game.events.emit('combo', '내려찍기!', true);
+        this.tellAct('J');
+        this.slamFx(pl.x, pl.y);
       }
+      if (near.length || slam) {
+        sfx.knock();
+        this.cameras.main.shake(slam ? 140 : 90, slam ? 0.007 : 0.004);
+      }
+      const dmg = Math.max(1, Math.round(this.attackPower() * (slam ? 1.5 : 0.5)));
+      near.forEach((m) => this.damageMonster(m, dmg, true));
     }
     this.wasAir = air;
+  }
+
+  /** 내려찍기: 발밑에서 퍼지는 충격 */
+  private slamFx(x: number, y: number) {
+    buzz(30);
+    const g = this.add.graphics().setDepth(y - 1);
+    const u = { v: 0 };
+    this.tweens.add({ targets: u, v: 1, duration: 300, ease: 'Cubic.easeOut', onUpdate: () => g.clear().lineStyle(5 * (1 - u.v) + 1, 0xfff1a8, 1 - u.v).strokeEllipse(x, y - 2, 30 + 80 * u.v, 12 + 30 * u.v), onComplete: () => g.destroy() });
+    this.fx.sparkle.explode(8, x, y - 6);
   }
 
   private attackMonster(m: Monster, reach = 36) {
@@ -1982,21 +2047,21 @@ export class IslandScene extends Phaser.Scene {
     if (now - this.lastHit >= (260 * (wp?.w.slow ?? 1)) / (1 + abilities.power('bee') / 100)) {
       this.lastHit = now;
       pl.face('side', m.x < pl.x);
-      // 콤보: 쉬지 않고 이어 치면 숫자가 오르고, 세 번째마다 크게 친다
-      this.combo = now - this.comboAt < COMBO_GAP ? this.combo + 1 : 1;
-      this.comboAt = now;
-      const fin = this.combo % 3 === 0;
-      this.hitMul = fin ? 2 : 1;
-      if (this.combo >= 2) this.game.events.emit('combo', this.combo, fin);
+      // 연속기: 쉬지 않고 이어 치면 1타 → 2타 → 마무리로 이어진다. 뛰어올라 치면 공중 베기
+      const step = this.nextMove();
+      const fin = step === 2;
+      // 공중에서는 곰이 떠 있는 높이에서 휘두른다
+      const lift = pl.air ? pl.y - pl.sprite.y : 0;
       if (wp) {
         this.weaponAttack(pl, m, wp);
       } else {
-        this.slashFx(pl, m);
+        this.slashFx(pl, { x: m.x, y: m.y - lift } as Monster);
+        if (step === 1 && !lift) this.time.delayedCall(90, () => this.player === pl && this.slashAt(pl, m.x, m.y - 9, this.swordId(), true));
         sfx.boing();
         this.fx.splash.explode(fin ? 14 : 6, m.x, m.y - 10);
-        this.damageMonster(m, this.attackPower() * this.hitMul);
+        this.damageMonster(m, Math.max(1, Math.round(this.attackPower() * this.hitMul)));
       }
-      if (fin) this.finisherFx(m, wp ? 140 : 0);
+      if (fin) this.finisherFx(m.x, m.y, wp ? 140 : 0, m);
       this.hitMul = 1;
     }
     // 한 번 누르면 잡을 때까지 계속 싸운다 (다른 곳을 누르면 그만둔다)
@@ -2131,7 +2196,7 @@ export class IslandScene extends Phaser.Scene {
     const sc = 0.85 + lv * 0.1;
     if (from.costume) from.costume.hideHeldUntil = this.time.now + 380;
     const hx = from.x + dir * 8;
-    const hy = from.y - from.sprite.displayHeight * 0.45;
+    const hy = from.sprite.y - from.sprite.displayHeight * 0.45;
     if (id === 'leaf') {
       // 채찍: 손에서 몬스터까지 휘어지는 덩굴이 뻗었다가 돌아온다
       if (!from.act('swing', 0.05)) from.swing(left);
@@ -2250,7 +2315,7 @@ export class IslandScene extends Phaser.Scene {
         ease: 'Sine.easeOut',
         onComplete: () => {
           this.fx.sparkle.explode(5 + lv * 2, mx, my - 10);
-          this.tweens.add({ targets: b, x: from.x + dir * 8, y: from.y - from.sprite.displayHeight * 0.45, duration: out, ease: 'Sine.easeIn', onComplete: () => b.destroy() });
+          this.tweens.add({ targets: b, x: from.x + dir * 8, y: from.sprite.y - from.sprite.displayHeight * 0.45, duration: out, ease: 'Sine.easeIn', onComplete: () => b.destroy() });
         },
       });
       if (from.costume) from.costume.hideHeldUntil = this.time.now + out * 2 + 60;
@@ -2270,7 +2335,7 @@ export class IslandScene extends Phaser.Scene {
         delay: wind * 1000,
         onUpdate: () => {
           const a = (left ? Math.PI : 0) + dir * t.v * Math.PI * 2;
-          const cy = from.y - from.sprite.displayHeight * 0.5;
+          const cy = from.sprite.y - from.sprite.displayHeight * 0.5;
           mace.setPosition(from.x + Math.cos(a) * 16, cy + Math.sin(a) * 9).setAngle(Phaser.Math.RadToDeg(a) + 90).setDepth(from.y + (Math.sin(a) > 0 ? 3 : -1));
         },
         onComplete: () => mace.destroy(),
@@ -2431,6 +2496,7 @@ export class IslandScene extends Phaser.Scene {
       return;
     }
     if (k === 'j') return void b.leap();
+    if (k === 'J') return this.slamFx(b.x, b.y);
     if (k === 'x') return this.skillShow(b, arg);
     if (k === 'W' && b.hat) {
       const [x, y] = arg.split(',').map(Number);
