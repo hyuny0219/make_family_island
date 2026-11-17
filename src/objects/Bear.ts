@@ -24,6 +24,10 @@ export class Bear {
   private bubble?: Phaser.GameObjects.Container;
   /** 마지막으로 보여 준 말풍선 시각 (같은 걸 두 번 띄우지 않게) */
   emoteAt = 0;
+  /** 마지막으로 따라 한 동작의 시각 (다른 가족의 곰) */
+  actAt = -1;
+  /** 다른 가족이 낚시 중일 때의 찌 */
+  bobber?: Phaser.GameObjects.Image;
   readonly sprite: Phaser.GameObjects.Image;
   x: number;
   y: number;

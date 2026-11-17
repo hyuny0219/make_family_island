@@ -1767,9 +1767,16 @@ export class IslandScene extends Phaser.Scene {
    * 맨손은 주먹을 내지르고 별이 튄다 / 나무 검은 가볍게 휘두른다 / 돌 검은 크게 치켜들었다 내려쳐서 화면이 흔들린다.
    */
   private slashFx(from: Bear, m: Monster) {
+    const weapon = from === this.player ? (inventory.get('stone_sword') > 0 ? 'stone_sword' : inventory.get('sword') > 0 ? 'sword' : null) : null;
+    if (from === this.player) this.tellAct(`${weapon ? (weapon === 'stone_sword' ? 'S' : 's') : 'p'}:${Math.round(m.x)},${Math.round(m.y)}`);
+    this.slashAt(from, m.x, m.y, weapon, from === this.player);
+  }
+
+  /** 공격 그림만 (다른 가족의 곰이 따라 할 때도 쓴다) */
+  private slashAt(from: Bear, mx: number, my: number, weapon: 'sword' | 'stone_sword' | null, own = false) {
+    const m = { x: mx, y: my };
     const left = m.x < from.x;
     const dir = left ? -1 : 1;
-    const weapon = from === this.player ? (inventory.get('stone_sword') > 0 ? 'stone_sword' : inventory.get('sword') > 0 ? 'sword' : null) : null;
     if (!weapon) {
       // 맨손: 주먹 + 맞은 자리에 별
       if (!from.act('punch')) from.swing(left);
@@ -1796,7 +1803,7 @@ export class IslandScene extends Phaser.Scene {
       g.arc(cx - dir * 9, cy, R - 3, left ? Math.PI * 0.75 : -Math.PI * 0.25, left ? Math.PI * 1.25 : Math.PI * 0.25, false);
       g.strokePath();
       this.tweens.add({ targets: g, alpha: 0, x: dir * 5, duration: 170, onComplete: () => g.destroy() });
-      if (heavy) this.cameras.main.shake(90, 0.004);
+      if (heavy && own) this.cameras.main.shake(90, 0.004);
     });
   }
 
@@ -1828,12 +1835,87 @@ export class IslandScene extends Phaser.Scene {
   private gatherMotion(pl: Bear, kind: string, rule: { hits: number; feel: 'leafy' | 'stony' }, x: number) {
     const left = x < pl.x;
     const motion = rule.hits === 1 ? 'pick' : kind === 'stump' ? 'chop' : rule.feel === 'stony' ? 'mine' : rule.hits >= 3 ? 'chop' : 'pick';
+    if (pl === this.player) this.tellAct(`${motion === 'pick' ? 'k' : motion === 'chop' ? 'c' : 'm'}:${left ? 'L' : 'R'}`);
+    this.gatherAt(pl, motion, left);
+  }
+
+  private gatherAt(pl: Bear, motion: 'pick' | 'chop' | 'mine', left: boolean) {
     if (motion === 'pick') {
       pl.act('pick');
       return;
     }
     pl.act('swing', 0.08);
     this.toolSwing(pl, motion === 'chop' ? 'tool_axe' : 'tool_pickaxe', left, 0.08);
+  }
+
+  private myAct: { a: string; at: number } | null = null;
+  private actSent = 0;
+
+  /** 방금 한 동작을 가족에게 알린다 (보기 좋으라고 보내는 것이라 너무 잦으면 건너뛴다) */
+  private tellAct(a: string) {
+    if (!family.active) return;
+    const now = Date.now();
+    if (now - this.actSent < 240) return;
+    this.actSent = now;
+    this.myAct = { a, at: now };
+    this.sendPresence();
+  }
+
+  /** 다른 가족의 곰이 방금 한 동작을 따라 보여 준다 (그림만 — 피해나 재료는 그쪽에서 처리한다) */
+  private playAct(b: Bear, a: string) {
+    const [k, arg = ''] = a.split(':');
+    if (k === 'p' || k === 's' || k === 'S') {
+      const [x, y] = arg.split(',').map(Number);
+      if (!Number.isFinite(x) || !Number.isFinite(y) || Math.hypot(x - b.x, y - b.y) > 120) return;
+      b.face('side', x < b.x);
+      this.slashAt(b, x, y, k === 'p' ? null : k === 'S' ? 'stone_sword' : 'sword');
+      return;
+    }
+    if (k === 'k' || k === 'c' || k === 'm') {
+      const left = arg === 'L';
+      if (k !== 'k') b.face('side', left);
+      this.gatherAt(b, k === 'k' ? 'pick' : k === 'c' ? 'chop' : 'mine', left);
+      return;
+    }
+    if (k === 'x') this.skillShow(b, arg);
+  }
+
+  /** 다른 가족이 쓴 변신 기술의 모습 */
+  private skillShow(b: Bear, id: string) {
+    const ab = ABILITIES.find((x) => x.id === id);
+    if (!ab) return;
+    const look: Record<string, [number, number, Phaser.GameObjects.Particles.ParticleEmitter | null, number]> = {
+      leaf: [110, 0x8bd17c, this.fx.heart, 5],
+      bee: [40, 0xffd166, this.fx.splash, 10],
+      wood: [46, 0xc9a66b, null, 0],
+      bubble: [120, 0x7fd0ff, this.fx.splash, 24],
+      rock: [100, 0xa9a9a9, this.fx.dust, 24],
+      poison: [115, 0xb07cd8, this.fx.puff, 20],
+      ice: [125, 0x9fd8ff, this.fx.sparkle, 24],
+      sand: [66, 0xe2c27a, this.fx.dust, 10],
+      fire: [90, 0xff8a3d, this.fx.ember, 40],
+      thunder: [60, 0xffe066, this.fx.sparkle, 16],
+    };
+    const [r, color, em, n] = look[id] ?? [80, 0xffffff, null, 0];
+    b.jump(120);
+    const g = this.add.graphics().setDepth(99958);
+    const t = { v: 0 };
+    this.tweens.add({
+      targets: t,
+      v: 1,
+      duration: 380,
+      ease: 'Cubic.easeOut',
+      onUpdate: () => g.clear().fillStyle(color, 0.25 * (1 - t.v)).fillEllipse(b.x, b.y - 6, r * 2 * t.v, r * 1.4 * t.v).lineStyle(3, color, 1 - t.v).strokeEllipse(b.x, b.y - 6, r * 2 * t.v, r * 1.4 * t.v),
+      onComplete: () => g.destroy(),
+    });
+    em?.explode(n, b.x, b.y - 10);
+    if (id === 'wood') {
+      b.sprite.setTint(0xe8c98f);
+      this.time.delayedCall(2500, () => b.sprite.active && b.sprite.clearTint());
+    }
+    const cam = this.cameras.main;
+    const sk = ab.skill.name;
+    if (sk) this.game.events.emit('float', `${sk}!`, (b.x - cam.worldView.x) * cam.zoom, (b.y - 58 - cam.worldView.y) * cam.zoom);
   }
 
   private damageMonster(m: Monster, dmg: number, extra = false) {
@@ -2102,6 +2184,8 @@ export class IslandScene extends Phaser.Scene {
     pl.jump(120);
     sfx.fanfare();
     buzz(40);
+    this.actSent = 0;
+    this.tellAct(`x:${sk.id}`);
     const cam = this.cameras.main;
     this.game.events.emit('float', `${sk.name}!`, (pl.x - cam.worldView.x) * cam.zoom, (pl.y - 58 - cam.worldView.y) * cam.zoom);
     switch (sk.id) {
@@ -3217,7 +3301,7 @@ export class IslandScene extends Phaser.Scene {
     // 함께 싸우는 중에는 자리를 더 자주 알린다 (몬스터가 가까운 곰을 쫓으니까)
     const z = this.zoneKey();
     this.presenceTimer = this.monsters.length && this.peersIn(z).length ? 1 : pl.moving ? 2 : 30;
-    family.setPresence({ bear: pl.id, island: this.islandIdx, x: pl.x, y: pl.y, tx: pl.target?.x ?? pl.x, ty: pl.target?.y ?? pl.y, ...(this.myEmote ?? {}), ...(z ? { z } : {}), ...(this.sleepWait || this.sleeping || this.time.now < this.sleepHold ? { sl: 1 as const } : {}), ...(abilities.equipped ? { h: abilities.equipped, hl: abilities.level(abilities.equipped) } : {}), zt: this.zt });
+    family.setPresence({ bear: pl.id, island: this.islandIdx, x: pl.x, y: pl.y, tx: pl.target?.x ?? pl.x, ty: pl.target?.y ?? pl.y, ...(this.myEmote ?? {}), ...(z ? { z } : {}), ...(this.sleepWait || this.sleeping || this.time.now < this.sleepHold ? { sl: 1 as const } : {}), ...(abilities.equipped ? { h: abilities.equipped, hl: abilities.level(abilities.equipped) } : {}), ...(this.myAct ?? {}), ...(this.fishing ? { f: `${Math.round(this.fishing.spot.x)},${Math.round(this.fishing.spot.y)}` } : {}), zt: this.zt });
   }
 
   /** 같은 섬에 있는 다른 가족의 곰을 보여 주고, 그쪽이 누른 곳으로 걸어가게 한다 */
@@ -3233,6 +3317,7 @@ export class IslandScene extends Phaser.Scene {
       if (p && p.island === this.islandIdx && p.bear === bear.id && (p.z ?? '') === zone) continue;
       this.fx.puff.explode(5, bear.x, bear.y - 14);
       bear.hat?.img?.destroy();
+      bear.bobber?.destroy();
       bear.destroy();
       this.remotes.delete(dev);
       this.bears.splice(this.bears.indexOf(bear), 1);
@@ -3262,6 +3347,30 @@ export class IslandScene extends Phaser.Scene {
         bear.hat?.img?.destroy();
         bear.hat = hid ? { id: hid, lv: Phaser.Math.Clamp(p.hl ?? 1, 1, 3) } : undefined;
         if (had || hid) this.fx.sparkle.explode(6, bear.x, bear.y - 30);
+      }
+      // 방금 한 동작 (처음 본 순간의 것은 지나간 동작이니 건너뛴다)
+      if (p.at && p.at !== bear.actAt) {
+        const first = bear.actAt < 0;
+        bear.actAt = p.at;
+        if (!first && p.a) this.playAct(bear, p.a);
+      } else if (bear.actAt < 0) bear.actAt = 0;
+      // 낚시 중이면 찌를 띄운다
+      const fp = p.f ? p.f.split(',').map(Number) : null;
+      if (fp && Number.isFinite(fp[0]) && Number.isFinite(fp[1])) {
+        if (!bear.bobber) {
+          bear.bobber = this.add.image(bear.x, bear.y - 20, 'bobber').setDepth(-700);
+          this.tweens.add({ targets: bear.bobber, x: fp[0], duration: 450 });
+          this.tweens.add({ targets: bear.bobber, y: fp[1], duration: 450, ease: 'Quad.easeIn', onComplete: () => bear!.bobber && this.tweens.add({ targets: bear!.bobber, y: fp[1] + 1.5, duration: 700, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' }) });
+          const dx = fp[0] - bear.x;
+          const dy = fp[1] - bear.y;
+          if (Math.abs(dx) > Math.abs(dy)) bear.face('side', dx < 0);
+          else bear.face(dy < 0 ? 'back' : 'front');
+        }
+      } else if (bear.bobber) {
+        const bb = bear.bobber;
+        bear.bobber = undefined;
+        this.tweens.killTweensOf(bb);
+        this.tweens.add({ targets: bb, x: bear.x, y: bear.y - 20, alpha: 0, duration: 250, onComplete: () => bb.destroy() });
       }
       // 잠자리에 든 가족은 누워 있다
       if (bear.lying !== !!p.sl) {
@@ -3628,6 +3737,7 @@ export class IslandScene extends Phaser.Scene {
     const bait = lucky || inventory.get('bait') > 0;
     if (bait && !lucky) inventory.add('bait', -1);
     this.fishing = { spot, phase: 'wait', t: bait ? 0.8 + Math.random() : 1.6 + Math.random() * 2.4, bobber, bait };
+    this.sendPresence();
     this.game.events.emit('fishing', true);
     this.toast(lucky ? '🍀 행운! 느낌표(!)가 뜨면 톡!' : bait ? '🪱 미끼를 썼어요! 느낌표(!)가 뜨면 톡!' : '🎣 느낌표(!)가 뜨면 화면을 톡!');
   }
@@ -3667,6 +3777,7 @@ export class IslandScene extends Phaser.Scene {
   private endFishing(caught: boolean, msg?: string) {
     const f = this.fishing!;
     this.fishing = null;
+    this.sendPresence();
     if (caught) quests.bump('fish');
     this.game.events.emit('fishing', false);
     f.mark?.destroy();
