@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { COSTUME, WEAPONS } from '../data/weapons';
+import { COSTUME, WEAPONS, weaponTex } from '../data/weapons';
 import type { Bear } from './Bear';
 
 /**
@@ -18,7 +18,7 @@ export class Costume {
     this.aura = scene.add.graphics();
     this.cape = scene.add.graphics();
     const w = WEAPONS[id];
-    if (w && scene.textures.exists(w.tex)) this.held = scene.add.image(0, 0, w.tex).setOrigin(0.5, 0.85);
+    if (w && scene.textures.exists(w.tex)) this.held = scene.add.image(0, 0, weaponTex(scene.textures, id, lv)).setOrigin(0.5, 0.85);
   }
 
   update(bear: Bear, dt: number) {

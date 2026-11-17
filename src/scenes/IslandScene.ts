@@ -1,6 +1,6 @@
 import { ABILITIES, BOSSES, hatKey } from '../data/abilities';
 import { abilities } from '../state/abilities';
-import { WEAPONS, type Weapon } from '../data/weapons';
+import { COSTUME, WEAPONS, skinNames, weaponTex, type Weapon } from '../data/weapons';
 import { Costume } from '../objects/Costume';
 import { Monster } from '../objects/Monster';
 import { BIOME_MONSTER, MONSTERS, SKIN_MONSTER } from '../data/monsters';
@@ -12,6 +12,7 @@ import { PLAYER_SPEED, TILE, WORLD_ZOOM, COLORS } from '../config';
 
 /** 밤낮 한 바퀴 (ms) */
 const CYCLE = 12 * 60 * 1000;
+const COSTUME_GLOW = (id?: string | null) => (id && COSTUME[id] ? COSTUME[id][2] : 0xfff2a8);
 const FONT = '"Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif';
 import { BEARS, BLOCKING, OBJECT_TEXTURE, type BearId } from '../data/assets';
 import { GATHER, rollDrops } from '../data/gathering';
@@ -295,7 +296,17 @@ export class IslandScene extends Phaser.Scene {
       ge.off('join-dungeon', this.joinDungeon, this);
     });
     // 변신 모자를 쓰거나 벗으면 가족에게 바로 알린다
-    const onHat = () => this.sendPresence();
+    let lastLv = abilities.equipped ? abilities.level(abilities.equipped) : 0;
+    let lastOn = abilities.equipped;
+    const onHat = () => {
+      this.sendPresence();
+      const on = abilities.equipped;
+      const lv = on ? abilities.level(on) : 0;
+      // 입고 있는 변신이 진화하면: 빛에 싸였다가 새 모습으로
+      if (on && on === lastOn && lv > lastLv) this.evolveFx(this.player);
+      lastOn = on;
+      lastLv = lv;
+    };
     abilities.on('changed', onHat);
     this.events.once('shutdown', () => abilities.off('changed', onHat));
     this.events.once('shutdown', () => ge.off('pad-action', this.padAction, this));
@@ -1848,6 +1859,7 @@ export class IslandScene extends Phaser.Scene {
   private weaponFx(from: Bear, id: string, lv: number, mx: number, my: number, own = false): number {
     const w = WEAPONS[id];
     if (!w) return 0;
+    const wtex = weaponTex(this.textures, id, lv);
     const left = mx < from.x;
     const dir = left ? -1 : 1;
     const sc = 0.85 + lv * 0.1;
@@ -1883,13 +1895,13 @@ export class IslandScene extends Phaser.Scene {
     if (id === 'bee' || id === 'bubble') {
       // 새총·물총: 들고 겨눈 뒤 쏜다
       from.act('punch');
-      const gun = this.add.image(hx, hy, w.tex).setScale(sc).setFlipX(left).setDepth(from.y + 2);
+      const gun = this.add.image(hx, hy, wtex).setScale(sc).setFlipX(left).setDepth(from.y + 2);
       this.tweens.add({ targets: gun, x: hx - dir * 3, duration: 60, yoyo: true, onComplete: () => this.time.delayedCall(140, () => gun.destroy()) });
       const flight = Phaser.Math.Clamp(Math.hypot(mx - hx, my - hy) * 1.1, 70, 170);
       if (id === 'bee') {
         const shots = lv >= 3 ? 2 : 1;
         for (let i = 0; i < shots; i++) {
-          const s = this.add.image(hx, hy, 'fx_sting').setScale(1 + lv * 0.15).setDepth(99986).setRotation(Math.atan2(my - 12 - hy, mx - hx));
+          const s = this.add.image(hx, hy, this.textures.exists(`fx_sting${lv}`) ? `fx_sting${lv}` : 'fx_sting').setScale(1 + lv * 0.15).setDepth(99986).setRotation(Math.atan2(my - 12 - hy, mx - hx));
           this.tweens.add({ targets: s, x: mx, y: my - 12 + (i ? 5 : 0), delay: i * 50, duration: flight, onComplete: () => s.destroy() });
         }
       } else {
@@ -1905,7 +1917,7 @@ export class IslandScene extends Phaser.Scene {
       // 망치: 크게 치켜들었다가 쾅
       const wind = 0.2;
       if (!from.act('swing', wind)) from.swing(left);
-      this.toolSwing(from, w.tex, left, wind, sc * 1.25);
+      this.toolSwing(from, wtex, left, wind, sc * 1.25);
       this.time.delayedCall(wind * 1000 + 90, () => {
         const g = this.add.graphics().setDepth(99958);
         const t = { v: 0 };
@@ -1920,7 +1932,7 @@ export class IslandScene extends Phaser.Scene {
       // 불꽃 검: 넓게 베고 불꽃이 인다
       const wind = 0.08;
       if (!from.act('swing', wind)) from.swing(left);
-      this.toolSwing(from, w.tex, left, wind, sc * 1.05, true);
+      this.toolSwing(from, wtex, left, wind, sc * 1.05, true);
       this.time.delayedCall(wind * 1000, () => {
         const g = this.add.graphics().setDepth(99986);
         const cx = (from.x + mx) / 2 + dir * 4;
@@ -2303,9 +2315,43 @@ export class IslandScene extends Phaser.Scene {
 
   // ───────────────────────── 머리 위 체력바 · 변신 모자 ─────────────────────────
 
+  /** 진화하는 모습: 곰이 하얗게 빛나며 떠올랐다가, 빛이 터지면서 새 옷으로 바뀐다 */
+  private evolveFx(b: Bear | null) {
+    if (!b) return;
+    const sp = b.sprite;
+    const col = COSTUME_GLOW(b === this.player ? abilities.equipped : b.hat?.id);
+    sp.setTintFill(0xffffff);
+    const ring = this.add.graphics().setDepth(99990);
+    const t = { v: 0 };
+    this.tweens.add({
+      targets: t,
+      v: 1,
+      duration: 700,
+      onUpdate: () => {
+        ring.clear();
+        // 안으로 모여드는 빛
+        const r = 46 * (1 - t.v) + 6;
+        ring.lineStyle(3, col, 0.9).strokeCircle(b.x, b.y - 16, r);
+        ring.lineStyle(1.5, 0xffffff, 0.8).strokeCircle(b.x, b.y - 16, r * 0.6);
+      },
+      onComplete: () => {
+        sp.clearTint();
+        b.jump(150);
+        // 터져 나가는 빛
+        const u = { v: 0 };
+        this.tweens.add({ targets: u, v: 1, duration: 450, ease: 'Cubic.easeOut', onUpdate: () => ring.clear().lineStyle(5 * (1 - u.v) + 1, col, 1 - u.v).strokeCircle(b.x, b.y - 16, 10 + 70 * u.v).fillStyle(0xffffff, 0.5 * (1 - u.v)).fillCircle(b.x, b.y - 16, 26 * (1 - u.v)), onComplete: () => ring.destroy() });
+        this.fx.sparkle.explode(30, b.x, b.y - 18);
+        if (b === this.player) {
+          this.cameras.main.flash(180, 255, 255, 220);
+          sfx.fanfare();
+        }
+      },
+    });
+  }
+
   /** 변신 옷(망토·빛·손에 든 무기)을 입히거나 벗긴다 */
   private dress(b: Bear, id: string | null, lv: number) {
-    b.setSkin(id);
+    b.setSkin(id ? skinNames(id, lv) : null);
     const c = b.costume;
     if (c && (c.id !== id || c.lv !== lv)) {
       c.destroy();
@@ -3586,9 +3632,11 @@ export class IslandScene extends Phaser.Scene {
       const hid = p.h && ABILITIES.some((a) => a.id === p.h) ? p.h : '';
       if ((bear.hat?.id ?? '') !== hid || (hid && bear.hat?.lv !== (p.hl ?? 1))) {
         const had = !!bear.hat;
+        const prevHat = bear.hat ? { id: bear.hat.id, lv: bear.hat.lv } : null;
         bear.hat?.img?.destroy();
         bear.hat = hid ? { id: hid, lv: Phaser.Math.Clamp(p.hl ?? 1, 1, 3) } : undefined;
-        if (had || hid) this.fx.sparkle.explode(6, bear.x, bear.y - 30);
+        if (had && hid && prevHat?.id === hid && (p.hl ?? 1) > (prevHat?.lv ?? 9)) this.evolveFx(bear);
+        else if (had || hid) this.fx.sparkle.explode(6, bear.x, bear.y - 30);
       }
       // 방금 한 동작 (처음 본 순간의 것은 지나간 동작이니 건너뛴다)
       if (p.at && p.at !== bear.actAt) {

@@ -41,4 +41,17 @@ export const COSTUME: Record<string, [number, number, number]> = {
 };
 
 /** 몸에 입는 의상 그림이 있는 변신 (없는 변신은 망토를 덧그린다) */
-export const BEAR_SKINS = ['bee'];
+export const BEAR_SKINS = ['bee', 'bee2', 'bee3'];
+
+/** 단계에 맞는 의상 이름들: 그 단계 그림이 없으면 아래 단계 것을 쓴다 (예: bee3 → bee2 → bee) */
+export const skinNames = (id: string, lv: number) => Array.from({ length: lv }, (_, i) => `${id}${lv - i > 1 ? lv - i : ''}`);
+
+/** 단계에 맞는 무기 그림 (진화한 그림이 없으면 처음 그림) */
+export function weaponTex(textures: { exists: (k: string) => boolean }, id: string, lv: number) {
+  const base = WEAPONS[id]?.tex ?? '';
+  for (let l = lv; l > 1; l--) if (textures.exists(`${base}${l}`)) return `${base}${l}`;
+  return base;
+}
+
+/** 진화한 무기 그림 이름들 (불러올 때 쓴다) */
+export const WEAPON_STAGE_TEX = Object.values(WEAPONS).flatMap((w) => [`${w.tex}2`, `${w.tex}3`]).concat(['fx_sting2', 'fx_sting3']);
