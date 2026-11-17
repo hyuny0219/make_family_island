@@ -153,12 +153,12 @@ if __name__ == "__main__":
         slice_frames(bear, f"act_{bear}_a.png", ["a1", "a2"], 1)
         slice_frames(bear, f"act_{bear}_b.png", ["a3", "a4"], 0)
     # 몸에 입는 변신 의상 (art/source/skin/<변신>_*.png — 평소 그림과 같은 배치)
-    for skin in ["bee"]:
+    for skin in ["bee", "bee2", "bee3"]:
         if not (SRC / f"skin/{skin}_bears.png").exists():
             continue
         slice_grid(f"skin/{skin}_bears.png", 3, 4, [[f"{b}_{skin}_{f}" for f in ["front", "side", "back"]] for b in ["dad", "mom", "kid", "baby"]])
         for bear in ["dad", "mom", "kid", "baby"]:
-            # 의상을 입어도 곰 크기는 그대로여야 한다: 평소 키 + 머리 장식(5px)에 맞춘다
+            # 의상을 입어도 곰 크기는 그대로여야 한다: 평소 키 + 머리 장식(5px, 진화하면 +2씩)에 맞춘다
             for facing in ["front", "side", "back"]:
                 base = Image.open(OUT / f"{bear}_{facing}.png")
                 path = OUT / f"{bear}_{skin}_{facing}.png"
@@ -172,7 +172,9 @@ if __name__ == "__main__":
                 ys = np.nonzero(arr[..., 3].any(axis=1))[0]
                 im = Image.fromarray(arr).crop((0, ys.min(), im.width, ys.max() + 1))
                 im.save(path)
-                k = (base.height + 5) / im.height
+                # 진화한 의상은 왕관·긴 더듬이만큼 조금 더 크다
+                extra = 5 + (int(skin[-1]) - 1) * 2 if skin[-1].isdigit() else 5
+                k = (base.height + extra) / im.height
                 if abs(k - 1) > 0.03:
                     clean_alpha(im.resize((max(1, round(im.width * k)), max(1, round(im.height * k))), Image.BOX)).save(path)
             for sheet, rows, scale_row in [(f"walk_{bear}", ["w1", "w2"], -1), (f"act_{bear}_a", ["a1", "a2"], 1), (f"act_{bear}_b", ["a3", "a4"], 0)]:
@@ -339,6 +341,18 @@ if __name__ == "__main__":
         grid = [[None] * 3, [None] * 3]
         grid[i // 3][i % 3] = name
         slice_grid("weapons.png", 3, 2, grid, fit=fit)
+    # 진화한 무기 (2·3단계)
+    STAGE = {
+        "weapons2a.png": [("weapon_sling2", 22), ("weapon_sling3", 24), ("weapon_hammer2", 28), ("weapon_hammer3", 31), ("weapon_water2", 22), ("weapon_water3", 25)],
+        "weapons2b.png": [("weapon_whip2", 22), ("weapon_whip3", 24), ("weapon_flame2", 26), ("weapon_flame3", 29), ("fx_sting2", 11), ("fx_sting3", 12)],
+    }
+    for sheet, items in STAGE.items():
+        if not (SRC / sheet).exists():
+            continue
+        for i, (name, fit) in enumerate(items):
+            grid = [[None] * 3, [None] * 3]
+            grid[i // 3][i % 3] = name
+            slice_grid(sheet, 3, 2, grid, fit=fit)
 
     # 섬 놀이 2 (곰돌이·꽃향기·솔방울·버섯 섬)
     for i, (name, fit) in enumerate([("hive", 32), ("bud", 30), ("log", 36), ("shroom", 36)]):

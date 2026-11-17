@@ -72,10 +72,11 @@ export class Bear {
   /** 입고 있는 변신 의상 (그 의상의 그림이 있을 때만 쓴다) */
   private skin: string | null = null;
 
-  /** 의상을 입힌다(null이면 벗는다). 그 곰의 의상 그림이 없으면 false */
-  setSkin(skin: string | null) {
-    const ok = !!skin && this.sprite.scene.textures.exists(`${this.id}_${skin}_front`);
-    const next = ok ? skin : null;
+  /** 의상을 입힌다(null이면 벗는다). 여럿을 주면 그림이 있는 첫 번째 것을 입는다. 맞는 그림이 없으면 false */
+  setSkin(skin: string | string[] | null) {
+    const found = (Array.isArray(skin) ? skin : skin ? [skin] : []).find((k) => this.sprite.scene.textures.exists(`${this.id}_${k}_front`));
+    const ok = !!found;
+    const next = found ?? null;
     if (next !== this.skin) {
       this.skin = next;
       this.sprite.setTexture(this.tex(this.facing, this.actFrame ? `_a${this.actFrame}` : this.walkFrame ? `_w${this.walkFrame}` : ''));
