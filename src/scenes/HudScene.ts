@@ -1,4 +1,4 @@
-import { WEAPONS, weaponTex, islandLocked } from '../data/weapons';
+import { COMBO_MOVES, WEAPONS, weaponTex, islandLocked } from '../data/weapons';
 import { lockOrientation, orientationOk } from '../util/orient';
 import { ENDING, OPENING, talkLines, type CutPage } from '../data/story';
 import { story } from '../state/story';
@@ -9,7 +9,7 @@ import { player, MAX_HP } from '../state/player';
 import { quests, DAILY_BONUS, STORY, type QuestView } from '../state/quests';
 import Phaser from 'phaser';
 import { COLORS } from '../config';
-import { sfx, unlockAudio, buzz, refreshMusic } from '../sfx';
+import { sfx, unlockAudio, buzz, refreshMusic, applyVolume } from '../sfx';
 import { BEARS } from '../data/assets';
 import { ITEMS, ITEM_IDS, itemKey, type ItemId } from '../data/items';
 import { inventory } from '../state/inventory';
@@ -1088,10 +1088,10 @@ export class HudScene extends Phaser.Scene {
     });
 
     // 4) 지을 것 (한 쪽에 6개, 여러 쪽이면 5개 + 앞뒤 화살표)
-    // 집 안 가구는 만들기에서 만든 것만 놓을 수 있다 → 가진 것을 앞에 보여 준다
+    // 건축물·가구는 만들기에서 만든 것만 놓을 수 있다 → 가진 것을 앞에 보여 준다
     const owned = (p: Piece) => inventory.get(p.id as ItemId);
     const list = PIECE_LIST.filter((p) => p.cat === cat);
-    if (inRoom) list.sort((a, b) => Number(owned(b) > 0) - Number(owned(a) > 0));
+    list.sort((a, b) => Number(owned(b) > 0) - Number(owned(a) > 0));
     const per = list.length > 6 ? 5 : 6;
     const pages = Math.ceil(list.length / per);
     const page = Math.min((this.registry.get('buildPage') as number) ?? 0, pages - 1);
@@ -1122,7 +1122,7 @@ export class HudScene extends Phaser.Scene {
         redraw();
       });
       tray.add([g, ic, hit]);
-      if (inRoom && owned(p) > 0) tray.add(this.add.text(x + 20, y - 20, `${owned(p)}`, { fontFamily: FONT, fontSize: '9px', color: '#ffffff', fontStyle: 'bold', backgroundColor: '#4f8f43', padding: { x: 3, y: 1 } }).setOrigin(1, 0));
+      if (owned(p) > 0) tray.add(this.add.text(x + 20, y - 20, `${owned(p)}`, { fontFamily: FONT, fontSize: '9px', color: '#ffffff', fontStyle: 'bold', backgroundColor: '#4f8f43', padding: { x: 3, y: 1 } }).setOrigin(1, 0));
     });
     this.registry.set('buildPageFor', `${cat}:${page}`);
     if (pages > 1) {
@@ -1143,7 +1143,7 @@ export class HudScene extends Phaser.Scene {
       cx -= 26;
       tray.add([t, ic]);
     });
-    tray.add(this.add.text(W / 2, top + 167, inRoom && !canPay(sel) ? `🔨 ${sel.name}: 아직 없어요 · 만들기에서 만들면 여기서 놓을 수 있어요` : !tool ? `아래에서 ${inRoom ? '가구' : '지을 것'}를 골라요 · 그냥 화면을 누르면 탐험으로 돌아가요` : inRoom ? '🏠 집 안 꾸미기 · 만든 가구를 바닥에 톡 눌러 놓아요 · 치우면 가구를 돌려받아요' : '화면을 끌어서 둘러보고, 땅을 톡 눌러 지어요 · 집을 누르면 들어가요', { fontFamily: FONT, fontSize: '8px', color: '#a08a6a' }).setOrigin(0.5));
+    tray.add(this.add.text(W / 2, top + 167, !canPay(sel) ? `🔨 ${sel.name}: 아직 없어요 · 만들기에서 만들면 여기서 놓을 수 있어요` : !tool ? `아래에서 ${inRoom ? '가구' : '지을 것'}를 골라요 · 그냥 화면을 누르면 탐험으로 돌아가요` : inRoom ? '🏠 집 안 꾸미기 · 만든 가구를 바닥에 톡 눌러 놓아요 · 치우면 가구를 돌려받아요' : '만든 것을 땅에 톡 눌러 놓아요 · 치우면 돌려받아요 · 집을 누르면 들어가요', { fontFamily: FONT, fontSize: '8px', color: '#a08a6a' }).setOrigin(0.5));
   }
 
   /** 주민의 부탁 */
@@ -2266,42 +2266,176 @@ export class HudScene extends Phaser.Scene {
     box.add(btn);
   }
 
-  private openSettings() {
+  /** 조작 안내 (처음 한 번 저절로 뜨고, 설정에서 다시 볼 수 있다) */
+  private openGuide() {
     if (this.registry.get('modal')) return;
-    const PW = 280;
-    const PH = 432;
+    setSetting('guide', true);
+    const pages: [string, string][] = [
+      ['🐻 움직이기', '가로 화면: 왼쪽 조이스틱으로 걸어요.\n가고 싶은 땅을 톡 눌러도 돼요.\n\n나무·바위·풀 앞에서 행동 단추를 누르면\n재료를 모으고, 그 밖에는 공격해요.'],
+      ['⚔️ 연속기', '공격을 1초 안에 이어 누르면\n1타 → 2타 → 3타 마무리로 이어져요.\n단추를 꾹 누르고 있어도 돼요.\n\n3타 마무리는 훨씬 세요!\n캠프 옆 허수아비로 연습해 보세요.'],
+      ['⤴ 점프와 공중 공격', '점프하면 몬스터와 보스의 공격을\n피할 수 있어요.\n\n공중에서 공격을 누르면 공중 공격,\n땅에 닿을 때 쿵! 내려찍기가 나가요.'],
+      ['✨ 변신과 무기 기술', '섬의 던전에서 보스를 물리치면\n변신과 보스 무기를 얻어요.\n\n변신하면 3타 마무리와 내려찍기가\n그 무기만의 기술로 바뀌어요.\n설정 → 📖 연속기 도감에서 볼 수 있어요.'],
+    ];
+    const PW = 300;
+    const PH = 250;
     const { box, close } = this.modal(PW, PH);
     const top = -PH / 2;
-    box.add(this.add.text(0, top + 30, '⚙️ 설정', { fontFamily: FONT, fontSize: '20px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0.5));
-    // 오프닝 다시 보기
-    const op = this.add.text(-PW / 2 + 14, top + 30, '🎬 오프닝', { fontFamily: FONT, fontSize: '11px', color: '#ffffff', fontStyle: 'bold', backgroundColor: '#8a6d4b', padding: { x: 7, y: 5 } }).setOrigin(0, 0.5).setInteractive({ useHandCursor: true });
-    op.on('pointerdown', (_p: Phaser.Input.Pointer, _x: number, _y: number, e: Phaser.Types.Input.EventData) => {
-      e.stopPropagation();
-      close();
-      this.time.delayedCall(260, () => this.playStory(OPENING, 'opening'));
+    const title = this.add.text(0, top + 30, '', { fontFamily: FONT, fontSize: '19px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0.5);
+    const body = this.add.text(0, top + 112, '', { fontFamily: FONT, fontSize: '13px', color: '#6b5a45', fontStyle: 'bold', align: 'center', lineSpacing: 4 }).setOrigin(0.5);
+    const dots = this.add.text(0, PH / 2 - 62, '', { fontFamily: FONT, fontSize: '12px', color: '#c4a57a' }).setOrigin(0.5);
+    box.add([title, body, dots]);
+    let n = 0;
+    const next = this.button('다음', true, () => {
+      if (n >= pages.length - 1) return close();
+      n++;
+      show();
+    }, 150);
+    next.setPosition(0, PH / 2 - 32);
+    box.add(next);
+    const show = () => {
+      title.setText(pages[n][0]);
+      body.setText(pages[n][1]);
+      dots.setText(pages.map((_, k) => (k === n ? '●' : '○')).join(' '));
+      (next.list[1] as Phaser.GameObjects.Text).setText(n >= pages.length - 1 ? '알겠어요!' : '다음 ▶');
+    };
+    show();
+  }
+
+  /** 연속기 도감: 맨손·검과 보스 무기 10종의 3타 마무리 · 내려찍기 */
+  private openMoves() {
+    if (this.registry.get('modal')) return;
+    const PW = 320;
+    const rowH = 25;
+    const PH = 96 + (ABILITIES.length + 1) * rowH;
+    const { box } = this.modal(PW, PH);
+    const top = -PH / 2;
+    box.add(this.add.text(0, top + 26, '📖 연속기 도감', { fontFamily: FONT, fontSize: '18px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0.5));
+    const L = -PW / 2 + 16;
+    const head = (x: number, s: string) => box.add(this.add.text(x, top + 52, s, { fontFamily: FONT, fontSize: '10px', color: '#a08a6a', fontStyle: 'bold' }).setOrigin(0, 0.5));
+    head(L + 26, '무기');
+    head(L + 122, '3타 마무리');
+    head(L + 208, '공중 → 내려찍기');
+    const row = (k: number, icon: Phaser.GameObjects.GameObject | null, name: string, fin: string, slam: string, known: boolean) => {
+      const y = top + 74 + k * rowH;
+      const g = this.add.graphics();
+      g.fillStyle(k % 2 ? 0xfff3d6 : 0xfde8b0, known ? 1 : 0.5).fillRoundedRect(L - 6, y - 11, PW - 20, 22, 8);
+      box.add(g);
+      if (icon) box.add(icon);
+      const col = known ? COLORS.uiText : '#b3a58c';
+      box.add(this.add.text(L + 26, y, name, { fontFamily: FONT, fontSize: '11px', color: col, fontStyle: 'bold' }).setOrigin(0, 0.5));
+      box.add(this.add.text(L + 122, y, fin, { fontFamily: FONT, fontSize: '11px', color: known ? '#c0573f' : col, fontStyle: 'bold' }).setOrigin(0, 0.5));
+      box.add(this.add.text(L + 208, y, slam, { fontFamily: FONT, fontSize: '11px', color: known ? '#3f7fb8' : col, fontStyle: 'bold' }).setOrigin(0, 0.5));
+    };
+    row(0, this.add.text(L + 8, top + 74, '🐾', { fontSize: '13px' }).setOrigin(0.5), '맨손 · 검', '회전 베기', '내려찍기', true);
+    ABILITIES.forEach((ab, i) => {
+      const known = abilities.level(ab.id) > 0;
+      const wp = WEAPONS[ab.id];
+      const mv = COMBO_MOVES[ab.id];
+      const y = top + 74 + (i + 1) * rowH;
+      const icon = known ? this.add.text(L + 8, y, ab.emoji, { fontSize: '13px' }).setOrigin(0.5) : this.add.text(L + 8, y, '🔒', { fontSize: '11px' }).setOrigin(0.5);
+      row(i + 1, icon, known ? wp.names[Math.max(0, abilities.level(ab.id) - 1)] : `${ISLANDS[i].name} 보스`, known ? mv[0] : '???', known ? mv[1] : '???', known);
     });
-    box.add(op);
-    const toggle = (y: number, name: string, key: 'sound' | 'vibrate' | 'music') => {
+    box.add(this.add.text(0, PH / 2 - 16, '변신(🎩)을 입으면 그 무기의 기술이 나가요', { fontFamily: FONT, fontSize: '10px', color: '#a08a6a' }).setOrigin(0.5));
+  }
+
+  private openSettings() {
+    if (this.registry.get('modal')) return;
+    // 가로 화면에서는 두 줄로 나눠 크게 보여 준다
+    const two = this.wide;
+    const PW = two ? 460 : 280;
+    const PH = two ? 312 : 462;
+    const { box, close } = this.modal(PW, PH);
+    let top = -PH / 2;
+    const at = (i: number): [number, number] => (two ? [(i < 4 ? -1 : 1) * 112, top + 78 + (i % 4) * 44] : [0, top + 78 + i * 44]);
+    box.add(this.add.text(0, top + 30, '⚙️ 설정', { fontFamily: FONT, fontSize: '20px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0.5));
+    // 오프닝 · 조작 안내 · 연속기 도감
+    const chipBtn = (x: number, label: string, color: string, run: () => void) => {
+      const t = this.add.text(x, top + 62, label, { fontFamily: FONT, fontSize: two ? '13px' : '11px', color: '#ffffff', fontStyle: 'bold', backgroundColor: color, padding: { x: two ? 10 : 7, y: 6 } }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+      t.on('pointerdown', (_p: Phaser.Input.Pointer, _x: number, _y: number, e: Phaser.Types.Input.EventData) => {
+        e.stopPropagation();
+        sfx.tap();
+        close();
+        this.time.delayedCall(260, run);
+      });
+      box.add(t);
+    };
+    const cs = two ? 1.5 : 1;
+    chipBtn(-88 * cs, '🎬 오프닝', '#8a6d4b', () => this.playStory(OPENING, 'opening'));
+    chipBtn(-8 * cs, '🎮 조작 안내', '#5a9bd4', () => this.openGuide());
+    chipBtn(82 * cs, '📖 연속기 도감', '#c97b4a', () => this.openMoves());
+    top += 30;
+    // 음량 막대: 끌어서 조절 (맨 왼쪽 = 끔)
+    const slider = (i: number, name: string, onKey: 'sound' | 'music', volKey: 'soundVol' | 'musicVol') => {
+      const w = 200;
+      const tx = -w / 2 + 96;
+      const tw = w - 96 - 14;
+      const c = this.add.container(...at(i));
+      const g = this.add.graphics();
+      const lab = this.add.text(-w / 2 + 12, 0, '', { fontFamily: FONT, fontSize: '12px', color: '#ffffff', fontStyle: 'bold', stroke: '#4f8f43', strokeThickness: 3 }).setOrigin(0, 0.5);
+      const val = () => (settings[onKey] ? settings[volKey] : 0);
+      const draw = () => {
+        const v = val();
+        g.clear();
+        g.fillStyle(0x000000, 0.15).fillRoundedRect(-w / 2, -17, w, 40, 20);
+        g.fillStyle(v > 0 ? 0x8bd17c : 0xd8d2c4).fillRoundedRect(-w / 2, -20, w, 40, 20);
+        g.fillStyle(0xffffff, 0.45).fillRoundedRect(tx, -4, tw, 8, 4);
+        g.fillStyle(0xffffff).fillRoundedRect(tx, -4, Math.max(8, tw * v), 8, 4);
+        g.fillStyle(0xffffff).fillCircle(tx + tw * v, 0, 9);
+        g.lineStyle(2, v > 0 ? 0x4f8f43 : 0x9a917f).strokeCircle(tx + tw * v, 0, 9);
+        lab.setText(`${name} ${v > 0 ? Math.round(v * 100) : '끔'}`);
+      };
+      const hit = this.add.rectangle(tx + tw / 2, 0, tw + 30, 40, 0, 0).setInteractive({ useHandCursor: true, draggable: false });
+      let down = false;
+      const set = (lx: number) => {
+        let v = Phaser.Math.Clamp((lx - 15) / tw, 0, 1);
+        v = Math.round(v * 20) / 20;
+        if (v <= 0.04) setSetting(onKey, false);
+        else {
+          setSetting(onKey, true);
+          setSetting(volKey, v);
+        }
+        applyVolume();
+        refreshMusic();
+        draw();
+      };
+      hit.on('pointerdown', (_p: Phaser.Input.Pointer, lx: number, _y: number, e: Phaser.Types.Input.EventData) => {
+        e.stopPropagation();
+        down = true;
+        set(lx);
+      });
+      hit.on('pointermove', (p: Phaser.Input.Pointer, lx: number) => {
+        if (down && p.isDown) set(lx);
+      });
+      const up = () => {
+        if (down && onKey === 'sound') sfx.pop();
+        down = false;
+      };
+      hit.on('pointerup', up).on('pointerout', up);
+      c.add([g, lab, hit]);
+      draw();
+      box.add(c);
+    };
+    const toggle = (i: number, name: string, key: 'vibrate') => {
       const label = () => `${name}: ${settings[key] ? '켜짐' : '꺼짐'}`;
       const btn = this.button(label(), true, () => {
         setSetting(key, !settings[key]);
         refreshMusic();
         (btn.list[1] as Phaser.GameObjects.Text).setText(label());
       }, 200);
-      btn.setPosition(0, y);
+      btn.setPosition(...at(i));
       box.add(btn);
     };
     const fam = this.button('👨‍👩‍👧‍👦 가족과 함께하기', true, () => {
       close();
       this.time.delayedCall(260, () => this.openFamily());
     }, 200);
-    fam.setPosition(0, top + 78);
+    fam.setPosition(...at(0));
     (fam.list[0] as Phaser.GameObjects.Graphics).clear().fillStyle(0x7cc4e8).fillRoundedRect(-100, -20, 200, 40, 20);
     (fam.list[1] as Phaser.GameObjects.Text).setStroke('#4a8fb3', 3);
     box.add(fam);
-    toggle(top + 122, '🎵 배경음악', 'music');
-    toggle(top + 166, '🔊 효과음', 'sound');
-    toggle(top + 210, '📳 진동', 'vibrate');
+    slider(1, '🎵 음악', 'music', 'musicVol');
+    slider(2, '🔊 효과음', 'sound', 'soundVol');
+    toggle(3, '📳 진동', 'vibrate');
     // 화면 방향: 가로가 기본
     const oLabel = () => `📱 화면 방향: ${settings.landscape ? '가로' : '세로'}`;
     const ori = this.button(oLabel(), true, () => {
@@ -2311,26 +2445,26 @@ export class HudScene extends Phaser.Scene {
         if (!ok && !orientationOk()) this.toast(settings.landscape ? '폰을 가로로 돌려 주세요' : '폰을 세로로 돌려 주세요');
       });
     }, 200);
-    ori.setPosition(0, top + 254);
+    ori.setPosition(...at(4));
     box.add(ori);
     // 전체 화면: 안드로이드·PC는 바로, 아이폰은 홈 화면에 추가해야 한다
     const standalone = window.matchMedia('(display-mode: fullscreen), (display-mode: standalone)').matches || (navigator as { standalone?: boolean }).standalone === true;
     const fsOk = this.scale.fullscreen.available;
     const fsLabel = () => (this.scale.isFullscreen ? '⛶ 전체 화면 끄기' : '⛶ 전체 화면으로 보기');
     if (standalone) {
-      box.add(this.add.text(0, top + 300, '⛶ 앱으로 실행 중 (전체 화면)', { fontFamily: FONT, fontSize: '12px', color: '#5fae52', fontStyle: 'bold' }).setOrigin(0.5));
+      box.add(this.add.text(...at(5), '⛶ 앱으로 실행 중 (전체 화면)', { fontFamily: FONT, fontSize: '12px', color: '#5fae52', fontStyle: 'bold' }).setOrigin(0.5));
     } else if (fsOk) {
       const fs = this.button(fsLabel(), true, () => {
         setSetting('fullscreen', !this.scale.isFullscreen);
         this.toggleFullscreen();
         close();
       }, 200);
-      fs.setPosition(0, top + 300);
+      fs.setPosition(...at(5));
       (fs.list[0] as Phaser.GameObjects.Graphics).clear().fillStyle(0xf2a93b).fillRoundedRect(-100, -20, 200, 40, 20);
       (fs.list[1] as Phaser.GameObjects.Text).setStroke('#b9781f', 3);
       box.add(fs);
     } else {
-      box.add(this.add.text(0, top + 300, '⛶ 전체 화면: 브라우저의 공유 버튼 →\n"홈 화면에 추가"로 설치하면 돼요', { fontFamily: FONT, fontSize: '11px', color: '#8a6d4b', fontStyle: 'bold', align: 'center' }).setOrigin(0.5));
+      box.add(this.add.text(...at(5), '⛶ 전체 화면: 브라우저의 공유 버튼 →\n"홈 화면에 추가"로 설치하면 돼요', { fontFamily: FONT, fontSize: '11px', color: '#8a6d4b', fontStyle: 'bold', align: 'center' }).setOrigin(0.5));
     }
     let armed = false;
     const reset = this.button('처음부터 다시 하기', true, () => {
@@ -2341,7 +2475,7 @@ export class HudScene extends Phaser.Scene {
       }
       resetAll();
     }, 200);
-    reset.setPosition(0, top + 348);
+    reset.setPosition(...at(6));
     (reset.list[0] as Phaser.GameObjects.Graphics).clear().fillStyle(0xe58f7b).fillRoundedRect(-100, -20, 200, 40, 20);
     box.add(reset);
     (reset.list[1] as Phaser.GameObjects.Text).setStroke('#b85c48', 3);
@@ -2715,6 +2849,8 @@ export class HudScene extends Phaser.Scene {
         this.time.delayedCall(180, () => this.closeTitle(box, dim));
         // 오늘 선물을 아직 안 받았으면 달력을 먼저 보여 준다
         this.time.delayedCall(1100, () => {
+          // 처음이면 조작 안내부터 (선물 달력은 다음에)
+          if (!settings.guide) return void this.openGuide();
           if (!daily.ready || this.registry.get('dailyShown')) return;
           this.registry.set('dailyShown', true);
           this.openDaily();

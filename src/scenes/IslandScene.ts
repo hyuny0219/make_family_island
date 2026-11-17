@@ -1,6 +1,6 @@
 import { ABILITIES, BOSSES, hatKey } from '../data/abilities';
 import { abilities } from '../state/abilities';
-import { BEAR_SKINS, COSTUME, SKIN_FRAMES, WEAPONS, islandLocked, skinNames, weaponTex, type Weapon } from '../data/weapons';
+import { BEAR_SKINS, COMBO_MOVES, COSTUME, SKIN_FRAMES, WEAPONS, islandLocked, skinNames, weaponTex, type Weapon } from '../data/weapons';
 import { Costume } from '../objects/Costume';
 import { Monster } from '../objects/Monster';
 import { BIOME_MONSTER, MONSTERS, SKIN_MONSTER } from '../data/monsters';
@@ -31,7 +31,7 @@ import { ENTERABLE, LIGHTS, PIECES, PIECE_LIST, houseKey, roomPlan, type Piece }
 import { Bear } from '../objects/Bear';
 import { Slime } from '../objects/Slime';
 import { TREASURES, treasureKey } from '../data/treasures';
-import { sfx, buzz, setMusicMood } from '../sfx';
+import { sfx, buzz, setMusicMood, duckMusic } from '../sfx';
 import { withJosa } from '../util/korean';
 import { HUD_BOTTOM_H, HUD_TOP_H } from './HudScene';
 
@@ -72,19 +72,6 @@ const worldCache = new Map<number, World>();
 /** 변신(무기)마다의 빛 색 */
 const ELEM: Record<string, number> = { leaf: 0x8be06a, bee: 0xffd24a, wood: 0xe0b074, bubble: 0x7fd0f5, rock: 0xc4cedb, poison: 0xc08af0, ice: 0xbfe8ff, sand: 0xf0d28a, fire: 0xff8a3c, thunder: 0xffe45c };
 
-/** 보스 무기의 연속기 이름: [3타 마무리, 공중 공격 뒤 내려찍기] */
-const COMBO_MOVES: Record<string, [string, string]> = {
-  leaf: ['덩굴 묶기', '덩굴 솟구침'],
-  bee: ['침 연사', '침 소나기'],
-  wood: ['대지 강타', '대지 붕괴'],
-  bubble: ['물대포', '물기둥'],
-  rock: ['바위 가시', '돌 파편'],
-  poison: ['독 웅덩이', '독 안개'],
-  ice: ['얼음 회오리', '얼음 가시'],
-  sand: ['철퇴 회오리', '모래 폭풍'],
-  fire: ['불꽃 회전 베기', '불기둥'],
-  thunder: ['연쇄 번개', '벼락'],
-};
 
 /** 이 시간 안에 이어 치면 콤보가 이어진다 (ms) */
 const COMBO_GAP = 1000;
@@ -927,7 +914,7 @@ export class IslandScene extends Phaser.Scene {
     this.updateHold();
     this.updateJump();
     // 배경음악: 던전에서는 보스전 곡, 밤에는 밤 곡
-    setMusicMood(this.dungeon ? 'boss' : this.wasNight ? 'night' : 'day');
+    setMusicMood(this.dungeon && this.dungeon.phase !== 'clear' ? 'boss' : this.wasNight ? 'night' : this.islandIdx > 0 ? `isl${this.islandIdx}` : 'day');
     for (const bear of this.bears) {
       if (bear === this.player && this.flying) continue; // 날아가는 중에는 트램펄린이 움직인다
       const arrived = bear.step(dt, this.walkable);
@@ -3693,7 +3680,7 @@ export class IslandScene extends Phaser.Scene {
     if (lack) {
       buzz(20);
       flash(cells, false);
-      return void this.toast(`${ITEMS[lack[0]].name}이(가) 부족해요 (${inventory.get(lack[0])}/${lack[1]})`);
+      return void this.toast(`${ITEMS[lack[0]].name}: 아직 없어요 · 만들기에서 먼저 만들어요`);
     }
     const placed: Placed = this.registry.get('buildFlip') ? { id: piece.id, tx, ty, f: 1 } : { id: piece.id, tx, ty };
     for (const [id, n] of Object.entries(piece.cost) as [ItemId, number][]) inventory.add(id, -n);
@@ -4138,6 +4125,34 @@ export class IslandScene extends Phaser.Scene {
     else slam(40, 950);
   }
 
+  /** 보스 처치 연출: 잠깐 느려지고, 번쩍 하고, 빛줄기와 별이 터진 뒤 승리 음악 */
+  private victoryFx(x: number, y: number) {
+    const cam = this.cameras.main;
+    cam.flash(260, 255, 255, 255);
+    // 슬로 모션 (0.7초 뒤 원래대로)
+    this.time.timeScale = 0.35;
+    this.tweens.timeScale = 0.35;
+    window.setTimeout(() => {
+      this.time.timeScale = 1;
+      this.tweens.timeScale = 1;
+    }, 700);
+    cam.zoomTo(cam.zoom * 1.12, 300, 'Sine.easeOut', true);
+    window.setTimeout(() => cam.zoomTo(cam.zoom / 1.12, 500, 'Sine.easeInOut', true), 1300);
+    for (let k = 0; k < 4; k++) {
+      window.setTimeout(() => {
+        if (!this.scene.isActive()) return;
+        this.flashFx(x, y, [0xfff1a8, 0xffd166, 0xff9f5a, 0xffffff][k], 44 + k * 16, 420);
+        this.starFx(x, y, 0xffe08a, 10 + k * 2, 30 + k * 12);
+        this.glowFx(x, y, [0xffd166, 0xff8fa3, 0x9fdcff, 0xc9f5a6][k], 16);
+        this.ringFx(x, y, 40 + k * 22, 0xffe08a, 420);
+      }, 120 + k * 230);
+    }
+    window.setTimeout(() => {
+      duckMusic(9000);
+      sfx.play('victory', 0.8);
+    }, 900);
+  }
+
   private onBossDown(boss: Monster) {
     const dg = this.dungeon;
     if (!dg) return;
@@ -4148,12 +4163,12 @@ export class IslandScene extends Phaser.Scene {
     this.cameras.main.shake(400, 0.01);
     this.fx.sparkle.explode(30, boss.x, boss.y - 20);
     sfx.play('boss_down', 0.75);
+    this.victoryFx(boss.x, boss.y - 16);
     const first = abilities.unlock(ab.id);
     const tokens = first ? 3 : 2;
     inventory.add('boss_token', tokens);
     quests.bump('boss');
     this.time.delayedCall(900, () => {
-      sfx.fanfare();
       if (first) {
         this.game.events.emit('celebrate', `🎉 ${boss.def.name}을(를) 물리쳤어요!\n${ab.emoji} 변신 '${ab.names[0]}'을(를) 얻었어요`);
         if (this.isHost()) family.post(`⚔️ ${ISLANDS[island].name}의 보스 '${boss.def.name}'을(를) 물리쳤어요`);
@@ -4161,7 +4176,7 @@ export class IslandScene extends Phaser.Scene {
         this.game.events.emit('celebrate', `🎉 ${boss.def.name}을(를) 또 물리쳤어요!\n보스 증표 ×${tokens}`);
       }
     });
-    this.time.delayedCall(4200, () => this.dungeon === dg && this.exitDungeon());
+    this.time.delayedCall(6500, () => this.dungeon === dg && this.exitDungeon());
   }
 
   /** 던전 방을 치운다 (곰 위치는 건드리지 않는다) */
@@ -4897,7 +4912,7 @@ export class IslandScene extends Phaser.Scene {
     if (lack) {
       buzz(20);
       this.flashCells(cells, false);
-      return void this.toast(`${ITEMS[lack[0]].name}이(가) 부족해요 (${inventory.get(lack[0])}/${lack[1]})`);
+      return void this.toast(`${ITEMS[lack[0]].name}: 아직 없어요 · 만들기에서 먼저 만들어요`);
     }
     const placed: Placed = this.registry.get('buildFlip') ? { id: piece.id, tx, ty, f: 1 } : { id: piece.id, tx, ty };
     for (const [id, n] of Object.entries(piece.cost) as [ItemId, number][]) inventory.add(id, -n);
