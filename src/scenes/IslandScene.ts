@@ -746,6 +746,7 @@ export class IslandScene extends Phaser.Scene {
         this.autoTarget = null;
         this.game.events.emit('player-moved');
       }
+      this.pending = null;
       pl.target = { x: pl.x + v.x * 28, y: pl.y + v.y * 28 };
     } else if (this.padOn) {
       this.padOn = false;
@@ -762,63 +763,70 @@ export class IslandScene extends Phaser.Scene {
     if (this.flying || this.resting || this.sleepWait) return;
     const d2 = (x: number, y: number) => Math.hypot(x - pl.x, y - pl.y);
     const side = (x: number) => (pl.x <= x ? -1 : 1);
-    this.padOn = false;
+    // 조이스틱을 밀고 있는 중이면 멈추지 않고 그 자리에서 바로 한다 (달리면서 치고, 지나가며 줍기)
+    const held = this.padOn;
     const mon = this.monsters.filter((m) => !m.dead).sort((a, b) => d2(a.x, a.y) - d2(b.x, b.y))[0];
-    if (mon && d2(mon.x, mon.y) < 110) {
+    if (held) {
+      if (mon && d2(mon.x, mon.y) < 58) return this.attackMonster(mon, 58);
+    } else if (mon && d2(mon.x, mon.y) < 110) {
       this.autoTarget = mon;
       return this.walkTo(mon.x + side(mon.x) * 18, mon.y, { monster: mon });
     }
     this.autoTarget = null;
-    const R = 56;
+    const go = (x: number, y: number, hit: Hit | null) => {
+      if (!held) return this.walkTo(x, y, hit);
+      if (hit) this.interact(hit);
+    };
+    const R = held ? 46 : 56;
     const cand: { d: number; go: () => void }[] = [];
     const add = (x: number, y: number, go: () => void, bias = 0) => {
       const d = d2(x, y) + bias;
       if (d < R) cand.push({ d, go });
     };
-    for (const sl of this.slimes) if (!sl.dead) add(sl.x, sl.y, () => this.walkTo(sl.x + side(sl.x) * 18, sl.y, { slime: sl }), -10);
+    for (const sl of this.slimes) if (!sl.dead) add(sl.x, sl.y, () => go(sl.x + side(sl.x) * 18, sl.y, { slime: sl }), -10);
     const rm = this.room;
     if (rm) {
       const doorX = rm.x + (rm.door + 0.5) * TILE;
-      add(doorX, rm.y + rm.h - 8, () => this.walkTo(doorX, rm.y + rm.h - 8, { door: true }), 14);
+      add(doorX, rm.y + rm.h - 8, () => go(doorX, rm.y + rm.h - 8, { door: true }), 14);
       rm.imgs.forEach((img) => {
-        if ((img as unknown as { placed?: Placed }).placed?.id === 'bed') add(img.x, img.y, () => this.walkTo(img.x + side(img.x) * 22, img.y - 2, { sleep: true }));
+        if ((img as unknown as { placed?: Placed }).placed?.id === 'bed') add(img.x, img.y, () => go(img.x + side(img.x) * 22, img.y - 2, { sleep: true }));
       });
     } else if (!this.dungeon) {
       for (const o of this.decorObjs) {
         if (o.gone || !o.visible || !this.unlocked(o.region)) continue;
         const fy = o.decor.ty * TILE + TILE - 1;
-        add(o.x, fy - 6, () => this.walkTo(o.x + side(o.x) * (o.decor.kind === 'tent' ? 30 : 20), fy, { decor: o }));
+        add(o.x, fy - 6, () => go(o.x + side(o.x) * (o.decor.kind === 'tent' ? 30 : 20), fy, { decor: o }));
       }
       for (const sp of this.spots) {
         if (!sp.active) continue;
         const stand = this.shoreStand(sp.spot);
-        if (stand) add(stand.x, stand.y, () => this.walkTo(stand.x, stand.y, { spot: sp }), -6);
+        if (stand) add(stand.x, stand.y, () => go(stand.x, stand.y, { spot: sp }), -6);
       }
       for (const pv of this.plays) {
         if (!pv.ready) continue;
-        if (pv.kind === 'spring') add(pv.img.x, pv.img.y, () => this.walkTo(pv.img.x, pv.img.y - 6, null));
-        else add(pv.img.x, pv.img.y, () => this.walkTo(pv.img.x + side(pv.img.x) * 22, pv.img.y - 2, { play: pv }));
+        if (pv.kind === 'spring') add(pv.img.x, pv.img.y, () => go(pv.img.x, pv.img.y - 6, null));
+        else add(pv.img.x, pv.img.y, () => go(pv.img.x + side(pv.img.x) * 22, pv.img.y - 2, { play: pv }));
       }
       const seen = new Set<Placed>();
       this.placedOcc.forEach((hp) => {
         if (seen.has(hp) || !ENTERABLE.has(hp.id)) return;
         seen.add(hp);
-        add((hp.tx + 1) * TILE, (hp.ty + 1) * TILE + 10, () => this.walkTo((hp.tx + 1) * TILE, (hp.ty + 1) * TILE + 10, { house: hp }), 6);
+        add((hp.tx + 1) * TILE, (hp.ty + 1) * TILE + 10, () => go((hp.tx + 1) * TILE, (hp.ty + 1) * TILE + 10, { house: hp }), 6);
       });
       this.placedObjs.forEach((img) => {
-        if ((img as unknown as { placed?: Placed }).placed?.id === 'bed') add(img.x, img.y, () => this.walkTo(img.x + side(img.x) * 22, img.y - 2, { sleep: true }));
+        if ((img as unknown as { placed?: Placed }).placed?.id === 'bed') add(img.x, img.y, () => go(img.x + side(img.x) * 22, img.y - 2, { sleep: true }));
       });
       const ch = this.chest;
-      if (ch?.visible) add(ch.x, ch.y, () => this.walkTo(ch.x + side(ch.x) * 24, ch.y - 1, { treasure: true }), -8);
+      if (ch?.visible) add(ch.x, ch.y, () => go(ch.x + side(ch.x) * 24, ch.y - 1, { treasure: true }), -8);
       const pd = this.pedestal;
-      if (pd?.visible) add(pd.x, pd.y, () => this.walkTo(pd.x + side(pd.x) * 20, pd.y - 1, { pedestal: true }));
+      if (pd?.visible) add(pd.x, pd.y, () => go(pd.x + side(pd.x) * 20, pd.y - 1, { pedestal: true }));
       for (const b of this.bears) {
         if (b === pl || !b.sprite.visible || !(b.resident || b.wild || b.remote)) continue;
-        add(b.x, b.y, () => this.walkTo(b.x + side(b.x) * 22, b.y, { bear: b }), 8);
+        add(b.x, b.y, () => go(b.x + side(b.x) * 22, b.y, { bear: b }), 8);
       }
     }
     const g = this.gate;
-    if (g?.visible) add(g.x, g.y, () => this.walkTo(g.x + side(g.x) * 26, g.y - 2, { gate: true }));
+    if (g?.visible) add(g.x, g.y, () => go(g.x + side(g.x) * 26, g.y - 2, { gate: true }));
     cand.sort((a, b) => a.d - b.d);
     if (cand[0]) return cand[0].go();
     // 아무것도 없으면 허공에 한 번 휘두른다
@@ -1751,10 +1759,10 @@ export class IslandScene extends Phaser.Scene {
     }
   }
 
-  private attackMonster(m: Monster) {
+  private attackMonster(m: Monster, reach = 36) {
     const pl = this.player!;
     if (m.dead || this.resting) return;
-    if (Math.hypot(m.x - pl.x, m.y - pl.y) > 36) {
+    if (Math.hypot(m.x - pl.x, m.y - pl.y) > reach) {
       const side = pl.x <= m.x ? -1 : 1;
       return this.walkTo(m.x + side * 18, m.y, { monster: m });
     }
@@ -3220,8 +3228,8 @@ export class IslandScene extends Phaser.Scene {
   private bopSlime(s: Slime) {
     const pl = this.player!;
     if (s.dead) return;
-    // 슬라임이 그새 뛰어갔으면 다시 따라간다
-    if (Math.hypot(s.x - pl.x, s.y - pl.y) > 34) {
+    // 슬라임이 그새 뛰어갔으면 다시 따라간다 (조이스틱으로 달리는 중이면 조금 멀어도 그냥 친다)
+    if (Math.hypot(s.x - pl.x, s.y - pl.y) > (this.padOn ? 50 : 34)) {
       const side = pl.x <= s.x ? -1 : 1;
       return this.walkTo(s.x + side * 18, s.y, { slime: s });
     }
