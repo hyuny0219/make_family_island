@@ -42,7 +42,7 @@ export const COSTUME: Record<string, [number, number, number]> = {
 };
 
 /** 몸에 입는 의상 그림이 있는 변신 (없는 변신은 망토를 덧그린다) */
-export const BEAR_SKINS = ['leaf', 'bee', 'wood'].flatMap((a) => [a, `${a}2`, `${a}3`]);
+export const BEAR_SKINS = ['leaf', 'bee', 'wood', 'bubble'].flatMap((a) => [a, `${a}2`, `${a}3`]);
 
 /** 의상 그림의 꼬리표: 서기, 걷기 2장, 동작 4장 */
 export const SKIN_FRAMES = ['', '_w1', '_w2', '_a1', '_a2', '_a3', '_a4'];
