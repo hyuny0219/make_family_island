@@ -69,6 +69,9 @@ const CLOUD_PX = 6; // 구름은 타일당 6px 저해상도로 그려 4배 확�
 /** 섬마다 생성 결과를 캐시 (다시 방문할 때 빠르게) */
 const worldCache = new Map<number, World>();
 
+/** 변신(무기)마다의 빛 색 */
+const ELEM: Record<string, number> = { leaf: 0x8be06a, bee: 0xffd24a, wood: 0xe0b074, bubble: 0x7fd0f5, rock: 0xc4cedb, poison: 0xc08af0, ice: 0xbfe8ff, sand: 0xf0d28a, fire: 0xff8a3c, thunder: 0xffe45c };
+
 /** 보스 무기의 연속기 이름: [3타 마무리, 공중 공격 뒤 내려찍기] */
 const COMBO_MOVES: Record<string, [string, string]> = {
   leaf: ['덩굴 묶기', '덩굴 솟구침'],
@@ -1849,7 +1852,83 @@ export class IslandScene extends Phaser.Scene {
   // ───────────────────────── 보스 무기 연속기 ─────────────────────────
 
   /** 퍼지는 고리 */
+  /** 빛나는 알갱이 (색을 바꿔 가며 쓴다) */
+  private glowEm?: Phaser.GameObjects.Particles.ParticleEmitter;
+
+  /** 색 있는 빛 알갱이가 사방으로 튄다 */
+  private glowFx(x: number, y: number, color: number, n = 12) {
+    if (!this.glowEm?.active) {
+      this.glowEm = this.add.particles(0, 0, 'sparkle', { emitting: false, speed: { min: 30, max: 130 }, lifespan: { min: 280, max: 620 }, scale: { start: 2.4, end: 0 }, alpha: { start: 1, end: 0 }, blendMode: 'ADD' }).setDepth(99991);
+    }
+    this.glowEm.setParticleTint(color);
+    this.glowEm.explode(n, x, y);
+  }
+
+  /** 번쩍 하는 빛 덩어리 */
+  private flashFx(x: number, y: number, color: number, r = 36, dur = 220) {
+    const c = this.add.circle(x, y, r, color, 0.6).setBlendMode(Phaser.BlendModes.ADD).setDepth(99985).setScale(0.35);
+    const core = this.add.circle(x, y, r * 0.45, 0xffffff, 0.85).setBlendMode(Phaser.BlendModes.ADD).setDepth(99985).setScale(0.35);
+    this.tweens.add({ targets: [c, core], scale: 1.35, alpha: 0, duration: dur, ease: 'Cubic.easeOut', onComplete: () => { c.destroy(); core.destroy(); } });
+  }
+
+  /** 사방으로 뻗는 빛줄기 */
+  private starFx(x: number, y: number, color: number, n = 8, len = 26) {
+    const g = this.add.graphics().setDepth(99987).setBlendMode(Phaser.BlendModes.ADD);
+    const u = { v: 0 };
+    const off = Math.random() * Math.PI;
+    this.tweens.add({
+      targets: u,
+      v: 1,
+      duration: 230,
+      ease: 'Cubic.easeOut',
+      onUpdate: () => {
+        g.clear();
+        for (let i = 0; i < n; i++) {
+          const a = off + (i / n) * Math.PI * 2;
+          const k = i % 2 ? 0.65 : 1;
+          const r0 = len * 0.3 + len * 0.9 * u.v;
+          const r1 = r0 + len * k * (1 - u.v * 0.6);
+          g.lineStyle(3.5 * (1 - u.v) + 0.5, i % 2 ? 0xffffff : color, 1 - u.v * 0.9);
+          g.lineBetween(x + Math.cos(a) * r0, y + Math.sin(a) * r0 * 0.75, x + Math.cos(a) * r1, y + Math.sin(a) * r1 * 0.75);
+        }
+      },
+      onComplete: () => g.destroy(),
+    });
+  }
+
+  /** 곰의 잔상 */
+  private ghostFx(b: Bear, color: number, n = 3) {
+    for (let i = 0; i < n; i++) {
+      this.time.delayedCall(i * 55, () => {
+        if (!b.sprite.active) return;
+        const s = this.add.image(b.sprite.x, b.sprite.y, b.sprite.texture.key).setOrigin(b.sprite.originX, b.sprite.originY).setFlipX(b.sprite.flipX).setScale(b.sprite.scaleX, b.sprite.scaleY).setDepth(b.y - 1).setTintFill(color).setAlpha(0.55).setBlendMode(Phaser.BlendModes.ADD);
+        this.tweens.add({ targets: s, alpha: 0, scaleX: s.scaleX * 1.15, scaleY: s.scaleY * 1.15, duration: 260, onComplete: () => s.destroy() });
+      });
+    }
+  }
+
+  private zoomBusy = false;
+
+  /** 화면이 순간 훅 당겨졌다 돌아온다 (큰 기술의 타격감) */
+  private punchCam(k = 0.035) {
+    if (this.zoomBusy || this.registry.get('view') === 'build') return;
+    const cam = this.cameras.main;
+    const z = cam.zoom;
+    this.zoomBusy = true;
+    this.tweens.add({ targets: cam, zoom: z * (1 + k), duration: 70, yoyo: true, ease: 'Quad.easeOut', onComplete: () => { cam.setZoom(z); this.zoomBusy = false; } });
+  }
+
+  /** 맞은 자리의 작은 불꽃 */
+  private hitSpark(x: number, y: number, big = false) {
+    this.starFx(x, y, 0xfff1a8, big ? 8 : 5, big ? 22 : 12);
+    if (big) this.flashFx(x, y, 0xfff1a8, 22, 160);
+  }
+
   private ringFx(x: number, y: number, r: number, color: number, dur = 300, w = 4) {
+    // 빛 번짐 한 겹
+    const glow = this.add.graphics().setDepth(y - 2).setBlendMode(Phaser.BlendModes.ADD);
+    const gu = { v: 0 };
+    this.tweens.add({ targets: gu, v: 1, duration: dur + 80, ease: 'Cubic.easeOut', onUpdate: () => glow.clear().lineStyle((w + 8) * (1 - gu.v) + 2, color, 0.45 * (1 - gu.v)).strokeEllipse(x, y - 2, r * 2 * (0.25 + 0.8 * gu.v), r * 1.3 * (0.25 + 0.8 * gu.v)), onComplete: () => glow.destroy() });
     const g = this.add.graphics().setDepth(y - 1);
     const u = { v: 0 };
     this.tweens.add({ targets: u, v: 1, duration: dur, ease: 'Cubic.easeOut', onUpdate: () => g.clear().lineStyle(w * (1 - u.v) + 1, color, 1 - u.v * 0.8).strokeEllipse(x, y - 2, r * 2 * (0.3 + 0.7 * u.v), r * 1.3 * (0.3 + 0.7 * u.v)), onComplete: () => g.destroy() });
@@ -1868,12 +1947,16 @@ export class IslandScene extends Phaser.Scene {
     const g = this.add.graphics().setDepth(y + 1);
     g.fillStyle(color).fillTriangle(-w / 2, 0, w / 2, 0, 0, -h);
     g.lineStyle(1.5, 0x4a3b2a, 0.9).strokeTriangle(-w / 2, 0, w / 2, 0, 0, -h);
+    g.fillStyle(0xffffff, 0.55).fillTriangle(-w / 6, -2, 0, -2, 0, -h + 3);
     g.setPosition(x, y).setScale(1, 0);
+    this.glowFx(x, y - h * 0.6, color, 3);
     this.tweens.add({ targets: g, scaleY: 1, duration: 90, ease: 'Back.easeOut', onComplete: () => this.tweens.add({ targets: g, alpha: 0, delay: 260, duration: 160, onComplete: () => g.destroy() }) });
   }
 
   /** 솟는 기둥 (물기둥·불기둥) */
   private pillarFx(x: number, y: number, color: number, w = 30, h = 76) {
+    this.flashFx(x, y - h * 0.5, color, w * 1.3, 320);
+    this.glowFx(x, y - h * 0.6, color, 14);
     const g = this.add.graphics().setDepth(99986);
     g.fillStyle(color, 0.75).fillRoundedRect(-w / 2, -h, w, h, w / 2);
     g.fillStyle(0xffffff, 0.5).fillRoundedRect(-w / 6, -h + 6, w / 3, h - 12, w / 6);
@@ -1896,6 +1979,19 @@ export class IslandScene extends Phaser.Scene {
     const by = b.y;
     const tex = weaponTex(this.textures, id, lv);
     const sting = this.textures.exists(`fx_sting${lv}`) ? `fx_sting${lv}` : 'fx_sting';
+    const col = ELEM[id] ?? 0xfff1a8;
+    // 기술이 터지는 순간: 번쩍 + 빛줄기 + 빛 알갱이 + 잔상
+    this.ghostFx(b, col);
+    if (kind === 'F') {
+      this.flashFx(b.x, by - 14, col, 30);
+      this.starFx(x, y - 12, col, 10, 30);
+      this.glowFx(x, y - 12, col, 16);
+    } else {
+      this.flashFx(x, y - 6, col, 54, 280);
+      this.starFx(x, y - 8, col, 12, 40);
+      this.glowFx(x, y - 8, col, 26);
+      this.time.delayedCall(90, () => this.ringFx(x, y, 84, 0xffffff, 260, 3));
+    }
     if (kind === 'F') {
       switch (id) {
         case 'leaf':
@@ -2067,6 +2163,7 @@ export class IslandScene extends Phaser.Scene {
       const py = pl.y;
       this.tellAct(`${kind}:${Math.round(x)},${Math.round(y)}`);
       this.comboFx(kind, pl, id, lv, x, y);
+      this.punchCam(kind === 'G' ? 0.05 : 0.035);
       buzz(30);
       const ap = this.attackPower();
       const burn = (o: Monster, tint: number) => {
@@ -2186,11 +2283,17 @@ export class IslandScene extends Phaser.Scene {
     const left = pl.sprite.flipX;
     [60, 120, 180, 240].forEach((t, i) => this.time.delayedCall(t, () => this.player === pl && pl.face('side', i % 2 === 0 ? !left : left)));
     const dmg = Math.max(1, Math.round(this.attackPower()));
+    this.ghostFx(pl, 0xfff1a8, 4);
     this.time.delayedCall(delay, () => {
       if (this.player !== pl) return;
       this.cameras.main.shake(120, 0.005);
+      this.punchCam();
       buzz(30);
       this.fx.sparkle.explode(10, x, y - 12);
+      this.flashFx(pl.x, pl.y - 14, 0xfff1a8, 40, 240);
+      this.starFx(x, y - 12, 0xffe08a, 10, 30);
+      this.glowFx(pl.x, pl.y - 12, 0xffe08a, 18);
+      this.ringFx(pl.x, pl.y, 56, 0xffe08a, 280, 5);
       // 곰 둘레를 도는 칼바람
       const g = this.add.graphics().setDepth(99986);
       const u = { v: 0 };
@@ -2337,6 +2440,8 @@ export class IslandScene extends Phaser.Scene {
     const now = this.time.now;
     if (now - this.jumpAt < 800) return;
     if (!pl.leap()) return;
+    this.ghostFx(pl, 0xbfe8ff, 3);
+    this.fx.dust.explode(5, pl.x, pl.y);
     this.jumpAt = now;
     sfx.boing();
     this.tellAct('j');
@@ -2383,6 +2488,12 @@ export class IslandScene extends Phaser.Scene {
   /** 내려찍기: 발밑에서 퍼지는 충격 */
   private slamFx(x: number, y: number) {
     buzz(30);
+    this.flashFx(x, y - 6, 0xfff1a8, 50, 260);
+    this.starFx(x, y - 8, 0xffe08a, 12, 38);
+    this.glowFx(x, y - 8, 0xffe08a, 22);
+    this.ringFx(x, y, 70, 0xffffff, 300, 4);
+    this.fx.dust.explode(12, x, y);
+    this.punchCam(0.045);
     const g = this.add.graphics().setDepth(y - 1);
     const u = { v: 0 };
     this.tweens.add({ targets: u, v: 1, duration: 300, ease: 'Cubic.easeOut', onUpdate: () => g.clear().lineStyle(5 * (1 - u.v) + 1, 0xfff1a8, 1 - u.v).strokeEllipse(x, y - 2, 30 + 80 * u.v, 12 + 30 * u.v), onComplete: () => g.destroy() });
@@ -2441,6 +2552,8 @@ export class IslandScene extends Phaser.Scene {
       if (m.dead || !this.player) return;
       sfx.boing();
       this.fx.splash.explode(6, m.x, m.y - 10);
+      this.glowFx(m.x, m.y - 10, ELEM[id] ?? 0xffffff, 7 + lv * 2);
+      this.flashFx(m.x, m.y - 10, ELEM[id] ?? 0xffffff, 14 + lv * 3, 150);
       switch (id) {
         case 'leaf':
           this.damageMonster(m, dmg);
@@ -2923,6 +3036,7 @@ export class IslandScene extends Phaser.Scene {
       m.sprite.setAngle(0).setScale(1);
       this.tweens.add({ targets: m.sprite, angle: (left ? -1 : 1) * Math.min(22, 8 + dmg * 2), duration: 70, yoyo: true, ease: 'Quad.easeOut' });
       this.fx.dust.explode(3, m.x, m.y - 14);
+      if (!extra) this.hitSpark(m.x, m.y - 14, this.hitMul >= 2);
       const cam = this.cameras.main;
       this.game.events.emit('float', `${dmg}`, (m.x - cam.worldView.x) * cam.zoom, (m.y - 40 - cam.worldView.y) * cam.zoom);
       return;
@@ -2948,6 +3062,7 @@ export class IslandScene extends Phaser.Scene {
         for (const o of [...this.monsters]) if (o !== m && !o.dead && Math.hypot(o.x - m.x, o.y - m.y) < 60) this.damageMonster(o, fire, true);
       }
     }
+    if (!extra) this.hitSpark(m.x, m.y - 12, this.hitMul >= 2);
     const cam = this.cameras.main;
     this.game.events.emit('float', `${dmg}`, (m.x - cam.worldView.x) * cam.zoom, (m.y - 34 - cam.worldView.y) * cam.zoom);
     if (!host) {
