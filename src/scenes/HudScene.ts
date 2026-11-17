@@ -27,7 +27,8 @@ import { COMBOS, MERGE_NEXT, USABLE } from '../data/merge';
 import { BUILD_CATS, PIECES, PIECE_LIST, type BuildCat, type Piece } from '../data/build';
 import type { IslandScene } from './IslandScene';
 
-export const HUD_TOP_H = 96;
+// 위쪽 줄(섬 이름·창고 단추) 높이. 예전에는 그 아래에 가진 재료가 한 줄로 늘어서 있었다(96)
+export const HUD_TOP_H = 58;
 export const HUD_BOTTOM_H = 76;
 
 const FONT = '"Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif';
@@ -683,7 +684,8 @@ export class HudScene extends Phaser.Scene {
     this.stripZone?.destroy();
     this.stripMask?.destroy();
     this.slotPos.clear();
-    const owned = inventory.owned();
+    // 가진 재료는 창고 단추를 누르면 보이므로 화면에 늘어놓지 않는다
+    const owned = inventory.owned().slice(0, 0);
     if (owned.length === 0) return;
     const W = this.scale.width;
     const slotW = 44;
@@ -967,9 +969,7 @@ export class HudScene extends Phaser.Scene {
       this.scene.stop('Merge');
       this.scene.setVisible(true, 'Island');
     }
-    this.sideBtns.forEach((b) => b.setVisible(v === 'explore'));
-    this.emoteRow?.setVisible(false);
-    this.refreshFeedBtn();
+    this.setMenu(this.menuOpen, false);
     this.arrow.setVisible(false);
     this.hideHint();
     // 꾸미기에 들어올 때는 도구를 꺼 둔다: 실수로 눌러서 지어지지 않게
@@ -1822,17 +1822,47 @@ export class HudScene extends Phaser.Scene {
     c.add([base, knob, zone, ab]);
   }
 
+  private menuOpen = true;
+  private menuBtn?: Phaser.GameObjects.Container;
+  private menuDot?: Phaser.GameObjects.Arc;
+
+  /** 옆 단추들을 접었다 폈다 한다 (접으면 화면이 넓어진다). 고른 대로 기억해 둔다 */
+  private setMenu(open: boolean, save = true) {
+    this.menuOpen = open;
+    if (save) {
+      try {
+        localStorage.setItem('mfi.v1.menu', open ? '1' : '0');
+      } catch {
+        /* noop */
+      }
+    }
+    const show = open && this.view === 'explore';
+    this.sideBtns.forEach((b, k) => {
+      b.setVisible(show);
+      if (show && save) this.tweens.add({ targets: b, scale: { from: 0.4, to: 1 }, duration: 200, delay: (k % 4) * 25, ease: 'Back.easeOut' });
+    });
+    this.emoteRow?.setVisible(false);
+    this.refreshFeedBtn();
+    if (this.menuBtn) {
+      this.menuBtn.setVisible(this.view === 'explore');
+      (this.menuBtn.list[1] as Phaser.GameObjects.Text).setText(open ? '✕' : '☰');
+    }
+    // 접혀 있어도 받을 선물이나 끝낸 퀘스트가 있으면 점으로 알려 준다
+    this.menuDot?.setVisible(!open && (daily.ready || quests.claimable));
+  }
+
   private makeSideButtons(W: number) {
     this.sideBtns = [];
-    this.roundButton(W - 30, HUD_TOP_H + 30, '🏕️', () => {
+    const ST = HUD_TOP_H + 40;
+    this.roundButton(W - 30, ST + 30, '🏕️', () => {
       if (!this.registry.get('bear')) return;
       this.game.events.emit('go-home');
       this.toast('🏕️ 캠프로 돌아왔어요');
     });
-    this.roundButton(W - 30, HUD_TOP_H + 74, '⚙️', () => this.openSettings());
+    this.roundButton(W - 30, ST + 74, '⚙️', () => this.openSettings());
     // 말풍선: 누르면 이모지가 옆으로 펼쳐진다
     const EMOTES = ['👋', '❤️', '😆', '👍', '🙏', '❗'];
-    const emoteBtn = this.roundButton(30, HUD_TOP_H + 30, '💬', () => {
+    const emoteBtn = this.roundButton(30, ST + 30, '💬', () => {
       if (!this.registry.get('bear')) return;
       const open = !row.visible;
       row.setVisible(open);
@@ -1858,27 +1888,41 @@ export class HudScene extends Phaser.Scene {
     this.sideBtns.push(row as Phaser.GameObjects.Container);
     this.emoteRow = row;
     // 변신 (보스를 잡아 얻은 능력)
-    this.roundButton(W - 30, HUD_TOP_H + 162, '🎩', () => this.openAbilities());
-    this.roundButton(W - 30, HUD_TOP_H + 206, '🗺️', () => this.openMap());
+    this.roundButton(W - 30, ST + 162, '🎩', () => this.openAbilities());
+    this.roundButton(W - 30, ST + 206, '🗺️', () => this.openMap());
     // 퀘스트 수첩 (받을 보상이 있으면 빨간 점)
-    const qb = this.roundButton(30, HUD_TOP_H + 162, '📜', () => this.openQuestBook());
+    const qb = this.roundButton(30, ST + 162, '📜', () => this.openQuestBook());
     this.questDot = this.add.circle(13, -13, 5, 0xe8604c).setStrokeStyle(1.5, 0xffffff).setVisible(false);
     qb.add(this.questDot);
     // 보물 도감
-    this.roundButton(30, HUD_TOP_H + 118, '👑', () => {
+    this.roundButton(30, ST + 118, '👑', () => {
       if (this.registry.get('bear')) this.openTreasures();
     });
     // 매일 선물 (안 받았으면 빨간 점)
-    this.giftBtn = this.roundButton(30, HUD_TOP_H + 74, '🎁', () => {
+    this.giftBtn = this.roundButton(30, ST + 74, '🎁', () => {
       if (this.registry.get('bear')) this.openDaily();
     });
     this.giftDot = this.add.circle(13, -13, 5, 0xe8604c).setStrokeStyle(1.5, 0xffffff);
     this.giftBtn.add(this.giftDot);
     this.giftDot.setVisible(daily.ready);
     // 가족 소식판 (가족 섬에 들어가 있을 때만 보인다)
-    this.feedBtn = this.roundButton(W - 30, HUD_TOP_H + 118, '📰', () => this.openFeed());
+    this.feedBtn = this.roundButton(W - 30, ST + 118, '📰', () => this.openFeed());
     this.sideBtns.pop();
     this.refreshFeedBtn();
+    // 접기 단추 (맨 위 왼쪽)
+    const mb = this.roundButton(30, HUD_TOP_H + 26, '☰', () => this.setMenu(!this.menuOpen));
+    this.sideBtns.pop();
+    (mb.list[1] as Phaser.GameObjects.Text).setFontSize(15).setColor('#8a6d4b');
+    this.menuDot = this.add.circle(13, -13, 5, 0xe8604c).setStrokeStyle(1.5, 0xffffff).setVisible(false);
+    mb.add(this.menuDot);
+    this.menuBtn = mb;
+    let saved = '1';
+    try {
+      saved = localStorage.getItem('mfi.v1.menu') ?? '1';
+    } catch {
+      /* noop */
+    }
+    this.setMenu(saved !== '0', false);
   }
 
   /** 다음에 갈 곳을 가리키는 화살표 (목표가 화면 밖일 때만) */
@@ -2091,7 +2135,7 @@ export class HudScene extends Phaser.Scene {
   // ───────────────────────── 가족 섬 (동기화) ─────────────────────────
 
   private refreshFeedBtn() {
-    this.feedBtn?.setVisible(family.active && this.view !== 'merge');
+    this.feedBtn?.setVisible(family.active && this.view !== 'merge' && (this.menuOpen || this.view !== 'explore'));
   }
 
   private statusText(s: SyncStatus) {

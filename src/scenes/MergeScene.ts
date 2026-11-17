@@ -306,13 +306,14 @@ export class MergeScene extends Phaser.Scene {
     if (this.searchEl) return this.searchEl;
     const el = document.createElement('input');
     el.type = 'search';
+    el.inputMode = 'text';
     el.placeholder = '이름이나 초성 (예: 사탕, ㅅㅌ)';
     el.value = this.query;
     el.autocomplete = 'off';
     el.setAttribute('enterkeyhint', 'search');
     Object.assign(el.style, { position: 'fixed', display: 'none', opacity: '0', margin: '0', fontSize: '16px', padding: '0 14px', borderRadius: '18px', border: '2px solid #e8b84a', background: '#fffdf5', color: '#5a4632', zIndex: '9999', outline: 'none', boxSizing: 'border-box', fontFamily: 'inherit', appearance: 'none' });
     (el.style as unknown as Record<string, string>).webkitAppearance = 'none';
-    document.body.appendChild(el);
+    this.searchHost().appendChild(el);
     this.searchEl = el;
     el.addEventListener('input', () => {
       this.query = el.value.trim();
@@ -335,10 +336,18 @@ export class MergeScene extends Phaser.Scene {
     return el;
   }
 
+  /** 전체 화면일 때는 전체 화면이 된 상자 안에 있어야 보이고 눌린다 (바깥에 두면 가려진다) */
+  private searchHost(): HTMLElement {
+    const d = document as Document & { webkitFullscreenElement?: Element | null };
+    return ((d.fullscreenElement ?? d.webkitFullscreenElement) as HTMLElement | null) ?? document.body;
+  }
+
   /** 입력 칸을 찾기 칸 그림 위에 맞춰 놓는다 (만들기 목록이 보일 때만) */
   private placeSearch() {
     const el = this.searchEl;
     if (!el) return;
+    const host = this.searchHost();
+    if (el.parentElement !== host) host.appendChild(el);
     const show = this.mode === 'ready' && !this.registry.get('modal') && this.scene.isActive() && this.registry.get('view') === 'merge';
     if (!show) {
       if (el.style.display !== 'none') {
