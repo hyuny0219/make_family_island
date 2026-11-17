@@ -2450,7 +2450,16 @@ export class HudScene extends Phaser.Scene {
     const ori = this.button(oLabel(), true, () => {
       setSetting('landscape', !settings.landscape);
       (ori.list[1] as Phaser.GameObjects.Text).setText(oLabel());
-      void lockOrientation().then((ok) => {
+      void lockOrientation().then(async (ok) => {
+        // 화면을 돌려 잠그려면 전체 화면이어야 한다 → 전체 화면으로 바꾸고 한 번 더 해 본다
+        if (!ok && this.scale.fullscreen.available && !document.fullscreenElement) {
+          try {
+            await document.getElementById('game')?.requestFullscreen();
+            ok = await lockOrientation();
+          } catch {
+            /* 전체 화면을 못 쓰는 브라우저 */
+          }
+        }
         if (!ok && !orientationOk()) this.toast(settings.landscape ? '폰을 가로로 돌려 주세요' : '폰을 세로로 돌려 주세요');
       });
     }, 200);

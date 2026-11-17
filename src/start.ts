@@ -20,18 +20,37 @@ const fullscreen = saved.fullscreen !== false;
 if (landscape) root.classList.add('land');
 
 /** 손가락이 닿은 이 순간에만 할 수 있는 것: 전체 화면으로 바꾸고 화면을 가로로 돌려 잠근다 (안드로이드. 아이폰은 지원하지 않는다) */
-function goLandscape() {
-  const lock = () => {
+async function goLandscape(force = false): Promise<boolean> {
+  const lock = async () => {
     const o = screen.orientation as (ScreenOrientation & { lock?: (dir: string) => Promise<void> }) | undefined;
-    void o?.lock?.(landscape ? 'landscape' : 'portrait').catch(() => {
-      /* 지원하지 않는 기기 */
-    });
+    if (!o?.lock) return false;
+    try {
+      await o.lock(landscape ? 'landscape' : 'portrait');
+      return true;
+    } catch {
+      return false;
+    }
   };
   const el = document.getElementById('game')!;
-  if (fullscreen && el.requestFullscreen && !document.fullscreenElement) {
-    void el.requestFullscreen().then(lock, lock);
-  } else lock();
+  // 화면을 돌려 잠그려면 전체 화면이어야 한다 (전환 단추를 눌렀을 때는 전체 화면 설정이 꺼져 있어도 켠다)
+  if ((fullscreen || force) && el.requestFullscreen && !document.fullscreenElement) {
+    try {
+      await el.requestFullscreen();
+    } catch {
+      /* 전체 화면을 못 쓰는 브라우저 */
+    }
+  }
+  return lock();
 }
+
+// '가로 화면으로 전환' 단추 (세로로 든 폰에서만 보인다)
+const turnBtn = document.getElementById('turnBtn') as HTMLButtonElement | null;
+turnBtn?.addEventListener('click', () => {
+  void goLandscape(true).then((ok) => {
+    // 못 돌리는 기기(아이폰 등)는 직접 돌려 달라고 알려 준다
+    if (!ok && turnBtn) turnBtn.textContent = '📱 폰을 가로로 돌려 주세요';
+  });
+});
 
 // 영상: 파일이 있으면 소리 없이 되풀이해서 튼다 (없거나 못 틀면 그림이 그대로 보인다)
 const wide = landscape || window.innerWidth > window.innerHeight;
@@ -46,9 +65,14 @@ let started = false;
 async function start() {
   if (started) return;
   started = true;
-  goLandscape();
+  void goLandscape();
   btn.textContent = '섬으로 가는 중…';
   btn.style.animation = 'none';
+  // 화면이 가로로 다 돌아간 뒤에 게임을 만든다 (도는 중에 만들면 로딩 화면이 옛 크기로 그려져 잘린다)
+  if (landscape) {
+    for (let i = 0; i < 12 && window.innerWidth <= window.innerHeight; i++) await new Promise((r) => window.setTimeout(r, 100));
+    await new Promise((r) => window.setTimeout(r, 120));
+  }
   try {
     await import('./main');
   } catch {

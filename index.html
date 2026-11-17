@@ -64,17 +64,23 @@
           display: block;
         }
       }
+      /* 세로로 든 폰에서만 보이는 '가로 화면으로 전환' 단추 */
       #start .turn {
         display: none;
         position: absolute;
-        left: 0;
-        right: 0;
-        bottom: 2.5%;
-        text-align: center;
+        right: 3%;
+        top: calc(5% + env(safe-area-inset-top));
+        padding: 0.5em 1em;
+        border: 0.12em solid #ffffff;
+        border-radius: 999px;
+        background: rgba(47, 127, 176, 0.92);
         color: #ffffff;
-        font-size: clamp(11px, 3vmin, 16px);
+        font: inherit;
+        font-size: clamp(12px, 3.6vmin, 18px);
         font-weight: 800;
-        text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+        white-space: nowrap;
+        box-shadow: 0 0.2em 0.5em rgba(0, 0, 0, 0.35);
+        cursor: pointer;
       }
       #start.gone {
         opacity: 0;
@@ -175,7 +181,7 @@
         <h2>열 개의 섬</h2>
       </div>
       <button id="startBtn" type="button">▶ 시작하기</button>
-      <div class="turn">📱 폰을 가로로 돌려 주세요</div>
+      <button id="turnBtn" class="turn" type="button">🔄 가로 화면으로 전환</button>
     </div>
     </div>
     <script type="module" src="/src/start.ts"></script>
