@@ -24,7 +24,11 @@ export const WEAPONS: Record<string, Weapon> = {
   wood: { names: ['나무 망치', '통나무 망치', '거목 망치'], desc: '느리지만 두 배로 세고, 옆의 몬스터도 함께 맞아요', tex: 'weapon_hammer', reach: 40, dmg: 2, slow: 1.9, hold: { angle: 0, scale: 0.9 } },
   bubble: { names: ['물총', '거품 물총', '파도 물총'], desc: '멀리서 물을 쏴서 몬스터를 뒤로 밀어내요', tex: 'weapon_water', reach: 110, dmg: 0.8, slow: 1, hold: { angle: 0, scale: 0.85 } },
   rock: { names: ['돌 곡괭이', '바위 곡괭이', '수정 곡괭이'], desc: '찍으면 바위 조각이 뒤쪽 몬스터까지 꿰뚫고 날아가요', tex: 'weapon_pick', reach: 44, dmg: 1.2, slow: 1.25, hold: { angle: 0, scale: 0.9 } },
+  poison: { names: ['포자 폭탄', '독버섯 폭탄', '독안개 폭탄'], desc: '던지면 터지면서 둘레의 몬스터까지 독에 걸려요', tex: 'weapon_bomb', reach: 100, dmg: 1, slow: 1.4, hold: { angle: 0, scale: 0.85 } },
+  ice: { names: ['서리 부메랑', '얼음 부메랑', '눈보라 부메랑'], desc: '날아갔다 돌아오며 두 번 맞혀요', tex: 'weapon_rang', reach: 92, dmg: 0.7, slow: 1.2, hold: { angle: 0, scale: 0.85 } },
+  sand: { names: ['가시 철퇴', '선인장 철퇴', '모래폭풍 철퇴'], desc: '빙 돌려서 곰 둘레의 몬스터를 모두 때려요', tex: 'weapon_mace', reach: 46, dmg: 1.1, slow: 1.25, hold: { angle: 0, scale: 0.9 } },
   fire: { names: ['불꽃 검', '화염 검', '용의 검'], desc: '검이 불타올라 넓게 베고, 맞은 몬스터는 3초 동안 불이 붙어요', tex: 'weapon_flame', reach: 44, dmg: 1.3, slow: 1, hold: { angle: -45, scale: 0.95 } },
+  thunder: { names: ['찌릿 지팡이', '번개 지팡이', '폭풍 지팡이'], desc: '멀리서 번개를 쏘고, 옆의 몬스터로 번개가 옮겨 가요', tex: 'weapon_staff', reach: 120, dmg: 0.9, slow: 1.1, hold: { angle: 0, scale: 0.9 } },
 };
 
 /** 변신 옷(망토)의 빛깔: [망토, 안감·무늬, 빛] */
