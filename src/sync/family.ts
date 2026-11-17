@@ -52,6 +52,11 @@ export interface Presence {
   /** 쓰고 있는 변신 모자(변신 이름)와 진화 단계 — 다른 가족 화면에도 보이게 */
   h?: string;
   hl?: number;
+  /** 방금 한 동작(주먹·검·도끼질·줍기·변신 기술)과 그 시각 — 다른 가족 화면에서 따라 한다 */
+  a?: string;
+  at?: number;
+  /** 낚시 중이면 찌가 떠 있는 자리 "x,y" */
+  f?: string;
   /** 보낸 시각(ms) */
   t: number;
 }
