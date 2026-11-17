@@ -1,5 +1,7 @@
 import { ABILITIES, BOSSES, hatKey } from '../data/abilities';
 import { abilities } from '../state/abilities';
+import { WEAPONS, type Weapon } from '../data/weapons';
+import { Costume } from '../objects/Costume';
 import { Monster } from '../objects/Monster';
 import { BIOME_MONSTER, MONSTERS, SKIN_MONSTER } from '../data/monsters';
 import { FOODS, foodText } from '../data/food';
@@ -1759,24 +1761,183 @@ export class IslandScene extends Phaser.Scene {
     }
   }
 
+  /** 지금 든 보스 무기 (변신을 입었고 그 변신에 무기가 있을 때) */
+  private weapon(): { id: string; w: Weapon; lv: number } | null {
+    const id = abilities.equipped;
+    const w = id ? WEAPONS[id] : undefined;
+    return id && w ? { id, w, lv: abilities.level(id) } : null;
+  }
+
   private attackMonster(m: Monster, reach = 36) {
     const pl = this.player!;
     if (m.dead || this.resting) return;
-    if (Math.hypot(m.x - pl.x, m.y - pl.y) > reach) {
+    const wp = this.weapon();
+    if (wp) reach = Math.max(reach, wp.w.reach);
+    const dist = Math.hypot(m.x - pl.x, m.y - pl.y);
+    if (dist > reach) {
+      // 멀리서 쏘는 무기는 닿는 거리까지만 다가간다
+      if (wp && wp.w.reach > 60) {
+        const k = (wp.w.reach * 0.8) / dist;
+        return this.walkTo(m.x + (pl.x - m.x) * k, m.y + (pl.y - m.y) * k, { monster: m });
+      }
       const side = pl.x <= m.x ? -1 : 1;
       return this.walkTo(m.x + side * 18, m.y, { monster: m });
     }
     const now = this.time.now;
-    if (now - this.lastHit >= 260 / (1 + abilities.power('bee') / 100)) {
+    if (now - this.lastHit >= (260 * (wp?.w.slow ?? 1)) / (1 + abilities.power('bee') / 100)) {
       this.lastHit = now;
       pl.face('side', m.x < pl.x);
-      this.slashFx(pl, m);
-      sfx.boing();
-      this.fx.splash.explode(6, m.x, m.y - 10);
-      this.damageMonster(m, this.attackPower());
+      if (wp) {
+        this.weaponAttack(pl, m, wp);
+      } else {
+        this.slashFx(pl, m);
+        sfx.boing();
+        this.fx.splash.explode(6, m.x, m.y - 10);
+        this.damageMonster(m, this.attackPower());
+      }
     }
     // 한 번 누르면 잡을 때까지 계속 싸운다 (다른 곳을 누르면 그만둔다)
     if (!m.dead) this.time.delayedCall(abilities.power('bee') > 0 ? 170 : 300, () => this.autoTarget === m && !m.dead && this.attackMonster(m));
+  }
+
+  /** 보스 무기로 때리기: 모습을 보여 주고, 무기마다 다른 방식으로 피해를 준다 */
+  private weaponAttack(pl: Bear, m: Monster, wp: { id: string; w: Weapon; lv: number }) {
+    const { id, w, lv } = wp;
+    const dmg = Math.max(1, Math.round(this.attackPower() * w.dmg));
+    this.tellAct(`W:${Math.round(m.x)},${Math.round(m.y)}`);
+    const delay = this.weaponFx(pl, id, lv, m.x, m.y, true);
+    const near = (r: number) => this.monsters.filter((o) => o !== m && !o.dead && Math.hypot(o.x - m.x, o.y - m.y) < r);
+    this.time.delayedCall(delay, () => {
+      if (m.dead || !this.player) return;
+      sfx.boing();
+      this.fx.splash.explode(6, m.x, m.y - 10);
+      switch (id) {
+        case 'leaf':
+          this.damageMonster(m, dmg);
+          if (!m.dead && !m.def.boss) m.freeze(0.25 + lv * 0.1, 0xa8e07c);
+          break;
+        case 'wood':
+          this.damageMonster(m, dmg);
+          near(38 + lv * 4).forEach((o) => this.damageMonster(o, Math.max(1, Math.round(dmg / 2)), true));
+          this.fx.dust.explode(10, m.x, m.y);
+          break;
+        case 'bubble':
+          this.damageMonster(m, dmg);
+          if (!m.dead) for (let i = 0; i < lv; i++) m.hit(0, pl.x, pl.y, this.walkable);
+          break;
+        case 'fire':
+          this.damageMonster(m, dmg);
+          near(34 + lv * 4).forEach((o) => this.damageMonster(o, Math.max(1, Math.round(dmg * 0.6)), true));
+          for (const o of [m, ...near(34 + lv * 4)]) {
+            if (o.dead) continue;
+            o.poisonT = 3;
+            o.poisonDps = Math.max(o.poisonDps, lv);
+            o.sprite.setTint(0xffa05c);
+            this.time.delayedCall(3000, () => !o.dead && o.sprite.clearTint());
+          }
+          break;
+        default:
+          this.damageMonster(m, dmg);
+      }
+    });
+  }
+
+  /**
+   * 보스 무기를 쓰는 모습 (내 곰과 다른 가족의 곰 모두). 맞는 순간까지 걸리는 시간(ms)을 돌려준다.
+   */
+  private weaponFx(from: Bear, id: string, lv: number, mx: number, my: number, own = false): number {
+    const w = WEAPONS[id];
+    if (!w) return 0;
+    const left = mx < from.x;
+    const dir = left ? -1 : 1;
+    const sc = 0.85 + lv * 0.1;
+    if (from.costume) from.costume.hideHeldUntil = this.time.now + 380;
+    const hx = from.x + dir * 8;
+    const hy = from.y - from.sprite.displayHeight * 0.45;
+    if (id === 'leaf') {
+      // 채찍: 손에서 몬스터까지 휘어지는 덩굴이 뻗었다가 돌아온다
+      if (!from.act('swing', 0.05)) from.swing(left);
+      const g = this.add.graphics().setDepth(99986);
+      const t = { v: 0 };
+      this.tweens.add({
+        targets: t,
+        v: 1,
+        duration: 220,
+        onUpdate: () => {
+          const k = Math.sin(t.v * Math.PI); // 0 → 1 → 0
+          const ex = hx + (mx - hx) * k;
+          const ey = hy + (my - 12 - hy) * k;
+          const cx = (hx + ex) / 2;
+          const cy = Math.min(hy, ey) - 16 * k;
+          g.clear();
+          const curve = new Phaser.Curves.QuadraticBezier(new Phaser.Math.Vector2(hx, hy), new Phaser.Math.Vector2(cx, cy), new Phaser.Math.Vector2(ex, ey));
+          g.lineStyle(3.5, 0x3f7d3a).strokePoints(curve.getPoints(10));
+          g.lineStyle(1.5, 0x9be08a).strokePoints(curve.getPoints(10));
+          g.fillStyle(0x6fc45f).fillCircle(ex, ey, 2.5 + lv * 0.5);
+        },
+        onComplete: () => g.destroy(),
+      });
+      this.time.delayedCall(110, () => this.fx.leaf.explode(3 + lv, mx, my - 12));
+      return 110;
+    }
+    if (id === 'bee' || id === 'bubble') {
+      // 새총·물총: 들고 겨눈 뒤 쏜다
+      from.act('punch');
+      const gun = this.add.image(hx, hy, w.tex).setScale(sc).setFlipX(left).setDepth(from.y + 2);
+      this.tweens.add({ targets: gun, x: hx - dir * 3, duration: 60, yoyo: true, onComplete: () => this.time.delayedCall(140, () => gun.destroy()) });
+      const flight = Phaser.Math.Clamp(Math.hypot(mx - hx, my - hy) * 1.1, 70, 170);
+      if (id === 'bee') {
+        const shots = lv >= 3 ? 2 : 1;
+        for (let i = 0; i < shots; i++) {
+          const s = this.add.image(hx, hy, 'fx_sting').setScale(1 + lv * 0.15).setDepth(99986).setRotation(Math.atan2(my - 12 - hy, mx - hx));
+          this.tweens.add({ targets: s, x: mx, y: my - 12 + (i ? 5 : 0), delay: i * 50, duration: flight, onComplete: () => s.destroy() });
+        }
+      } else {
+        for (let i = 0; i < 4 + lv; i++) {
+          const d = this.add.circle(hx, hy, 2.2 + lv * 0.3 - i * 0.15, i % 2 ? 0x9fdcff : 0x4aa3df).setDepth(99986);
+          this.tweens.add({ targets: d, x: mx + Phaser.Math.Between(-3, 3), y: my - 12 + Phaser.Math.Between(-3, 3), delay: i * 18, duration: flight, onComplete: () => d.destroy() });
+        }
+        this.time.delayedCall(flight, () => this.fx.splash.explode(8 + lv * 3, mx, my - 10));
+      }
+      return flight;
+    }
+    if (id === 'wood') {
+      // 망치: 크게 치켜들었다가 쾅
+      const wind = 0.2;
+      if (!from.act('swing', wind)) from.swing(left);
+      this.toolSwing(from, w.tex, left, wind, sc * 1.25);
+      this.time.delayedCall(wind * 1000 + 90, () => {
+        const g = this.add.graphics().setDepth(99958);
+        const t = { v: 0 };
+        const R = 30 + lv * 6;
+        this.tweens.add({ targets: t, v: 1, duration: 260, ease: 'Cubic.easeOut', onUpdate: () => g.clear().lineStyle(3, 0xc9a66b, 1 - t.v).strokeEllipse(mx, my - 2, R * 2 * t.v, R * 1.2 * t.v), onComplete: () => g.destroy() });
+        this.fx.dust.explode(8, mx, my);
+        if (own) this.cameras.main.shake(110, 0.005 + lv * 0.001);
+      });
+      return wind * 1000 + 90;
+    }
+    if (id === 'fire') {
+      // 불꽃 검: 넓게 베고 불꽃이 인다
+      const wind = 0.08;
+      if (!from.act('swing', wind)) from.swing(left);
+      this.toolSwing(from, w.tex, left, wind, sc * 1.05, true);
+      this.time.delayedCall(wind * 1000, () => {
+        const g = this.add.graphics().setDepth(99986);
+        const cx = (from.x + mx) / 2 + dir * 4;
+        const cy = my - 14;
+        const R = 20 + lv * 3;
+        for (const [wd, col, off] of [[6, 0xff5a2b, 0], [3.5, 0xffb03d, 2], [1.5, 0xfff0a8, 4]] as const) {
+          g.lineStyle(wd, col, 0.95);
+          g.beginPath();
+          g.arc(cx - dir * (6 + off), cy, R - off, left ? Math.PI * 0.65 : -Math.PI * 0.35, left ? Math.PI * 1.35 : Math.PI * 0.35, false);
+          g.strokePath();
+        }
+        this.tweens.add({ targets: g, alpha: 0, x: dir * 6, duration: 200, onComplete: () => g.destroy() });
+        this.fx.ember.explode(8 + lv * 4, mx, my - 8);
+      });
+      return wind * 1000 + 20;
+    }
+    return 0;
   }
 
   /**
@@ -1894,7 +2055,13 @@ export class IslandScene extends Phaser.Scene {
       this.gatherAt(b, k === 'k' ? 'pick' : k === 'c' ? 'chop' : 'mine', left);
       return;
     }
-    if (k === 'x') this.skillShow(b, arg);
+    if (k === 'x') return this.skillShow(b, arg);
+    if (k === 'W' && b.hat) {
+      const [x, y] = arg.split(',').map(Number);
+      if (!Number.isFinite(x) || !Number.isFinite(y) || Math.hypot(x - b.x, y - b.y) > 200) return;
+      b.face('side', x < b.x);
+      this.weaponFx(b, b.hat.id, b.hat.lv, x, y);
+    }
   }
 
   /** 다른 가족이 쓴 변신 기술의 모습 */
@@ -2136,6 +2303,18 @@ export class IslandScene extends Phaser.Scene {
 
   // ───────────────────────── 머리 위 체력바 · 변신 모자 ─────────────────────────
 
+  /** 변신 옷(망토·빛·손에 든 무기)을 입히거나 벗긴다 */
+  private dress(b: Bear, id: string | null, lv: number) {
+    const c = b.costume;
+    if (c && (c.id !== id || c.lv !== lv)) {
+      c.destroy();
+      b.costume = undefined;
+    }
+    if (!id) return;
+    if (!b.costume) b.costume = new Costume(this, id, lv);
+    b.costume.update(b, this.game.loop.delta / 1000);
+  }
+
   private drawPlayerHud() {
     const pl = this.player;
     if (!pl) return;
@@ -2154,9 +2333,11 @@ export class IslandScene extends Phaser.Scene {
       this.hat.destroy();
       this.hat = undefined;
     }
-    // 다른 가족 곰의 변신 모자
+    this.dress(pl, on, on ? abilities.level(on) : 0);
+    // 다른 가족 곰의 변신 모자와 옷
     for (const b of this.remotes.values()) {
       const h = b.hat;
+      this.dress(b, h?.id ?? null, h?.lv ?? 0);
       if (!h) continue;
       const bs = b.sprite;
       if (!h.img) h.img = this.add.image(0, 0, hatKey(h.id)).setOrigin(0.5, 1);
@@ -3376,6 +3557,7 @@ export class IslandScene extends Phaser.Scene {
       if (p && p.island === this.islandIdx && p.bear === bear.id && (p.z ?? '') === zone) continue;
       this.fx.puff.explode(5, bear.x, bear.y - 14);
       bear.hat?.img?.destroy();
+      bear.costume?.destroy();
       bear.bobber?.destroy();
       bear.destroy();
       this.remotes.delete(dev);

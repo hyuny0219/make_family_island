@@ -1,3 +1,4 @@
+import { WEAPONS } from '../data/weapons';
 import { lockOrientation, orientationOk } from '../util/orient';
 import { ENDING, OPENING, talkLines, type CutPage } from '../data/story';
 import { story } from '../state/story';
@@ -1561,7 +1562,7 @@ export class HudScene extends Phaser.Scene {
     if (this.registry.get('modal') || !this.registry.get('bear')) return;
     const H = this.scale.height;
     const PW = Math.min(330, this.scale.width - 20);
-    const rowH = 70;
+    const rowH = 84;
     const contentH = ABILITIES.length * rowH;
     const PH = Math.min(H - 70, 88 + contentH);
     const viewH = PH - 88;
@@ -1617,6 +1618,11 @@ export class HudScene extends Phaser.Scene {
       list.add(this.add.text(x + 54, y + 8, `${ab.emoji} ${ab.names[lv - 1]}  ${'★'.repeat(lv)} ${lv}단계${worn ? ' · 변신 중' : ''}`, { fontFamily: FONT, fontSize: '13px', color: COLORS.uiText, fontStyle: 'bold' }));
       list.add(this.add.text(x + 54, y + 26, ab.desc.replace('{n}', String(ab.n[lv - 1])), { fontFamily: FONT, fontSize: '9px', color: '#8a6d4b' }));
       list.add(this.add.text(x + 54, y + 39, `⚡ ${ab.skill.name}: ${ab.skill.desc.replace('{n}', String(ab.skill.n[lv - 1]))}`, { fontFamily: FONT, fontSize: '8px', color: '#e07a5f', fontStyle: 'bold', wordWrap: { width: PW - 30 - 54 - 76 } }));
+      const wpn = WEAPONS[ab.id];
+      if (wpn) {
+        list.add(this.add.image(x + 60, y + 67, wpn.tex).setScale(0.6));
+        list.add(this.add.text(x + 70, y + 62, `${wpn.names[lv - 1]}: ${wpn.desc}`, { fontFamily: FONT, fontSize: '8px', color: '#3d7ea6', fontStyle: 'bold', wordWrap: { width: PW - 30 - 150, useAdvancedWrap: true } }));
+      }
       if (lv < 3) {
         const cost = UPGRADE_COST[lv - 1];
         const ok = canPay(cost);

@@ -307,6 +307,11 @@ if __name__ == "__main__":
     slice_grid("tools.png", 3, 2, [["tool_axe", None, None], [None, None, None]], fit=22)
     slice_grid("tools.png", 3, 2, [[None, "tool_pickaxe", None], [None, None, None]], fit=24)
     slice_grid("tools.png", 3, 2, [[None, None, None], [None, None, "fx_star"]], fit=22)
+    # 보스 무기 (변신하면 드는 것)
+    for i, (name, fit) in enumerate([("weapon_hammer", 26), ("weapon_sling", 20), ("weapon_water", 20), ("weapon_flame", 24), ("weapon_whip", 20), ("fx_sting", 10)]):
+        grid = [[None] * 3, [None] * 3]
+        grid[i // 3][i % 3] = name
+        slice_grid("weapons.png", 3, 2, grid, fit=fit)
 
     # 섬 놀이 2 (곰돌이·꽃향기·솔방울·버섯 섬)
     for i, (name, fit) in enumerate([("hive", 32), ("bud", 30), ("log", 36), ("shroom", 36)]):
