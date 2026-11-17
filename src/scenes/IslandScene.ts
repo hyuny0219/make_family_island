@@ -3712,8 +3712,12 @@ export class IslandScene extends Phaser.Scene {
         b.run();
         return true;
       }
+      // 떠 있는 가구: 빈 곳을 누르면 그리로 옮기고, 그 가구를 다시 누르면 내려놓는다 (끌면 옮기기)
+      const sel = this.roomSel.p;
       this.closeRoomMenu();
-      if (!this.roomPieceAt(Math.floor((wp.x - rm.x) / TILE), Math.floor((wp.y - rm.y) / TILE))) return true;
+      const at = this.roomPieceAt(Math.floor((wp.x - rm.x) / TILE), Math.floor((wp.y - rm.y) / TILE));
+      if (!at) this.roomCarry = sel;
+      else if (at === sel) this.roomPutDown = sel;
     }
     if (tool === 'erase') return false;
     // '옮기기'를 누른 가구: 누른 자리로 따라온다
@@ -3759,16 +3763,25 @@ export class IslandScene extends Phaser.Scene {
   }
 
   /** 누른 가구 위에 뜬 단추 */
-  private roomSel: null | { p: Placed; objs: Phaser.GameObjects.GameObject[]; btns: { x: number; y: number; w: number; h: number; run: () => void }[] } = null;
-  /** '옮기기'를 눌러 들고 있는 가구 */
+  private roomSel: null | { p: Placed; objs: Phaser.GameObjects.GameObject[]; btns: { x: number; y: number; w: number; h: number; run: () => void }[]; lift?: { img: Phaser.GameObjects.Image; y: number; scale: number } } = null;
+  /** 떠 있다가 빈 곳을 눌러 옮기는 가구 */
   private roomCarry: Placed | null = null;
+  /** 떠 있던 가구를 다시 눌렀다 → 손을 떼면 내려놓는다 */
+  private roomPutDown: Placed | null = null;
 
   private closeRoomMenu() {
-    this.roomSel?.objs.forEach((o) => o.destroy());
+    const sel = this.roomSel;
     this.roomSel = null;
+    if (!sel) return;
+    sel.objs.forEach((o) => o.destroy());
+    // 떠 있던 가구를 제자리로
+    if (sel.lift?.img.active) {
+      this.tweens.killTweensOf(sel.lift.img);
+      sel.lift.img.setY(sel.lift.y).setScale(sel.lift.scale);
+    }
   }
 
-  /** 가구를 톡 눌렀다: 그 위에 돌리기 · 옮기기 · 넣기 단추 */
+  /** 가구를 톡 눌렀다: 붕 뜨고, 그 위에 돌리기 · 넣기 단추. 이 상태에서 다른 곳을 누르거나 끌면 그리로 옮겨진다 */
   private openRoomMenu(p: Placed) {
     this.closeRoomMenu();
     const rm = this.room;
@@ -3782,9 +3795,9 @@ export class IslandScene extends Phaser.Scene {
     for (const [cx, cy] of this.footprint(piece, p.tx, p.ty, p)) marks.strokeRoundedRect(rm.x + cx * TILE + 1, rm.y + cy * TILE + 1, TILE - 2, TILE - 2, 4);
     // (방금 놓여서 커지는 중일 수 있으니 그림의 실제 크기 대신 다 커진 크기로 잰다)
     const th = this.textures.get(L.tex).getSourceImage().height * L.scale;
-    const topY = L.y - th * L.oy;
+    const topY = L.y - th * L.oy - (piece.floor ? 0 : 6);
     // 화면 밖으로 나가지 않게
-    const half = 96 / z;
+    const half = 66 / z;
     const left = cam.worldView.x + 4 / z;
     const right = cam.worldView.x + this.scale.width / z - 4 / z;
     const bx = Phaser.Math.Clamp(L.x, left + half, right - half);
@@ -3795,11 +3808,6 @@ export class IslandScene extends Phaser.Scene {
       ['↻ 돌리기', 0x5a9bd4, () => {
         const np = this.roomTurn(p);
         if (np) this.openRoomMenu(np);
-      }],
-      ['✋ 옮기기', 0x6fae5a, () => {
-        this.closeRoomMenu();
-        this.roomCarry = p;
-        this.toast(`✋ ${piece.name}: 옮길 자리를 눌러요`);
       }],
       ['🧹 넣기', 0xc97b4a, () => {
         this.closeRoomMenu();
@@ -3813,7 +3821,7 @@ export class IslandScene extends Phaser.Scene {
     const w = 60;
     const h = 26;
     defs.forEach(([label, color, run], i) => {
-      const x = (i - 1) * (w + 4);
+      const x = (i - 0.5) * (w + 4);
       const g = this.add.graphics();
       g.fillStyle(0x000000, 0.25).fillRoundedRect(x - w / 2, -h / 2 + 2, w, h, 13);
       g.fillStyle(color).fillRoundedRect(x - w / 2, -h / 2, w, h, 13);
@@ -3823,7 +3831,19 @@ export class IslandScene extends Phaser.Scene {
     });
     box.setAlpha(0);
     this.tweens.add({ targets: box, alpha: 1, y: { from: by + 6 / z, to: by }, duration: 140 });
-    this.roomSel = { p, objs: [marks, box], btns };
+    // 가구가 붕 뜬다 (바닥에 깔린 것은 그대로)
+    const objs: Phaser.GameObjects.GameObject[] = [marks, box];
+    let lift: { img: Phaser.GameObjects.Image; y: number; scale: number } | undefined;
+    const img = rm.imgs.get(this.roomKey(p));
+    if (img && !piece.floor) {
+      this.tweens.killTweensOf(img);
+      img.setScale(L.scale).setY(L.y);
+      lift = { img, y: L.y, scale: L.scale };
+      const o = oriented(piece, p);
+      objs.push(this.add.ellipse(L.x, L.y - 2, o.w * TILE * 0.8, 8, 0x000000, 0.22).setDepth(L.depth - 0.5));
+      this.tweens.add({ targets: img, y: L.y - 6, duration: 160, ease: 'Back.easeOut', onComplete: () => this.tweens.add({ targets: img, y: L.y - 4, duration: 700, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' }) });
+    }
+    this.roomSel = { p, objs, btns, lift };
   }
 
   /** 놓인 가구를 제자리에서 한 번 돌린다 (돌린 모양이 들어갈 자리가 없으면 다음 방향으로). 돌린 가구를 돌려준다 */
@@ -3877,10 +3897,12 @@ export class IslandScene extends Phaser.Scene {
     if (d.from) {
       const img = rm.imgs.get(this.roomKey(d.from));
       if (!d.moved) {
-        // 제자리에서 톡: 돌리기 · 옮기기 · 넣기 단추를 띄운다
+        // 제자리에서 톡: 가구가 붕 뜨고 돌리기 · 넣기 단추가 나온다 (떠 있던 가구를 다시 누르면 내려놓는다)
         img?.setAlpha(1);
         sfx.tap();
-        return this.openRoomMenu(d.from);
+        const down = this.roomPutDown === d.from;
+        this.roomPutDown = null;
+        return down ? undefined : this.openRoomMenu(d.from);
       }
       if (!d.ok || (d.tx === d.from.tx && d.ty === d.from.ty)) {
         img?.setAlpha(1);
@@ -3891,6 +3913,7 @@ export class IslandScene extends Phaser.Scene {
         }
         return;
       }
+      this.roomPutDown = null;
       swap(put(d.tx, d.ty, d.t));
       return this.flashCells(cells(d.t), true);
     }
