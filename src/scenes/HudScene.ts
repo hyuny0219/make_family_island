@@ -1071,7 +1071,7 @@ export class HudScene extends Phaser.Scene {
     const rot = ((this.registry.get('buildRot') as number) ?? 0) % 4;
     if (this.registry.get('room')) chip(W - 20 - 2 * 58 - 4, top + 42, 58, '↻ 돌리기', rot > 0, () => this.registry.set('buildRot', (rot + 1) % 4), 11);
     else chip(W - 20 - 2 * 58 - 4, top + 42, 58, flip ? '↔ 뒤집힘' : '↔ 뒤집기', flip, () => this.registry.set('buildFlip', !flip), 11);
-    chip(W - 20 - 58, top + 42, 58, '🔍 멀리', false, () => this.game.events.emit('build-zoom'), 11);
+    chip(W - 20 - 58, top + 42, 58, this.registry.get('room') ? '🔍 전체' : '🔍 멀리', false, () => this.game.events.emit('build-zoom'), 11);
 
     // 3) 종류
     // 집 안에서는 가구·실내 장식만, 밖에서는 길·집·울타리…
