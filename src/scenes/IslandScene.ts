@@ -1785,7 +1785,7 @@ export class IslandScene extends Phaser.Scene {
     const thorn = abilities.power('sand');
     if (thorn > 0) this.time.delayedCall(60, () => !m.dead && this.damageMonster(m, thorn, true));
     this.invulnUntil = this.time.now + 800;
-    sfx.knock();
+    sfx.play('hurt', 0.55, 'knock');
     buzz(50);
     this.cameras.main.shake(140, 0.006);
     pl.sprite.setTintFill(0xff6b6b);
@@ -2135,6 +2135,7 @@ export class IslandScene extends Phaser.Scene {
       const py = pl.y;
       this.tellAct(`${kind}:${Math.round(x)},${Math.round(y)}`);
       this.comboFx(kind, pl, id, lv, x, y);
+      if (kind === 'F') sfx.play(`f_${id}`, 0.75, 'knock');
       this.punchCam(kind === 'G' ? 0.05 : 0.035);
       buzz(30);
       const ap = this.attackPower();
@@ -2398,7 +2399,7 @@ export class IslandScene extends Phaser.Scene {
       this.slashFx(pl, { x: tx, y: ty - lift } as Monster);
       if (step === 1 && !lift) this.time.delayedCall(90, () => this.player === pl && this.slashAt(pl, tx, ty - 9, this.swordId(), true));
     }
-    sfx.tap();
+    sfx.play(wp ? `w_${wp.id}` : 'swing', wp ? 0.4 : 0.45, 'tap', fin ? 0.9 : step === 1 ? 1.08 : 1);
     if (fin && wp) this.weaponCombo('F', wp, tx, ty, Math.max(160, delay));
     else if (fin) this.finisherFx(tx, ty, delay);
   }
@@ -2417,7 +2418,7 @@ export class IslandScene extends Phaser.Scene {
     this.ghostFx(pl, 0xbfe8ff, 3);
     this.fx.dust.explode(5, pl.x, pl.y);
     this.jumpAt = now;
-    sfx.boing();
+    sfx.play('jump', 0.4, 'boing');
     this.tellAct('j');
     this.game.events.emit('player-moved');
   }
@@ -2436,7 +2437,7 @@ export class IslandScene extends Phaser.Scene {
         // 보스 무기: 무기마다 다른 내려찍기
         this.comboAt = this.time.now;
         this.game.events.emit('combo', `${COMBO_MOVES[swp.id]?.[1] ?? '내려찍기'}!`, true);
-        sfx.knock();
+        sfx.play(`g_${swp.id}`, 0.75, 'knock');
         this.cameras.main.shake(140, 0.007);
         this.weaponCombo('G', swp, pl.x, pl.y, 0);
         this.wasAir = air;
@@ -2449,8 +2450,9 @@ export class IslandScene extends Phaser.Scene {
         this.tellAct('J');
         this.slamFx(pl.x, pl.y);
       }
+      if (slam) sfx.play('slam', 0.7, 'knock');
+      else sfx.play('land', near.length ? 0.5 : 0.22, near.length ? 'knock' : null);
       if (near.length || slam) {
-        sfx.knock();
         this.cameras.main.shake(slam ? 140 : 90, slam ? 0.007 : 0.004);
       }
       const dmg = Math.max(1, Math.round(this.attackPower() * (slam ? 1.5 : 0.5)));
@@ -2504,7 +2506,9 @@ export class IslandScene extends Phaser.Scene {
       } else {
         this.slashFx(pl, { x: m.x, y: m.y - lift } as Monster);
         if (step === 1 && !lift) this.time.delayedCall(90, () => this.player === pl && this.slashAt(pl, m.x, m.y - 9, this.swordId(), true));
-        sfx.boing();
+        const sw = this.swordId();
+        if (fin) sfx.play('finisher', 0.7, 'boing');
+        else sfx.play(sw === 'stone_sword' ? 'heavy' : sw ? 'slash' : 'punch', sw ? 0.5 : 0.7, 'boing', step === 1 ? 1.1 : 1);
         this.fx.splash.explode(fin ? 14 : 6, m.x, m.y - 10);
         this.damageMonster(m, Math.max(1, Math.round(this.attackPower() * this.hitMul)));
       }
@@ -2522,10 +2526,11 @@ export class IslandScene extends Phaser.Scene {
     const dmg = Math.max(1, Math.round(this.attackPower() * w.dmg * this.hitMul));
     this.tellAct(`W:${Math.round(m.x)},${Math.round(m.y)}`);
     const delay = this.weaponFx(pl, id, lv, m.x, m.y, true);
+    sfx.play(`w_${id}`, 0.5, null, this.combo === 1 ? 1.08 : 1);
     const near = (r: number) => this.monsters.filter((o) => o !== m && !o.dead && Math.hypot(o.x - m.x, o.y - m.y) < r);
     this.time.delayedCall(delay, () => {
       if (m.dead || !this.player) return;
-      sfx.boing();
+      sfx.play('hit', 0.4, 'boing');
       this.fx.splash.explode(6, m.x, m.y - 10);
       this.glowFx(m.x, m.y - 10, ELEM[id] ?? 0xffffff, 7 + lv * 2);
       this.flashFx(m.x, m.y - 10, ELEM[id] ?? 0xffffff, 14 + lv * 3, 150);
@@ -2896,6 +2901,7 @@ export class IslandScene extends Phaser.Scene {
   }
 
   private gatherAt(pl: Bear, motion: 'pick' | 'chop' | 'mine', left: boolean) {
+    if (pl === this.player) sfx.play(motion, motion === 'pick' ? 0.5 : 0.55);
     if (motion === 'pick') {
       pl.act('pick');
       return;
@@ -3026,6 +3032,7 @@ export class IslandScene extends Phaser.Scene {
       }
     }
     if (!extra) this.hitSpark(m.x, m.y - 12, this.hitMul >= 2);
+    if (!extra && !this.weapon()) sfx.play('hit', 0.32);
     const cam = this.cameras.main;
     this.game.events.emit('float', `${dmg}`, (m.x - cam.worldView.x) * cam.zoom, (m.y - 34 - cam.worldView.y) * cam.zoom);
     if (!host) {
@@ -3041,6 +3048,7 @@ export class IslandScene extends Phaser.Scene {
   private killMonster(m: Monster) {
     const pl = this.player!;
     if (m.dead) return;
+    if (!m.def.boss) sfx.play('mon_die', 0.5);
     const host = this.isHost();
     const near = !!this.dungeon || Math.hypot(m.x - pl.x, m.y - pl.y) < 260;
     if (near) {
@@ -3206,6 +3214,7 @@ export class IslandScene extends Phaser.Scene {
   /** 진화하는 모습: 곰이 하얗게 빛나며 떠올랐다가, 빛이 터지면서 새 옷으로 바뀐다 */
   private evolveFx(b: Bear | null) {
     if (!b) return;
+    if (b === this.player) sfx.play('evolve', 0.6);
     const sp = b.sprite;
     const col = COSTUME_GLOW(b === this.player ? abilities.equipped : b.hat?.id);
     sp.setTintFill(0xffffff);
@@ -4043,7 +4052,7 @@ export class IslandScene extends Phaser.Scene {
         dg.waved = true;
         b.showBar(); // 체력바를 처음부터 보여 준다
         this.cameras.main.shake(300, 0.008);
-        sfx.knock();
+        sfx.play('boss_roar', 0.7, 'knock');
         this.fx.puff.explode(16, b.x, b.y - 20);
         this.game.events.emit('celebrate', `☠ ${b.def.name} 등장!\n붉은 원이 보이면 피해요`);
       };
@@ -4116,7 +4125,7 @@ export class IslandScene extends Phaser.Scene {
           ring.destroy();
           if (!this.dungeon || boss.dead) return;
           this.cameras.main.shake(180, 0.01);
-          sfx.knock();
+          sfx.play('boss_slam', 0.6, 'knock');
           this.fx.dust.explode(14, sx, sy);
           const p2 = this.player!;
           if (Math.hypot(p2.x - sx, (p2.y - 4 - sy) * 1.5) < R && this.time.now > this.invulnUntil && !this.resting) this.takeHit(boss, Math.round(boss.def.dmg * 1.4));
@@ -4136,6 +4145,7 @@ export class IslandScene extends Phaser.Scene {
     if (this.isHost()) this.monsters.forEach((m) => m !== boss && !m.dead && m.pop());
     this.cameras.main.shake(400, 0.01);
     this.fx.sparkle.explode(30, boss.x, boss.y - 20);
+    sfx.play('boss_down', 0.75);
     const first = abilities.unlock(ab.id);
     const tokens = first ? 3 : 2;
     inventory.add('boss_token', tokens);
@@ -4991,7 +5001,7 @@ export class IslandScene extends Phaser.Scene {
     const dy = sy - pl.y;
     if (Math.abs(dx) > Math.abs(dy)) pl.face('side', dx < 0);
     else pl.face(dy < 0 ? 'back' : 'front');
-    sfx.rustle();
+    sfx.play('fish_cast', 0.55, 'rustle');
     const bobber = this.add.image(pl.x, pl.y - 20, 'bobber').setDepth(-700);
     const t = { v: 0 };
     const fx = pl.x;
@@ -5058,6 +5068,7 @@ export class IslandScene extends Phaser.Scene {
     this.fishing = null;
     this.sendPresence();
     if (caught) quests.bump('fish');
+    if (caught) sfx.play('fish_catch', 0.6);
     this.game.events.emit('fishing', false);
     f.mark?.destroy();
     this.tweens.killTweensOf(f.bobber);
