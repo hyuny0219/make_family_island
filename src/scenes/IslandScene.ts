@@ -3733,8 +3733,11 @@ export class IslandScene extends Phaser.Scene {
       if (!at) this.roomCarry = sel;
       else if (at === sel) this.roomPutDown = sel;
     }
-    if (tool === 'erase') return false;
-    // '옮기기'를 누른 가구: 누른 자리로 따라온다
+    if (tool === 'erase') {
+      this.roomCarry = null;
+      return false;
+    }
+    // 떠 있다가 빈 곳을 눌러 옮기는 가구: 누른 자리로 따라온다
     const carry = this.roomCarry;
     this.roomCarry = null;
     const carried = carry && rm.imgs.get(this.roomKey(carry)) ? carry : undefined;
@@ -3900,6 +3903,8 @@ export class IslandScene extends Phaser.Scene {
     d.ghost.destroy();
     d.marks.destroy();
     if (!rm) return;
+    // 끄는 사이에 다른 가족이 그 가구를 치웠다 → 아무 일도 하지 않는다
+    if (d.from && !village.placedOn(rm.key).includes(d.from)) return;
     const cells = (t: Turn, tx = d.tx, ty = d.ty) => this.footprint(d.piece, tx, ty, t).map(([cx, cy]) => [cx + rm.x / TILE, cy + rm.y / TILE] as [number, number]);
     const put = (tx: number, ty: number, t: Turn): Placed => ({ id: d.piece.id, tx, ty, ...t });
     const swap = (to: Placed) => {
@@ -4471,8 +4476,11 @@ export class IslandScene extends Phaser.Scene {
       this.time.timeScale = 1;
       this.tweens.timeScale = 1;
     }, 700);
-    cam.zoomTo(cam.zoom * 1.12, 300, 'Sine.easeOut', true);
-    window.setTimeout(() => cam.zoomTo(cam.zoom / 1.12, 500, 'Sine.easeInOut', true), 1300);
+    const z0 = WORLD_ZOOM;
+    cam.zoomTo(z0 * 1.12, 300, 'Sine.easeOut', true);
+    window.setTimeout(() => {
+      if (this.scene.isActive() && this.registry.get('view') !== 'build') cam.zoomTo(z0, 500, 'Sine.easeInOut', true);
+    }, 1300);
     for (let k = 0; k < 4; k++) {
       window.setTimeout(() => {
         if (!this.scene.isActive()) return;
