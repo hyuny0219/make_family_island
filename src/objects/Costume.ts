@@ -24,7 +24,8 @@ export class Costume {
   update(bear: Bear, dt: number) {
     const sp = bear.sprite;
     const show = sp.visible && !bear.lying;
-    this.cape.setVisible(show);
+    // 몸에 입는 의상 그림이 있는 곰은 망토를 그리지 않는다 (의상에 다 들어 있다)
+    this.cape.setVisible(show && !bear.skinned);
     this.aura.setVisible(show);
     this.held?.setVisible(show && this.scene.time.now > this.hideHeldUntil);
     if (!show) return;
@@ -49,6 +50,7 @@ export class Costume {
     const top = y - h * 0.6;
     const bottom = y - h * 0.1 + (bear.moving ? -1 : 0);
     const cape = this.cape.clear();
+    if (bear.skinned) cape.setVisible(false);
     cape.setDepth(back ? sp.depth + 0.3 : sp.depth - 0.2);
     const poly = (pts: number[], color: number, alpha = 1) => {
       cape.fillStyle(color, alpha);

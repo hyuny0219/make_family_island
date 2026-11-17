@@ -39,3 +39,6 @@ export const COSTUME: Record<string, [number, number, number]> = {
   fire: [0xe2522b, 0xffb03d, 0xffe08a],
   thunder: [0x6b55c9, 0xffe066, 0xfff6b8],
 };
+
+/** 몸에 입는 의상 그림이 있는 변신 (없는 변신은 망토를 덧그린다) */
+export const BEAR_SKINS = ['bee'];

@@ -2305,6 +2305,7 @@ export class IslandScene extends Phaser.Scene {
 
   /** 변신 옷(망토·빛·손에 든 무기)을 입히거나 벗긴다 */
   private dress(b: Bear, id: string | null, lv: number) {
+    b.setSkin(id);
     const c = b.costume;
     if (c && (c.id !== id || c.lv !== lv)) {
       c.destroy();
@@ -2326,7 +2327,7 @@ export class IslandScene extends Phaser.Scene {
       const lv = abilities.level(on);
       if (!this.hat) this.hat = this.add.image(0, 0, hatKey(on)).setOrigin(0.5, 1);
       if (this.hat.texture.key !== hatKey(on)) this.hat.setTexture(hatKey(on));
-      this.hat.setVisible(sp.visible).setScale(0.9 + lv * 0.1).setPosition(sp.x, top + 9).setDepth(sp.depth + 0.5).setFlipX(sp.flipX);
+      this.hat.setVisible(sp.visible && !pl.skinned).setScale(0.9 + lv * 0.1).setPosition(sp.x, top + 9).setDepth(sp.depth + 0.5).setFlipX(sp.flipX);
       // 진화할수록 반짝인다
       if (lv >= 2 && Math.random() < (lv === 3 ? 0.08 : 0.03)) this.fx.sparkle.explode(1, sp.x + Phaser.Math.Between(-9, 9), top + Phaser.Math.Between(-6, 6));
     } else if (this.hat) {
@@ -2341,7 +2342,7 @@ export class IslandScene extends Phaser.Scene {
       if (!h) continue;
       const bs = b.sprite;
       if (!h.img) h.img = this.add.image(0, 0, hatKey(h.id)).setOrigin(0.5, 1);
-      h.img.setVisible(bs.visible && !b.lying).setScale(0.9 + h.lv * 0.1).setPosition(bs.x, bs.y - bs.displayHeight + 9).setDepth(bs.depth + 0.5).setFlipX(bs.flipX);
+      h.img.setVisible(bs.visible && !b.lying && !b.skinned).setScale(0.9 + h.lv * 0.1).setPosition(bs.x, bs.y - bs.displayHeight + 9).setDepth(bs.depth + 0.5).setFlipX(bs.flipX);
     }
     // 체력바 (숫자 없이 막대만)
     if (!this.hpBar) this.hpBar = this.add.graphics().setDepth(99956);
