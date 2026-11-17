@@ -304,13 +304,14 @@ export class HudScene extends Phaser.Scene {
     }
     const W = this.scale.width;
     const t = this.add.text(0, 0, label, { fontFamily: FONT, fontSize: '11px', color: ready ? '#ffffff' : COLORS.uiText, fontStyle: 'bold' }).setOrigin(0.5);
-    const w = Math.min(W - 108, t.width + 22);
+    const w = Math.min(this.wide ? W - 340 : W - 108, t.width + 22);
     if (t.width > w - 16) t.setScale((w - 16) / t.width);
     const g = this.add.graphics();
     g.fillStyle(0x000000, 0.12).fillRoundedRect(-w / 2, -11 + 2, w, 24, 12);
     g.fillStyle(ready ? 0x8bd17c : COLORS.uiBg, 0.95).fillRoundedRect(-w / 2, -12, w, 24, 12);
     if (!ready) g.lineStyle(1.5, 0xe8d5a9).strokeRoundedRect(-w / 2, -12, w, 24, 12);
-    const c = this.add.container(W / 2, HUD_TOP_H + 16, [g, t]).setDepth(5);
+    // 가로 화면: 맨 윗줄(섬 이름과 창고 사이)에 둔다 → 아래에 펼쳐지는 메뉴와 겹치지 않는다
+    const c = this.add.container(this.wide ? W / 2 + 22 : W / 2, this.wide ? 28 : HUD_TOP_H + 16, [g, t]).setDepth(5);
     c.setSize(w, 30).setInteractive({ useHandCursor: true });
     c.on('pointerdown', () => {
       sfx.tap();
@@ -2013,7 +2014,11 @@ export class HudScene extends Phaser.Scene {
       this.menuBtn.setVisible(this.view === 'explore');
       (this.menuBtn.list[1] as Phaser.GameObjects.Text).setText(open ? '✕' : '☰');
     }
-    this.backBtn?.setVisible(this.view !== 'explore');
+    if (this.backBtn) {
+      this.backBtn.setVisible(this.view !== 'explore');
+      // 만들기: 탭 줄의 오른쪽 끝 · 꾸미기: 꾸미기 창의 오른쪽 위 모서리
+      this.backBtn.setPosition(this.scale.width - 30, this.view === 'build' ? this.scale.height - HUD_BOTTOM_H - 176 - 20 : HUD_TOP_H + 16);
+    }
     // 접혀 있어도 받을 선물이나 끝낸 퀘스트가 있으면 점으로 알려 준다
     this.menuDot?.setVisible(!open && (daily.ready || quests.claimable));
   }
@@ -2122,7 +2127,9 @@ export class HudScene extends Phaser.Scene {
       [homeBtn, setBtn, abBtn, mapBtn, this.giftBtn, trBtn, qb, this.feedBtn].forEach((b, i) => b.setPosition(30 + 44 * i, y2));
       row.setPosition(30 + 26, y2 + 44);
       // 만들기·꾸미기 화면에서는 같은 자리에 돌아가는 단추
-      this.backBtn = this.pillButton(52, y1, '↩ 탐험', 84, 0xffd166, () => this.setView('explore')).setDepth(31).setVisible(false);
+      // 만들기·꾸미기는 창처럼 뜨니, 창의 오른쪽 위에 닫기(✕) 단추를 둔다
+      this.backBtn = this.roundButton(W - 30, y1, '✕', () => this.setView('explore')).setDepth(31).setVisible(false);
+      (this.backBtn.list[1] as Phaser.GameObjects.Text).setFontSize(15).setColor('#8a6d4b');
     }
     let saved = '1';
     try {
@@ -2345,7 +2352,7 @@ export class HudScene extends Phaser.Scene {
     // 가로 화면에서는 두 줄로 나눠 크게 보여 준다
     const two = this.wide;
     const PW = two ? 460 : 280;
-    const PH = two ? 312 : 462;
+    const PH = two ? 312 : 506;
     const { box, close } = this.modal(PW, PH);
     let top = -PH / 2;
     const at = (i: number): [number, number] => (two ? [(i < 4 ? -1 : 1) * 112, top + 78 + (i % 4) * 44] : [0, top + 78 + i * 44]);
@@ -2477,7 +2484,15 @@ export class HudScene extends Phaser.Scene {
       }
       resetAll();
     }, 200);
-    reset.setPosition(...at(6));
+    reset.setPosition(...at(7));
+    // 선명한 화면: 글자와 단추를 화소가 촘촘하게 그린다 (느려지면 끌 수 있다)
+    const sharp = this.button(`✨ 선명한 화면: ${settings.sharp ? '켜짐' : '꺼짐'}`, true, () => {
+      setSetting('sharp', !settings.sharp);
+      (sharp.list[1] as Phaser.GameObjects.Text).setText('다시 여는 중…');
+      window.setTimeout(() => location.reload(), 250);
+    }, 200);
+    sharp.setPosition(...at(6));
+    box.add(sharp);
     (reset.list[0] as Phaser.GameObjects.Graphics).clear().fillStyle(0xe58f7b).fillRoundedRect(-100, -20, 200, 40, 20);
     box.add(reset);
     (reset.list[1] as Phaser.GameObjects.Text).setStroke('#b85c48', 3);
