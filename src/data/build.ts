@@ -174,3 +174,41 @@ export function roomPlan(id: string, tx: number, ty: number): RoomPlan {
   const list = ROOM_PLANS[id] ?? ROOM_PLANS.house_red;
   return list[(tx * 7 + ty * 13) % list.length];
 }
+
+// ───────────────────────── 놓는 방향 ─────────────────────────
+
+/** 옆·뒤 그림(build_<id>_s, build_<id>_b)이 있어서 네 방향으로 돌릴 수 있는 가구 */
+export const ROTATABLE = new Set<string>([]);
+
+export interface Turn {
+  f?: 1;
+  r?: 1 | 2 | 3;
+}
+
+/** 방향에 따른 차지하는 칸과 그림 */
+export function oriented(piece: Piece, t: Turn = {}) {
+  const r = ROTATABLE.has(piece.id) ? (t.r ?? 0) : 0;
+  const side = r === 1 || r === 3;
+  return {
+    w: side ? piece.h : piece.w,
+    h: side ? piece.w : piece.h,
+    tex: r === 0 ? piece.tex : `${piece.tex}_${side ? 's' : 'b'}`,
+    flip: r === 0 ? !!t.f : r === 3,
+  };
+}
+
+/** 한 번 더 돌린 방향 (돌린 그림이 없는 가구는 좌우로 뒤집는다) */
+export function nextTurn(piece: Piece, t: Turn = {}): Turn {
+  if (ROTATABLE.has(piece.id)) {
+    const r = (((t.r ?? 0) + 1) % 4) as 0 | 1 | 2 | 3;
+    return r ? { r } : {};
+  }
+  return t.f ? {} : { f: 1 };
+}
+
+/** 꾸미기 창의 '돌리기'를 누른 횟수 → 방향 */
+export function turnOf(piece: Piece, n: number): Turn {
+  let t: Turn = {};
+  for (let i = 0; i < n % 4; i++) t = nextTurn(piece, t);
+  return t;
+}

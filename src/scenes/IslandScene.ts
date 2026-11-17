@@ -27,7 +27,7 @@ import { progress } from '../state/progress';
 import { village, type Placed } from '../state/village';
 import { family, type HitNet, type MobNet, type Presence } from '../sync/family';
 import { RESIDENTS } from '../data/village';
-import { ENTERABLE, LIGHTS, PIECES, PIECE_LIST, houseKey, roomPlan, type Piece } from '../data/build';
+import { ENTERABLE, LIGHTS, PIECES, PIECE_LIST, houseKey, roomPlan, type Piece, nextTurn, oriented, turnOf, type Turn } from '../data/build';
 import { Bear } from '../objects/Bear';
 import { Slime } from '../objects/Slime';
 import { TREASURES, treasureKey } from '../data/treasures';
@@ -651,6 +651,8 @@ export class IslandScene extends Phaser.Scene {
     if (p.y < HUD_TOP_H || p.y > this.scale.height - HUD_BOTTOM_H) return;
     if (this.fishing) return this.onFishingTap();
     if (this.registry.get('view') === 'build') {
+      // 집 안: 가구를 손끝에 붙여서 끌어 놓는다
+      if (this.room && this.roomGrab(p)) return;
       // 꾸미기: 끌면 화면 이동, 톡 누르면 짓기 (손을 뗄 때 판단)
       const cam = this.cameras.main;
       this.buildDrag = { sx: p.x, sy: p.y, cx: cam.scrollX, cy: cam.scrollY, moved: false };
@@ -3541,8 +3543,7 @@ export class IslandScene extends Phaser.Scene {
       this.zoneChanged();
       // 꾸미기 중에는 카메라가 곰을 따라가지 않으니, 방이 화면 위쪽에 오도록 직접 맞춘다 (아래는 꾸미기 창이 가린다)
       if (this.registry.get('view') === 'build') {
-        cam.setZoom(WORLD_ZOOM);
-        cam.centerOn(rx + rw / 2, ry + rh / 2 + 70);
+        this.frameRoom();
       }
       this.registry.set('room', true);
       // 방 모양이 바뀌어 바닥 밖에 놓이게 된 가구는 재료와 함께 창고로 돌려보낸다
@@ -3550,7 +3551,7 @@ export class IslandScene extends Phaser.Scene {
       for (const p of [...village.placedOn(this.room.key)]) {
         const piece = PIECES[p.id];
         if (!piece) continue;
-        const fits = this.footprint(piece, p.tx, p.ty).every(([fx, fy]) => floor(fx, fy) && (piece.floor || !(fy === rows - 1 && fx === plan.door)));
+        const fits = this.footprint(piece, p.tx, p.ty, p).every(([fx, fy]) => floor(fx, fy) && (piece.floor || !(fy === rows - 1 && fx === plan.door)));
         if (fits) {
           this.addRoomPiece(p, false);
           continue;
@@ -3574,28 +3575,57 @@ export class IslandScene extends Phaser.Scene {
     return `${PIECES[p.id]?.floor ? 'f' : 'o'}${p.tx},${p.ty}`;
   }
 
+  /** 집 안 꾸미기: 방 전체가 꾸미기 창에 가리지 않고 한눈에 보이도록 카메라를 맞춘다 */
+  private frameRoom() {
+    const rm = this.room;
+    if (!rm) return;
+    const cam = this.cameras.main;
+    const W = this.scale.width;
+    const H = this.scale.height;
+    const wide = W > H;
+    // 가로 화면: 꾸미기 창이 오른쪽 아래에 있으니 왼쪽에 · 세로 화면: 창 위쪽에
+    const availW = wide ? 300 : W - 12;
+    const availH = wide ? H - HUD_TOP_H - 16 : H - HUD_TOP_H - HUD_BOTTOM_H - 200;
+    const zoom = Math.max(0.8, Math.min(WORLD_ZOOM, availW / rm.w, availH / (rm.h + 30)));
+    const sx = wide ? 8 + availW / 2 : W / 2;
+    const sy = HUD_TOP_H + availH / 2 + 8;
+    // 방이 섬 가장자리에 있어도 원하는 자리에 보이도록 카메라 울타리를 잠깐 푼다
+    cam.removeBounds();
+    cam.setZoom(zoom);
+    cam.centerOn(rm.x + rm.w / 2 + (W / 2 - sx) / zoom, rm.y + rm.h / 2 - 10 + (H / 2 - sy) / zoom);
+  }
+
+  /** 집 안에서 가구 그림이 놓이는 자리와 크기 — 옆 칸의 가구와 겹치지 않게 차지하는 칸 너비에 맞춘다 */
+  private roomLook(piece: Piece, tx: number, ty: number, t: Turn = {}) {
+    const rm = this.room!;
+    const o = oriented(piece, t);
+    const tex = this.textures.exists(o.tex) ? o.tex : piece.tex;
+    const x = rm.x + (tx + o.w / 2) * TILE;
+    if (piece.floor) return { tex, flip: o.flip, x, y: rm.y + (ty + 1 - o.h / 2) * TILE, oy: 0.5, scale: piece.scale, depth: -45 };
+    const tw = this.textures.get(tex).getSourceImage().width;
+    const scale = Math.min(piece.scale, (o.w * TILE + 2) / tw);
+    const y = rm.y + (ty + 1) * TILE - 1;
+    return { tex, flip: o.flip, x, y, oy: 1, scale, depth: y };
+  }
+
   private addRoomPiece(p: Placed, anim: boolean) {
     const rm = this.room;
     const piece = PIECES[p.id];
     if (!rm || !piece) return;
-    const x = rm.x + (p.tx + piece.w / 2) * TILE;
-    let img: Phaser.GameObjects.Image;
-    if (piece.floor) {
-      img = this.add.image(x, rm.y + (p.ty + 1 - piece.h / 2) * TILE, piece.tex).setDepth(-45);
-    } else {
-      img = this.add.image(x, rm.y + (p.ty + 1) * TILE - 1, piece.tex).setOrigin(0.5, 1);
-      img.setDepth(img.y);
-      for (const [cx, cy] of this.footprint(piece, p.tx, p.ty)) {
+    const L = this.roomLook(piece, p.tx, p.ty, p);
+    const img = this.add.image(L.x, L.y, L.tex).setOrigin(0.5, L.oy).setDepth(L.depth);
+    if (!piece.floor) {
+      for (const [cx, cy] of this.footprint(piece, p.tx, p.ty, p)) {
         rm.occ.set(`${cx},${cy}`, p);
         if (piece.block) rm.blocked.add(`${cx},${cy}`);
       }
     }
-    img.setScale(piece.scale).setFlipX(!!p.f).setInteractive();
+    img.setScale(L.scale).setFlipX(L.flip).setInteractive();
     (img as unknown as { placed: Placed }).placed = p;
     rm.imgs.set(this.roomKey(p), img);
     if (anim) {
       img.setScale(0);
-      this.tweens.add({ targets: img, scale: piece.scale, duration: 320, ease: 'Back.easeOut' });
+      this.tweens.add({ targets: img, scale: L.scale, duration: 260, ease: 'Back.easeOut' });
     }
   }
 
@@ -3606,7 +3636,7 @@ export class IslandScene extends Phaser.Scene {
     const img = rm.imgs.get(this.roomKey(p));
     rm.imgs.delete(this.roomKey(p));
     if (!piece.floor) {
-      for (const [cx, cy] of this.footprint(piece, p.tx, p.ty)) {
+      for (const [cx, cy] of this.footprint(piece, p.tx, p.ty, p)) {
         rm.occ.delete(`${cx},${cy}`);
         rm.blocked.delete(`${cx},${cy}`);
       }
@@ -3625,6 +3655,155 @@ export class IslandScene extends Phaser.Scene {
     for (const p of village.placedOn(rm.key)) this.addRoomPiece(p, false);
   }
 
+  /** 그 칸에 놓인 가구 (가구가 없으면 깔개 같은 바닥) */
+  private roomPieceAt(tx: number, ty: number): Placed | undefined {
+    const rm = this.room;
+    if (!rm) return undefined;
+    return rm.occ.get(`${tx},${ty}`) ?? [...rm.imgs.values()].map((i) => (i as unknown as { placed: Placed }).placed).find((q) => {
+      const pc = PIECES[q.id];
+      if (!pc?.floor) return false;
+      const o = oriented(pc, q);
+      return tx >= q.tx && tx < q.tx + o.w && ty <= q.ty && ty > q.ty - o.h;
+    });
+  }
+
+  /** 집 안의 그 자리에 놓을 수 있는가 (skip: 지금 옮기는 가구는 없는 셈 친다) */
+  private roomFree(piece: Piece, tx: number, ty: number, t: Turn, skip?: Placed) {
+    const rm = this.room!;
+    const pl = this.player!;
+    const cols = rm.w / TILE;
+    const rows = rm.h / TILE;
+    return this.footprint(piece, tx, ty, t).every(([cx, cy]) => {
+      if (cx < 0 || cy < 0 || cx >= cols || cy >= rows || rm.holes.has(`${cx},${cy}`)) return false;
+      // 문 앞 한 칸은 비워 둔다
+      if (!piece.floor && cy === rows - 1 && cx === rm.door) return false;
+      if (piece.floor) return !this.roomFloorAt(cx, cy, skip);
+      const at = rm.occ.get(`${cx},${cy}`);
+      if (at && at !== skip) return false;
+      return !piece.block || !(Math.floor((pl.x - rm.x) / TILE) === cx && Math.floor((pl.y - 1 - rm.y) / TILE) === cy);
+    });
+  }
+
+  /** 집 안 가구를 손가락으로 끌어서 놓는 중 */
+  private roomDrag: null | { piece: Piece; t: Turn; from?: Placed; ghost: Phaser.GameObjects.Image; marks: Phaser.GameObjects.Graphics; tx: number; ty: number; ok: boolean; moved: boolean; sx: number; sy: number } = null;
+
+  /** 손가락 아래의 칸 (가구의 가운데가 손가락에 오도록) */
+  private roomCell(p: Phaser.Input.Pointer, piece: Piece, t: Turn): [number, number] {
+    const rm = this.room!;
+    const wp = this.cameras.main.getWorldPoint(p.x, p.y);
+    const o = oriented(piece, t);
+    return [Math.floor((wp.x - rm.x) / TILE - (o.w - 1) / 2), Math.floor((wp.y - rm.y) / TILE + (o.h - 1) / 2)];
+  }
+
+  /** 꾸미기 중 집 안을 눌렀다: 놓인 가구를 잡거나, 고른 가구를 손끝에 띄운다 */
+  private roomGrab(p: Phaser.Input.Pointer) {
+    const rm = this.room;
+    const tool = (this.registry.get('buildTool') as string) ?? '';
+    if (!rm || (tool !== 'place' && tool !== 'move')) return false;
+    const wp = this.cameras.main.getWorldPoint(p.x, p.y);
+    const from = this.roomPieceAt(Math.floor((wp.x - rm.x) / TILE), Math.floor((wp.y - rm.y) / TILE));
+    let piece: Piece | undefined;
+    let t: Turn = {};
+    if (from) {
+      piece = PIECES[from.id];
+      if (from.f) t.f = 1;
+      if (from.r) t.r = from.r;
+    } else if (tool === 'place') {
+      piece = PIECES[this.registry.get('buildPiece') as string];
+      if (!piece || (Object.entries(piece.cost) as [ItemId, number][]).some(([id, n]) => inventory.get(id) < n)) return false;
+      t = turnOf(piece, (this.registry.get('buildRot') as number) ?? 0);
+    }
+    if (!piece) return false;
+    const ghost = this.add.image(0, 0, piece.tex).setAlpha(0.8).setDepth(99972);
+    const marks = this.add.graphics().setDepth(99971);
+    if (from) rm.imgs.get(this.roomKey(from))?.setAlpha(0.25);
+    this.roomDrag = { piece, t, from, ghost, marks, tx: 0, ty: 0, ok: false, moved: false, sx: p.x, sy: p.y };
+    this.roomDragTo(p);
+    return true;
+  }
+
+  private roomDragTo(p: Phaser.Input.Pointer) {
+    const d = this.roomDrag;
+    const rm = this.room;
+    if (!d || !rm) return;
+    if (!d.moved && Math.hypot(p.x - d.sx, p.y - d.sy) > 8) d.moved = true;
+    // 놓인 가구는 끌기 시작하기 전까지 제자리에 둔다 (톡 누르면 돌리기)
+    const [tx, ty] = d.from && !d.moved ? [d.from.tx, d.from.ty] : this.roomCell(p, d.piece, d.t);
+    d.tx = tx;
+    d.ty = ty;
+    d.ok = this.roomFree(d.piece, tx, ty, d.t, d.from);
+    const L = this.roomLook(d.piece, tx, ty, d.t);
+    d.ghost.setTexture(L.tex).setOrigin(0.5, L.oy).setPosition(L.x, L.y).setScale(L.scale).setFlipX(L.flip).setTint(d.ok ? 0xffffff : 0xff9a8a);
+    d.marks.clear().fillStyle(d.ok ? 0x8bd17c : 0xe8604c, 0.5);
+    for (const [cx, cy] of this.footprint(d.piece, tx, ty, d.t)) d.marks.fillRoundedRect(rm.x + cx * TILE + 1, rm.y + cy * TILE + 1, TILE - 2, TILE - 2, 4);
+  }
+
+  /** 손을 뗐다: 놓기 · 옮기기 · (제자리에서 톡) 돌리기 */
+  private roomDrop() {
+    const d = this.roomDrag;
+    const rm = this.room;
+    this.roomDrag = null;
+    if (!d) return;
+    d.ghost.destroy();
+    d.marks.destroy();
+    if (!rm) return;
+    const cells = (t: Turn, tx = d.tx, ty = d.ty) => this.footprint(d.piece, tx, ty, t).map(([cx, cy]) => [cx + rm.x / TILE, cy + rm.y / TILE] as [number, number]);
+    const put = (tx: number, ty: number, t: Turn): Placed => ({ id: d.piece.id, tx, ty, ...t });
+    const swap = (to: Placed) => {
+      village.remove(rm.key, d.from!.tx, d.from!.ty, d.from!.id);
+      this.dropRoomPiece(d.from!);
+      this.addRoomPiece(to, true);
+      village.place(rm.key, to);
+      sfx.pop();
+      buzz(12);
+    };
+    if (d.from) {
+      const img = rm.imgs.get(this.roomKey(d.from));
+      if (!d.moved) {
+        // 제자리에서 톡: 돌린다 (돌린 모양이 들어갈 자리가 없으면 그대로)
+        let t = nextTurn(d.piece, d.t);
+        let n = 0;
+        while (n < 3 && !this.roomFree(d.piece, d.from.tx, d.from.ty, t, d.from)) {
+          t = nextTurn(d.piece, t);
+          n++;
+        }
+        const same = !!t.f === !!d.t.f && (t.r ?? 0) === (d.t.r ?? 0);
+        if (same || !this.roomFree(d.piece, d.from.tx, d.from.ty, t, d.from)) {
+          img?.setAlpha(1);
+          return void this.toast('돌릴 자리가 모자라요 · 넓은 곳으로 옮겨서 돌려요');
+        }
+        return swap(put(d.from.tx, d.from.ty, t));
+      }
+      if (!d.ok || (d.tx === d.from.tx && d.ty === d.from.ty)) {
+        img?.setAlpha(1);
+        if (!d.ok) {
+          buzz(20);
+          this.flashCells(cells(d.t), false);
+          this.toast('여기는 놓을 수 없어요');
+        }
+        return;
+      }
+      swap(put(d.tx, d.ty, d.t));
+      return this.flashCells(cells(d.t), true);
+    }
+    if (!d.ok) {
+      buzz(20);
+      this.flashCells(cells(d.t), false);
+      return void this.toast('여기는 놓을 수 없어요');
+    }
+    const placed = put(d.tx, d.ty, d.t);
+    for (const [id, n] of Object.entries(d.piece.cost) as [ItemId, number][]) inventory.add(id, -n);
+    this.addRoomPiece(placed, true);
+    this.flashCells(cells(d.t), true);
+    sfx.merge();
+    buzz(15);
+    const cam = this.cameras.main;
+    const L = this.roomLook(d.piece, d.tx, d.ty, d.t);
+    if (d.piece.points > 0) this.game.events.emit('float', `⭐ +${d.piece.points}`, (L.x - cam.worldView.x) * cam.zoom, (L.y - 30 - cam.worldView.y) * cam.zoom);
+    village.place(rm.key, placed);
+    quests.bump('build');
+  }
+
   /** 집 안에서 꾸미기: 방 안 칸에만 놓는다 */
   private onRoomBuildTap(p: Phaser.Input.Pointer) {
     const rm = this.room!;
@@ -3640,8 +3819,9 @@ export class IslandScene extends Phaser.Scene {
     if (!tool) return void this.game.events.emit('go-explore');
     const flash = (cells: [number, number][], ok: boolean) => this.flashCells(cells.map(([cx, cy]) => [cx + rm.x / TILE, cy + rm.y / TILE] as [number, number]), ok);
     if (tool !== 'place') {
-      const target = rm.occ.get(key) ?? [...rm.imgs.values()].map((i) => (i as unknown as { placed: Placed }).placed).find((q) => PIECES[q.id]?.floor && tx >= q.tx && tx < q.tx + PIECES[q.id].w && ty <= q.ty && ty > q.ty - PIECES[q.id].h);
-      if (!target) return void this.toast(tool === 'erase' ? '치울 것이 없어요' : '옮길 것을 눌러요');
+      const target = this.roomPieceAt(tx, ty);
+      if (!target) return void this.toast(tool === 'erase' ? '치울 것이 없어요' : '옮길 가구를 끌어요');
+      void key;
       const piece = PIECES[target.id];
       village.remove(rm.key, target.tx, target.ty, target.id);
       this.dropRoomPiece(target);
@@ -3694,13 +3874,15 @@ export class IslandScene extends Phaser.Scene {
   }
 
   /** 그 칸에 이미 깔개 같은 바닥이 깔려 있는가 */
-  private roomFloorAt(cx: number, cy: number) {
+  private roomFloorAt(cx: number, cy: number, skip?: Placed) {
     const rm = this.room;
     if (!rm) return false;
     for (const i of rm.imgs.values()) {
       const q = (i as unknown as { placed: Placed }).placed;
       const pc = PIECES[q.id];
-      if (pc?.floor && cx >= q.tx && cx < q.tx + pc.w && cy <= q.ty && cy > q.ty - pc.h) return true;
+      if (q === skip || !pc?.floor) continue;
+      const o = oriented(pc, q);
+      if (cx >= q.tx && cx < q.tx + o.w && cy <= q.ty && cy > q.ty - o.h) return true;
     }
     return false;
   }
@@ -3821,7 +4003,11 @@ export class IslandScene extends Phaser.Scene {
       pl.x = back.x;
       pl.y = back.y;
       pl.target = null;
-      if (this.registry.get('view') === 'build') cam.centerOn(back.x, back.y - 40);
+      if (this.registry.get('view') === 'build') {
+        cam.setBounds(0, 0, this.world.w * TILE, this.world.h * TILE);
+        cam.setZoom(WORLD_ZOOM);
+        cam.centerOn(back.x, back.y - 40);
+      }
       cam.fadeIn(400, 40, 30, 20);
       this.resting = false;
     });
@@ -4721,9 +4907,10 @@ export class IslandScene extends Phaser.Scene {
   }
 
   /** 물건이 차지하는 칸들 (기준 칸은 왼쪽 아래) */
-  private footprint(piece: Piece, tx: number, ty: number) {
+  private footprint(piece: Piece, tx: number, ty: number, t: Turn = {}) {
     const cells: [number, number][] = [];
-    for (let oy = 0; oy < piece.h; oy++) for (let ox = 0; ox < piece.w; ox++) cells.push([tx + ox, ty - oy]);
+    const o = oriented(piece, t);
+    for (let oy = 0; oy < o.h; oy++) for (let ox = 0; ox < o.w; ox++) cells.push([tx + ox, ty - oy]);
     return cells;
   }
 
@@ -4795,8 +4982,10 @@ export class IslandScene extends Phaser.Scene {
     if (v === 'build') {
       cam.stopFollow();
       if (this.player) this.player.target = null;
+      this.frameRoom();
     } else {
       this.buildDrag = null;
+      cam.setBounds(0, 0, this.world.w * TILE, this.world.h * TILE);
       this.tweens.add({ targets: cam, zoom: WORLD_ZOOM, duration: 250 });
       if (this.player) cam.startFollow(this.player.sprite, true, 0.12, 0.12, 0, 20);
     }
@@ -4809,6 +4998,7 @@ export class IslandScene extends Phaser.Scene {
   }
 
   private onBuildMove(p: Phaser.Input.Pointer) {
+    if (this.roomDrag) return void (p.isDown && this.roomDragTo(p));
     const d = this.buildDrag;
     if (!d || !p.isDown) return;
     const cam = this.cameras.main;
@@ -4821,6 +5011,7 @@ export class IslandScene extends Phaser.Scene {
   }
 
   private onBuildUp(p: Phaser.Input.Pointer) {
+    if (this.roomDrag) return this.roomDrop();
     const d = this.buildDrag;
     this.buildDrag = null;
     if (!d || d.moved || this.registry.get('view') !== 'build' || this.registry.get('modal')) return;

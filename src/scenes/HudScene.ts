@@ -1067,7 +1067,9 @@ export class HudScene extends Phaser.Scene {
       // 켜진 도구를 다시 누르면 꺼진다 (도구가 꺼져 있으면 화면을 눌러도 아무것도 지어지지 않는다)
       chip(20 + i * (tw + 4), top + 42, tw, label, tool === id, () => this.registry.set('buildTool', tool === id ? '' : id), 11);
     });
-    chip(W - 20 - 2 * 58 - 4, top + 42, 58, flip ? '↔ 뒤집힘' : '↔ 뒤집기', flip, () => this.registry.set('buildFlip', !flip), 11);
+    const rot = ((this.registry.get('buildRot') as number) ?? 0) % 4;
+    if (this.registry.get('room')) chip(W - 20 - 2 * 58 - 4, top + 42, 58, '↻ 돌리기', rot > 0, () => this.registry.set('buildRot', (rot + 1) % 4), 11);
+    else chip(W - 20 - 2 * 58 - 4, top + 42, 58, flip ? '↔ 뒤집힘' : '↔ 뒤집기', flip, () => this.registry.set('buildFlip', !flip), 11);
     chip(W - 20 - 58, top + 42, 58, '🔍 멀리', false, () => this.game.events.emit('build-zoom'), 11);
 
     // 3) 종류
@@ -1143,7 +1145,7 @@ export class HudScene extends Phaser.Scene {
       cx -= 26;
       tray.add([t, ic]);
     });
-    tray.add(this.add.text(W / 2, top + 167, !canPay(sel) ? `🔨 ${sel.name}: 아직 없어요 · 만들기에서 만들면 여기서 놓을 수 있어요` : !tool ? `아래에서 ${inRoom ? '가구' : '지을 것'}를 골라요 · 그냥 화면을 누르면 탐험으로 돌아가요` : inRoom ? '🏠 집 안 꾸미기 · 만든 가구를 바닥에 톡 눌러 놓아요 · 치우면 가구를 돌려받아요' : '만든 것을 땅에 톡 눌러 놓아요 · 치우면 돌려받아요 · 집을 누르면 들어가요', { fontFamily: FONT, fontSize: '8px', color: '#a08a6a' }).setOrigin(0.5));
+    tray.add(this.add.text(W / 2, top + 167, !canPay(sel) ? `🔨 ${sel.name}: 아직 없어요 · 만들기에서 만들면 여기서 놓을 수 있어요` : !tool ? `아래에서 ${inRoom ? '가구' : '지을 것'}를 골라요 · 그냥 화면을 누르면 탐험으로 돌아가요` : inRoom ? '🏠 바닥을 눌러 놓아요 · 놓인 가구는 끌면 옮겨지고, 톡 누르면 돌아가요' : '만든 것을 땅에 톡 눌러 놓아요 · 치우면 돌려받아요 · 집을 누르면 들어가요', { fontFamily: FONT, fontSize: '8px', color: '#a08a6a' }).setOrigin(0.5));
   }
 
   /** 주민의 부탁 */

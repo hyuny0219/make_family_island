@@ -15,9 +15,16 @@ export interface Placed {
   ty: number;
   /** 좌우 뒤집기 */
   f?: 1;
+  /** 돌린 방향 (돌린 그림이 있는 가구만): 1 오른쪽 옆 · 2 뒤 · 3 왼쪽 옆 */
+  r?: 1 | 2 | 3;
 }
 
-const wire = (p: Placed): Placed => (p.f ? { id: p.id, tx: p.tx, ty: p.ty, f: 1 } : { id: p.id, tx: p.tx, ty: p.ty });
+const wire = (p: Placed): Placed => {
+  const w: Placed = { id: p.id, tx: p.tx, ty: p.ty };
+  if (p.f) w.f = 1;
+  if (p.r) w.r = p.r;
+  return w;
+};
 
 export interface Order {
   item: ItemId;
