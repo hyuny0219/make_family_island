@@ -286,6 +286,12 @@ export class IslandScene extends Phaser.Scene {
     ge.on('exit-house', this.exitHouse, this);
     ge.on('exit-dungeon', this.exitDungeon, this);
     ge.on('pad-action', this.padAction, this);
+    ge.on('dungeon-invite', this.inviteDungeon, this);
+    ge.on('join-dungeon', this.joinDungeon, this);
+    this.events.once('shutdown', () => {
+      ge.off('dungeon-invite', this.inviteDungeon, this);
+      ge.off('join-dungeon', this.joinDungeon, this);
+    });
     // 변신 모자를 쓰거나 벗으면 가족에게 바로 알린다
     const onHat = () => this.sendPresence();
     abilities.on('changed', onHat);
@@ -343,6 +349,9 @@ export class IslandScene extends Phaser.Scene {
     // 섬을 옮겨 왔으면 고른 곰으로 바로 시작
     const chosen = this.registry.get('bear') as BearId | undefined;
     if (chosen) this.choosePlayer(chosen);
+    // 초대를 받고 건너온 섬이면 바로 던전으로
+    if (this.registry.get('joinDungeon') === this.islandIdx && chosen) this.time.delayedCall(1200, () => this.enterDungeon());
+    this.registry.set('joinDungeon', null);
   }
 
   // ───────────────────────── 지역 ─────────────────────────
@@ -2723,6 +2732,47 @@ export class IslandScene extends Phaser.Scene {
   }
 
   /** 던전에 들어간다: 바다 한구석에 지어 둔 방으로 옮겨 가서, 부하 → 보스 순서로 싸운다 */
+  private myInvite = 0;
+  private seenInvite = new Map<string, number>();
+
+  /** 가족을 부르고 먼저 들어간다 (가족 화면에 초대 알림이 뜬다) */
+  private inviteDungeon() {
+    this.myInvite = family.now();
+    family.post(`⚔️ ${ISLANDS[this.islandIdx].name} 보스 던전에서 같이 싸워요!`);
+    this.enterDungeon();
+    this.time.delayedCall(700, () => this.sendPresence());
+  }
+
+  /** 초대를 받아 들어간다. 다른 섬이면 그 섬으로 건너가서 들어간다 */
+  private joinDungeon(island: number) {
+    if (this.dungeon || this.sleeping || this.sleepWait) return;
+    if (island !== this.islandIdx) {
+      if (!progress.canVisit(island)) return this.toast('아직 갈 수 없는 섬이에요');
+      if (this.resting || this.flying) return;
+      if (this.fishing) this.endFishing(false);
+      this.registry.set('joinDungeon', island);
+      return this.onTravel(island);
+    }
+    if (this.fishing) this.endFishing(false);
+    if (this.room) {
+      this.exitHouse();
+      this.time.delayedCall(1100, () => this.enterDungeon());
+      return;
+    }
+    this.enterDungeon();
+  }
+
+  /** 가족이 방금 보낸 던전 초대가 있으면 알림을 띄운다 */
+  private checkInvites(others: Record<string, Presence>) {
+    for (const [dev, p] of Object.entries(others)) {
+      if (!p.iv || p.z !== 'd' || this.seenInvite.get(dev) === p.iv) continue;
+      this.seenInvite.set(dev, p.iv);
+      if (family.now() - p.iv > 90_000) continue;
+      if (this.dungeon || this.sleeping) continue;
+      this.game.events.emit('dungeon-invited', { bear: p.bear, island: p.island, iv: p.iv });
+    }
+  }
+
   private enterDungeon() {
     const pl = this.player;
     if (!pl || this.dungeon || this.resting || this.flying || this.fishing) return;
@@ -3301,12 +3351,13 @@ export class IslandScene extends Phaser.Scene {
     // 함께 싸우는 중에는 자리를 더 자주 알린다 (몬스터가 가까운 곰을 쫓으니까)
     const z = this.zoneKey();
     this.presenceTimer = this.monsters.length && this.peersIn(z).length ? 1 : pl.moving ? 2 : 30;
-    family.setPresence({ bear: pl.id, island: this.islandIdx, x: pl.x, y: pl.y, tx: pl.target?.x ?? pl.x, ty: pl.target?.y ?? pl.y, ...(this.myEmote ?? {}), ...(z ? { z } : {}), ...(this.sleepWait || this.sleeping || this.time.now < this.sleepHold ? { sl: 1 as const } : {}), ...(abilities.equipped ? { h: abilities.equipped, hl: abilities.level(abilities.equipped) } : {}), ...(this.myAct ?? {}), ...(this.fishing ? { f: `${Math.round(this.fishing.spot.x)},${Math.round(this.fishing.spot.y)}` } : {}), zt: this.zt });
+    family.setPresence({ bear: pl.id, island: this.islandIdx, x: pl.x, y: pl.y, tx: pl.target?.x ?? pl.x, ty: pl.target?.y ?? pl.y, ...(this.myEmote ?? {}), ...(z ? { z } : {}), ...(this.sleepWait || this.sleeping || this.time.now < this.sleepHold ? { sl: 1 as const } : {}), ...(abilities.equipped ? { h: abilities.equipped, hl: abilities.level(abilities.equipped) } : {}), ...(this.myAct ?? {}), ...(this.myInvite && this.dungeon ? { iv: this.myInvite } : {}), ...(this.fishing ? { f: `${Math.round(this.fishing.spot.x)},${Math.round(this.fishing.spot.y)}` } : {}), zt: this.zt });
   }
 
   /** 같은 섬에 있는 다른 가족의 곰을 보여 주고, 그쪽이 누른 곳으로 걸어가게 한다 */
   private onPresence(others: Record<string, Presence>) {
     if (!this.player) return; // 곰을 고르기 전에는 가족 곰이 모두 캠프에 있다
+    this.checkInvites(others);
     // 같은 섬, 같은 곳(밖·던전·같은 집)에 있는 가족만 보인다
     const zone = this.zoneKey();
     const onIsland = Object.entries(others).filter(([, p]) => p.island === this.islandIdx && BEARS.some((b) => b.id === p.bear));

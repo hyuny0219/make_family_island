@@ -113,6 +113,7 @@ export class HudScene extends Phaser.Scene {
       ['open-combos', this.openCombos],
       ['open-sleep', this.openSleep],
       ['open-dungeon', this.openDungeon],
+      ['dungeon-invited', this.onDungeonInvited],
       ['build-refresh', this.rebuildBuildTray],
       ['open-friend', this.openFriend],
       ['float', this.onFloat],
@@ -1485,12 +1486,67 @@ export class HudScene extends Phaser.Scene {
     } else if (Object.keys(family.others).length) {
       box.add(this.add.text(0, top + 248, '👨‍👩‍👧 가족이 같이 들어오면 함께 싸울 수 있어요', { fontFamily: FONT, fontSize: '10px', color: '#a08a6a', fontStyle: 'bold' }).setOrigin(0.5));
     }
-    const btn = this.button(inside.length ? '⚔️ 함께 싸우기' : '⚔️ 들어가기', true, () => {
+    // 접속한 가족이 있고 아직 아무도 안 들어갔으면: 가족을 부르고 들어가거나, 혼자 들어간다
+    const online = Object.keys(family.others).length > 0;
+    const canInvite = online && !inside.length;
+    const go = (ev: string) => () => {
       close();
-      this.time.delayedCall(200, () => this.game.events.emit('enter-dungeon'));
-    }, 200);
+      this.time.delayedCall(200, () => this.game.events.emit(ev));
+    };
+    if (canInvite) {
+      const inv = this.button('📣 가족 부르고 들어가기', true, go('dungeon-invite'), 150);
+      inv.setPosition(-64, PH / 2 - 40);
+      (inv.list[1] as Phaser.GameObjects.Text).setFontSize(11);
+      const solo = this.button('혼자 들어가기', true, go('enter-dungeon'), 112);
+      solo.setPosition(74, PH / 2 - 40);
+      (solo.list[0] as Phaser.GameObjects.Graphics).clear().fillStyle(0xb7a88f).fillRoundedRect(-56, -20, 112, 40, 20);
+      (solo.list[1] as Phaser.GameObjects.Text).setFontSize(11).setStroke('#8a7a5f', 3);
+      box.add([inv, solo]);
+      return;
+    }
+    const btn = this.button(inside.length ? '⚔️ 함께 싸우기' : '⚔️ 들어가기', true, go('enter-dungeon'), 200);
     btn.setPosition(0, PH / 2 - 40);
     box.add(btn);
+  }
+
+  private inviteCard?: Phaser.GameObjects.Container;
+
+  /** 가족이 보스 던전에 불렀을 때 뜨는 알림 (하던 일을 막지 않는다) */
+  private onDungeonInvited(d: { bear: string; island: number }) {
+    if (!this.registry.get('bear')) return;
+    this.inviteCard?.destroy();
+    const W = this.scale.width;
+    const PW = Math.min(W - 24, 320);
+    const c = this.add.container(W / 2, HUD_TOP_H - 40).setDepth(160).setAlpha(0);
+    this.inviteCard = c;
+    const g = this.add.graphics();
+    g.fillStyle(0x000000, 0.2).fillRoundedRect(-PW / 2, -36 + 4, PW, 76, 18);
+    g.fillStyle(0x5a4d6b).fillRoundedRect(-PW / 2, -36, PW, 76, 18);
+    g.lineStyle(3, 0xf2a93b).strokeRoundedRect(-PW / 2, -36, PW, 76, 18);
+    const who = BEARS.find((b) => b.id === d.bear)?.name ?? '가족';
+    const face = this.add.image(-PW / 2 + 30, 12, `${BEARS.some((b) => b.id === d.bear) ? d.bear : 'dad'}_front`).setOrigin(0.5, 1).setScale(1.1);
+    const where = d.island === progress.current ? '' : ` (${ISLANDS[d.island]?.name ?? '다른 섬'})`;
+    const t = this.add.text(-PW / 2 + 56, -22, `⚔️ ${who}이 보스 던전에 불러요!${where}`, { fontFamily: FONT, fontSize: '12px', color: '#ffffff', fontStyle: 'bold', wordWrap: { width: PW - 66 } }).setOrigin(0, 0.5);
+    const shut = () => {
+      if (this.inviteCard === c) this.inviteCard = undefined;
+      this.tweens.add({ targets: c, alpha: 0, y: HUD_TOP_H - 40, duration: 180, onComplete: () => c.destroy() });
+    };
+    const yes = this.button('같이 싸우기', true, () => {
+      shut();
+      if (this.registry.get('modal')) return this.toast('창을 닫고 던전 문으로 가면 함께 싸울 수 있어요');
+      if (this.view !== 'explore') this.goExplore();
+      this.game.events.emit('join-dungeon', d.island);
+    }, 120);
+    yes.setPosition(PW / 2 - 150, 16).setScale(0.8);
+    const no = this.button('다음에', true, shut, 80);
+    no.setPosition(PW / 2 - 50, 16).setScale(0.8);
+    (no.list[0] as Phaser.GameObjects.Graphics).clear().fillStyle(0x8f839e).fillRoundedRect(-40, -20, 80, 40, 20);
+    (no.list[1] as Phaser.GameObjects.Text).setStroke('#5a4d6b', 3);
+    c.add([g, face, t, yes, no]);
+    this.tweens.add({ targets: c, alpha: 1, y: HUD_TOP_H + 44, duration: 260, ease: 'Back.easeOut' });
+    sfx.fanfare();
+    buzz(60);
+    this.time.delayedCall(25000, () => c.active && shut());
   }
 
   /** 변신: 얻은 능력을 골라 입고, 보스 증표로 강화(진화)한다 */
