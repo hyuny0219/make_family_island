@@ -49,6 +49,33 @@
         font-family: 'Apple SD Gothic Neo', 'Noto Sans KR', 'Malgun Gothic', sans-serif;
         transition: opacity 0.45s ease;
       }
+      /* 가로로 하는 게임: 폰을 세로로 들고 있어도 첫 화면은 가로로 눕혀서 보여 준다 */
+      @media (orientation: portrait) {
+        #start.land {
+          inset: auto;
+          top: 0;
+          left: 100vw;
+          width: 100vh;
+          height: 100vw;
+          transform: rotate(90deg);
+          transform-origin: top left;
+        }
+        #start.land .turn {
+          display: block;
+        }
+      }
+      #start .turn {
+        display: none;
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 2.5%;
+        text-align: center;
+        color: #ffffff;
+        font-size: clamp(11px, 3vmin, 16px);
+        font-weight: 800;
+        text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+      }
       #start.gone {
         opacity: 0;
         pointer-events: none;
@@ -138,7 +165,7 @@
     </style>
   </head>
   <body>
-    <div id="game"></div>
+    <div id="game">
     <div id="start">
       <img class="bg" src="./assets/story/story_1.jpg" alt="" />
       <video class="bg" id="startVideo" muted loop playsinline preload="auto" poster="./assets/story/story_1.jpg"></video>
@@ -148,6 +175,8 @@
         <h2>열 개의 섬</h2>
       </div>
       <button id="startBtn" type="button">▶ 시작하기</button>
+      <div class="turn">📱 폰을 가로로 돌려 주세요</div>
+    </div>
     </div>
     <script type="module" src="/src/start.ts"></script>
   </body>
