@@ -1,3 +1,4 @@
+import type { Costume } from './Costume';
 import Phaser from 'phaser';
 import type { Facing } from '../data/assets';
 
@@ -16,6 +17,8 @@ export class Bear {
   lying = false;
   /** 다른 가족의 곰이 쓰고 있는 변신 모자 (이름, 진화 단계, 그림) */
   hat?: { id: string; lv: number; img?: Phaser.GameObjects.Image };
+  /** 변신 옷 (망토·빛·손에 든 무기) */
+  costume?: Costume;
   /** 다른 가족이 조종하는 곰이면 그 기기 id */
   remote: string | null = null;
   /** 머리 위 이름표 (다른 가족 곰) */
