@@ -1054,13 +1054,14 @@ export class HudScene extends Phaser.Scene {
       }, 11);
     });
 
-    // 4) 지을 것 (한 쪽에 6개)
+    // 4) 지을 것 (한 쪽에 6개, 여러 쪽이면 5개 + 앞뒤 화살표)
     const list = PIECE_LIST.filter((p) => p.cat === cat);
-    const pages = Math.ceil(list.length / 6);
+    const per = list.length > 6 ? 5 : 6;
+    const pages = Math.ceil(list.length / per);
     const page = Math.min((this.registry.get('buildPage') as number) ?? 0, pages - 1);
-    const shown = list.slice(page * 6, page * 6 + 6);
+    const shown = list.slice(page * per, page * per + per);
     let sel = PIECES[this.registry.get('buildPiece') as string];
-    if (!sel || sel.cat !== cat) {
+    if (!sel || sel.cat !== cat || (!shown.includes(sel) && this.registry.get('buildPageFor') !== `${cat}:${page}`)) {
       sel = shown[0];
       this.registry.set('buildPiece', sel.id);
     }
@@ -1086,8 +1087,11 @@ export class HudScene extends Phaser.Scene {
       });
       tray.add([g, ic, hit]);
     });
+    this.registry.set('buildPageFor', `${cat}:${page}`);
     if (pages > 1) {
-      chip(W - 20 - 28, top + 112, 28, page + 1 < pages ? '▶' : '◀', false, () => this.registry.set('buildPage', (page + 1) % pages), 12);
+      chip(W - 20 - 60, top + 104, 28, '◀', false, () => this.registry.set('buildPage', (page + pages - 1) % pages), 12);
+      chip(W - 20 - 28, top + 104, 28, '▶', false, () => this.registry.set('buildPage', (page + 1) % pages), 12);
+      tray.add(this.add.text(W - 20 - 30, top + 131, `${page + 1} / ${pages}`, { fontFamily: FONT, fontSize: '9px', color: '#a08a6a', fontStyle: 'bold' }).setOrigin(0.5));
     }
 
     // 5) 고른 것: 이름 · 크기 · 점수 · 재료
