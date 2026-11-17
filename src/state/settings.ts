@@ -6,13 +6,15 @@ interface Settings {
   music: boolean;
   /** 곰을 고를 때 전체 화면으로 바꾸기 (지원하는 브라우저만) */
   fullscreen: boolean;
+  /** 화면 방향: 가로가 기본 (세로는 설정에서 바꾼다) */
+  landscape: boolean;
 }
 
 function load(): Settings {
   try {
-    return { sound: true, vibrate: true, music: true, fullscreen: true, ...(JSON.parse(localStorage.getItem(KEY) ?? '{}') as Partial<Settings>) };
+    return { sound: true, vibrate: true, music: true, fullscreen: true, landscape: true, ...(JSON.parse(localStorage.getItem(KEY) ?? '{}') as Partial<Settings>) };
   } catch {
-    return { sound: true, vibrate: true, music: true, fullscreen: true };
+    return { sound: true, vibrate: true, music: true, fullscreen: true, landscape: true };
   }
 }
 

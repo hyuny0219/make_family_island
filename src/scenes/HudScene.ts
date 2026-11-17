@@ -1,3 +1,4 @@
+import { lockOrientation, orientationOk } from '../util/orient';
 import { ENDING, OPENING, talkLines, type CutPage } from '../data/story';
 import { story } from '../state/story';
 import { ABILITIES, BOSSES, UPGRADE_COST, hatKey } from '../data/abilities';
@@ -2089,31 +2090,42 @@ export class HudScene extends Phaser.Scene {
       close();
       this.time.delayedCall(260, () => this.openFamily());
     }, 200);
-    fam.setPosition(0, top + 84);
+    fam.setPosition(0, top + 78);
     (fam.list[0] as Phaser.GameObjects.Graphics).clear().fillStyle(0x7cc4e8).fillRoundedRect(-100, -20, 200, 40, 20);
     (fam.list[1] as Phaser.GameObjects.Text).setStroke('#4a8fb3', 3);
     box.add(fam);
-    toggle(top + 140, '🎵 배경음악', 'music');
-    toggle(top + 186, '🔊 효과음', 'sound');
-    toggle(top + 232, '📳 진동', 'vibrate');
+    toggle(top + 122, '🎵 배경음악', 'music');
+    toggle(top + 166, '🔊 효과음', 'sound');
+    toggle(top + 210, '📳 진동', 'vibrate');
+    // 화면 방향: 가로가 기본
+    const oLabel = () => `📱 화면 방향: ${settings.landscape ? '가로' : '세로'}`;
+    const ori = this.button(oLabel(), true, () => {
+      setSetting('landscape', !settings.landscape);
+      (ori.list[1] as Phaser.GameObjects.Text).setText(oLabel());
+      void lockOrientation().then((ok) => {
+        if (!ok && !orientationOk()) this.toast(settings.landscape ? '폰을 가로로 돌려 주세요' : '폰을 세로로 돌려 주세요');
+      });
+    }, 200);
+    ori.setPosition(0, top + 254);
+    box.add(ori);
     // 전체 화면: 안드로이드·PC는 바로, 아이폰은 홈 화면에 추가해야 한다
     const standalone = window.matchMedia('(display-mode: fullscreen), (display-mode: standalone)').matches || (navigator as { standalone?: boolean }).standalone === true;
     const fsOk = this.scale.fullscreen.available;
     const fsLabel = () => (this.scale.isFullscreen ? '⛶ 전체 화면 끄기' : '⛶ 전체 화면으로 보기');
     if (standalone) {
-      box.add(this.add.text(0, top + 278, '⛶ 앱으로 실행 중 (전체 화면)', { fontFamily: FONT, fontSize: '12px', color: '#5fae52', fontStyle: 'bold' }).setOrigin(0.5));
+      box.add(this.add.text(0, top + 300, '⛶ 앱으로 실행 중 (전체 화면)', { fontFamily: FONT, fontSize: '12px', color: '#5fae52', fontStyle: 'bold' }).setOrigin(0.5));
     } else if (fsOk) {
       const fs = this.button(fsLabel(), true, () => {
         setSetting('fullscreen', !this.scale.isFullscreen);
         this.toggleFullscreen();
         close();
       }, 200);
-      fs.setPosition(0, top + 278);
+      fs.setPosition(0, top + 300);
       (fs.list[0] as Phaser.GameObjects.Graphics).clear().fillStyle(0xf2a93b).fillRoundedRect(-100, -20, 200, 40, 20);
       (fs.list[1] as Phaser.GameObjects.Text).setStroke('#b9781f', 3);
       box.add(fs);
     } else {
-      box.add(this.add.text(0, top + 278, '⛶ 전체 화면: 브라우저의 공유 버튼 →\n"홈 화면에 추가"로 설치하면 돼요', { fontFamily: FONT, fontSize: '11px', color: '#8a6d4b', fontStyle: 'bold', align: 'center' }).setOrigin(0.5));
+      box.add(this.add.text(0, top + 300, '⛶ 전체 화면: 브라우저의 공유 버튼 →\n"홈 화면에 추가"로 설치하면 돼요', { fontFamily: FONT, fontSize: '11px', color: '#8a6d4b', fontStyle: 'bold', align: 'center' }).setOrigin(0.5));
     }
     let armed = false;
     const reset = this.button('처음부터 다시 하기', true, () => {
@@ -2124,7 +2136,7 @@ export class HudScene extends Phaser.Scene {
       }
       resetAll();
     }, 200);
-    reset.setPosition(0, top + 340);
+    reset.setPosition(0, top + 348);
     (reset.list[0] as Phaser.GameObjects.Graphics).clear().fillStyle(0xe58f7b).fillRoundedRect(-100, -20, 200, 40, 20);
     box.add(reset);
     (reset.list[1] as Phaser.GameObjects.Text).setStroke('#b85c48', 3);
@@ -2500,6 +2512,14 @@ export class HudScene extends Phaser.Scene {
         });
         // 주소창 없이 넓게: 손가락이 닿은 이 순간에만 전체 화면을 켤 수 있다 (설정에서 끌 수 있음)
         if (settings.fullscreen && this.scale.fullscreen.available && !this.scale.isFullscreen) this.toggleFullscreen();
+        // 가로가 기본: 돌려 잠그지 못하는 폰(아이폰·일반 브라우저)이면 한 번 알려 준다
+        this.time.delayedCall(1500, () => {
+          void lockOrientation().then((ok) => {
+            if (ok || orientationOk() || this.registry.get('orientTip')) return;
+            this.registry.set('orientTip', true);
+            this.toast(settings.landscape ? '📱 폰을 가로로 돌리면 더 넓게 볼 수 있어요' : '📱 폰을 세로로 돌려 주세요');
+          });
+        });
       });
       box.add(card);
     });

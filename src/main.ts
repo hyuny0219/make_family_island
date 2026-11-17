@@ -1,3 +1,4 @@
+import { lockOrientation } from './util/orient';
 import { abilities } from './state/abilities';
 import { player } from './state/player';
 import { Monster } from './objects/Monster';
@@ -59,6 +60,10 @@ window.addEventListener('resize', applyBase);
 // 자판이 내려간 뒤 한 번 더 맞춘다
 window.addEventListener('focusout', () => window.setTimeout(applyBase, 350));
 window.addEventListener('orientationchange', () => window.setTimeout(applyBase, 200));
+
+// 전체 화면이 되면 설정한 방향(기본: 가로)으로 돌려 잠근다. 홈 화면 앱은 켤 때 바로 해 본다
+document.addEventListener('fullscreenchange', () => void lockOrientation());
+void lockOrientation();
 
 // 디버그/테스트용 핸들
 Object.assign(window, { __game: game, __inv: inventory, __progress: progress, __village: village, __family: family, __Slime: Slime, __quests: quests, __Monster: Monster, __MONSTERS: MONSTERS, __player: player, __abilities: abilities });
