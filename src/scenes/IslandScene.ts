@@ -3635,6 +3635,9 @@ export class IslandScene extends Phaser.Scene {
     if (!rm || !piece) return;
     const img = rm.imgs.get(this.roomKey(p));
     rm.imgs.delete(this.roomKey(p));
+    // 떠 있거나 커지는 중이던 움직임을 멈추고 치운다
+    if (img) this.tweens.killTweensOf(img);
+    if (this.roomSel?.p === p) this.closeRoomMenu();
     if (!piece.floor) {
       for (const [cx, cy] of this.footprint(piece, p.tx, p.ty, p)) {
         rm.occ.delete(`${cx},${cy}`);
@@ -3775,9 +3778,11 @@ export class IslandScene extends Phaser.Scene {
     if (!sel) return;
     sel.objs.forEach((o) => o.destroy());
     // 떠 있던 가구를 제자리로
-    if (sel.lift?.img.active) {
-      this.tweens.killTweensOf(sel.lift.img);
-      sel.lift.img.setY(sel.lift.y).setScale(sel.lift.scale);
+    // (이미 치운 가구의 그림은 건드리지 않는다 — 사라지는 중인 그림을 되살리면 가구가 둘로 보인다)
+    const img = sel.lift?.img;
+    if (sel.lift && img?.active && this.room?.imgs.get(this.roomKey(sel.p)) === img) {
+      this.tweens.killTweensOf(img);
+      img.setY(sel.lift.y).setScale(sel.lift.scale);
     }
   }
 
