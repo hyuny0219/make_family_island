@@ -40,6 +40,15 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,png,jpg,svg,webmanifest}'],
+        // 변신 의상 그림은 수가 많아서 처음에 다 받지 않고, 입을 때 받아서 그때부터 저장해 둔다
+        globIgnores: ['**/assets/skin/**'],
+        runtimeCaching: [
+          {
+            urlPattern: /\/assets\/skin\/.*\.png$/,
+            handler: 'CacheFirst',
+            options: { cacheName: 'skins', expiration: { maxEntries: 4000 } },
+          },
+        ],
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
         // 정식 서비스워커가 PR 미리보기 경로를 가로채지 않도록
         navigateFallbackDenylist: [/\/pr-preview\//],

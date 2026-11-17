@@ -1,6 +1,6 @@
 import { ABILITIES, BOSSES, hatKey } from '../data/abilities';
 import { abilities } from '../state/abilities';
-import { COSTUME, WEAPONS, skinNames, weaponTex, type Weapon } from '../data/weapons';
+import { BEAR_SKINS, COSTUME, SKIN_FRAMES, WEAPONS, skinNames, weaponTex, type Weapon } from '../data/weapons';
 import { Costume } from '../objects/Costume';
 import { Monster } from '../objects/Monster';
 import { BIOME_MONSTER, MONSTERS, SKIN_MONSTER } from '../data/monsters';
@@ -1836,6 +1836,21 @@ export class IslandScene extends Phaser.Scene {
           this.damageMonster(m, dmg);
           if (!m.dead) for (let i = 0; i < lv; i++) m.hit(0, pl.x, pl.y, this.walkable);
           break;
+        case 'rock': {
+          this.damageMonster(m, dmg);
+          // 바위 조각이 때린 쪽으로 곧게 날아가며 뒤의 몬스터도 맞힌다
+          const ux = m.x - pl.x;
+          const uy = m.y - pl.y;
+          const ul = Math.hypot(ux, uy) || 1;
+          const far = 60 + lv * 20;
+          for (const o of this.monsters) {
+            if (o === m || o.dead) continue;
+            const along = ((o.x - m.x) * ux + (o.y - m.y) * uy) / ul;
+            const off = Math.abs((o.x - m.x) * uy - (o.y - m.y) * ux) / ul;
+            if (along > 0 && along < far && off < 16) this.damageMonster(o, Math.max(1, Math.round(dmg * 0.7)), true);
+          }
+          break;
+        }
         case 'fire':
           this.damageMonster(m, dmg);
           near(34 + lv * 4).forEach((o) => this.damageMonster(o, Math.max(1, Math.round(dmg * 0.6)), true));
@@ -1927,6 +1942,25 @@ export class IslandScene extends Phaser.Scene {
         if (own) this.cameras.main.shake(110, 0.005 + lv * 0.001);
       });
       return wind * 1000 + 90;
+    }
+    if (id === 'rock') {
+      // 곡괭이: 내려찍으면 바위 조각이 앞으로 튀어 나간다
+      const wind = 0.12;
+      if (!from.act('swing', wind)) from.swing(left);
+      this.toolSwing(from, wtex, left, wind, sc * 1.1);
+      this.time.delayedCall(wind * 1000 + 70, () => {
+        const ux = mx - from.x;
+        const uy = my - from.y;
+        const ul = Math.hypot(ux, uy) || 1;
+        const far = 60 + lv * 20;
+        for (let i = 0; i < 2 + lv; i++) {
+          const c = this.add.rectangle(mx, my - 10, 4 + lv, 4 + lv, i % 2 ? 0xc4c4cc : lv >= 3 ? 0x7fd0ff : 0x8d8d94).setDepth(99986).setAngle(i * 40);
+          this.tweens.add({ targets: c, x: mx + (ux / ul) * far + Phaser.Math.Between(-8, 8), y: my - 10 + (uy / ul) * far + Phaser.Math.Between(-8, 8), angle: 360, alpha: 0.2, duration: 260 + i * 30, ease: 'Quad.easeOut', onComplete: () => c.destroy() });
+        }
+        this.fx.pebble.explode(6 + lv * 2, mx, my - 6);
+        if (own) this.cameras.main.shake(70, 0.003);
+      });
+      return wind * 1000 + 70;
     }
     if (id === 'fire') {
       // 불꽃 검: 넓게 베고 불꽃이 인다
@@ -2349,9 +2383,26 @@ export class IslandScene extends Phaser.Scene {
     });
   }
 
+  private skinAsked = new Set<string>();
+
+  /**
+   * 의상 그림은 입을 때 불러온다 (곰 한 마리 × 한 단계 = 21장). 다 불러올 때까지는 아래 단계 그림이나 망토로 보인다.
+   */
+  private loadSkin(bear: string, skin: string) {
+    const key = `${bear}_${skin}`;
+    if (this.skinAsked.has(key) || !BEAR_SKINS.includes(skin)) return;
+    this.skinAsked.add(key);
+    if (this.textures.exists(`${key}_front`)) return;
+    // 곰의 방향 그림이 다 와야 입는다 (앞 그림만 먼저 오면 옆·뒤가 평소 그림으로 깜빡인다) → 앞 그림을 맨 나중에
+    for (const f of ['side', 'back', 'front']) for (const x of f === 'front' ? [...SKIN_FRAMES].reverse() : SKIN_FRAMES) this.load.image(`${key}_${f}${x}`, `assets/skin/${key}_${f}${x}.png`);
+    this.load.start();
+  }
+
   /** 변신 옷(망토·빛·손에 든 무기)을 입히거나 벗긴다 */
   private dress(b: Bear, id: string | null, lv: number) {
-    b.setSkin(id ? skinNames(id, lv) : null);
+    const names = id ? skinNames(id, lv) : null;
+    if (names) this.loadSkin(b.id, names[0]);
+    b.setSkin(names);
     const c = b.costume;
     if (c && (c.id !== id || c.lv !== lv)) {
       c.destroy();

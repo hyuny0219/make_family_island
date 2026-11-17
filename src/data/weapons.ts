@@ -23,6 +23,7 @@ export const WEAPONS: Record<string, Weapon> = {
   bee: { names: ['벌침 새총', '말벌 새총', '여왕벌 새총'], desc: '멀리서 벌침을 빠르게 쏴요', tex: 'weapon_sling', reach: 130, dmg: 0.8, slow: 0.9, hold: { angle: 0, scale: 0.85 } },
   wood: { names: ['나무 망치', '통나무 망치', '거목 망치'], desc: '느리지만 두 배로 세고, 옆의 몬스터도 함께 맞아요', tex: 'weapon_hammer', reach: 40, dmg: 2, slow: 1.9, hold: { angle: 0, scale: 0.9 } },
   bubble: { names: ['물총', '거품 물총', '파도 물총'], desc: '멀리서 물을 쏴서 몬스터를 뒤로 밀어내요', tex: 'weapon_water', reach: 110, dmg: 0.8, slow: 1, hold: { angle: 0, scale: 0.85 } },
+  rock: { names: ['돌 곡괭이', '바위 곡괭이', '수정 곡괭이'], desc: '찍으면 바위 조각이 뒤쪽 몬스터까지 꿰뚫고 날아가요', tex: 'weapon_pick', reach: 44, dmg: 1.2, slow: 1.25, hold: { angle: 0, scale: 0.9 } },
   fire: { names: ['불꽃 검', '화염 검', '용의 검'], desc: '검이 불타올라 넓게 베고, 맞은 몬스터는 3초 동안 불이 붙어요', tex: 'weapon_flame', reach: 44, dmg: 1.3, slow: 1, hold: { angle: -45, scale: 0.95 } },
 };
 
@@ -41,7 +42,10 @@ export const COSTUME: Record<string, [number, number, number]> = {
 };
 
 /** 몸에 입는 의상 그림이 있는 변신 (없는 변신은 망토를 덧그린다) */
-export const BEAR_SKINS = ['bee', 'bee2', 'bee3'];
+export const BEAR_SKINS = ['leaf', 'bee'].flatMap((a) => [a, `${a}2`, `${a}3`]);
+
+/** 의상 그림의 꼬리표: 서기, 걷기 2장, 동작 4장 */
+export const SKIN_FRAMES = ['', '_w1', '_w2', '_a1', '_a2', '_a3', '_a4'];
 
 /** 단계에 맞는 의상 이름들: 그 단계 그림이 없으면 아래 단계 것을 쓴다 (예: bee3 → bee2 → bee) */
 export const skinNames = (id: string, lv: number) => Array.from({ length: lv }, (_, i) => `${id}${lv - i > 1 ? lv - i : ''}`);
