@@ -73,3 +73,17 @@ export const islandLocked = (island: number) => {
   const ab = ABILITIES[island];
   return !!ab && !BEAR_SKINS.includes(ab.id);
 };
+
+/** 보스 무기의 연속기 이름: [3타 마무리, 공중 공격 뒤 내려찍기] */
+export const COMBO_MOVES: Record<string, [string, string]> = {
+  leaf: ['덩굴 묶기', '덩굴 솟구침'],
+  bee: ['침 연사', '침 소나기'],
+  wood: ['대지 강타', '대지 붕괴'],
+  bubble: ['물대포', '물기둥'],
+  rock: ['바위 가시', '돌 파편'],
+  poison: ['독 웅덩이', '독 안개'],
+  ice: ['얼음 회오리', '얼음 가시'],
+  sand: ['철퇴 회오리', '모래 폭풍'],
+  fire: ['불꽃 회전 베기', '불기둥'],
+  thunder: ['연쇄 번개', '벼락'],
+};

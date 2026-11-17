@@ -14,15 +14,36 @@ export function unlockAudio() {
     ctx = new AC();
   }
   if (ctx.state === 'suspended') void ctx.resume();
+  applyVolume();
   refreshMusic();
   loadSamples();
+}
+
+// ───────────────────────── 음량 ─────────────────────────
+// 효과음과 배경음악이 저마다 하나의 출구(gain)를 지난다 → 설정의 음량 막대로 조절한다.
+let sfxOut: GainNode | null = null;
+let musicOut: GainNode | null = null;
+function outs() {
+  if (ctx && !sfxOut) {
+    sfxOut = ctx.createGain();
+    sfxOut.connect(ctx.destination);
+    musicOut = ctx.createGain();
+    musicOut.connect(ctx.destination);
+  }
+}
+/** 설정의 음량(0~1)을 바로 적용한다 */
+export function applyVolume() {
+  if (!ctx) return;
+  outs();
+  sfxOut!.gain.setTargetAtTime(settings.soundVol, ctx.currentTime, 0.03);
+  musicOut!.gain.setTargetAtTime(settings.musicVol, ctx.currentTime, 0.03);
 }
 
 // ───────────────────────── 녹음된 효과음 ─────────────────────────
 // public/assets/sfx/<이름>.mp3 — 첫 터치 뒤에 뒤에서 조용히 받아 둔다. 아직 못 받았으면 합성음으로 대신한다.
 
 /** 기본 효과음 */
-const BASE_SAMPLES = ['punch', 'slash', 'heavy', 'swing', 'hit', 'finisher', 'chop', 'mine', 'pick', 'pickup', 'fish_cast', 'fish_catch', 'mon_die', 'boss_roar', 'boss_slam', 'boss_down', 'hurt', 'jump', 'land', 'slam', 'evolve'];
+const BASE_SAMPLES = ['punch', 'slash', 'heavy', 'swing', 'hit', 'finisher', 'chop', 'mine', 'pick', 'pickup', 'fish_cast', 'fish_catch', 'mon_die', 'boss_roar', 'boss_slam', 'boss_down', 'hurt', 'jump', 'land', 'slam', 'evolve', 'victory'];
 /** 보스 무기마다: w_(기본 공격) f_(3타 마무리) g_(내려찍기) */
 const WEAPON_IDS = ['leaf', 'bee', 'wood', 'bubble', 'rock', 'poison', 'ice', 'sand', 'fire', 'thunder'];
 const SAMPLES = [...BASE_SAMPLES, ...WEAPON_IDS.flatMap((id) => [`w_${id}`, `f_${id}`, `g_${id}`])];
@@ -62,7 +83,7 @@ function sample(name: string, vol = 0.6, rate = 1) {
   src.playbackRate.value = rate * (0.94 + Math.random() * 0.12);
   const gain = ctx.createGain();
   gain.gain.value = vol;
-  src.connect(gain).connect(ctx.destination);
+  src.connect(gain).connect(sfxOut ?? ctx.destination);
   src.start();
   return true;
 }
@@ -77,7 +98,7 @@ function tone(freq: number, dur: number, type: OscillatorType, vol: number, slid
   if (slideTo) osc.frequency.exponentialRampToValueAtTime(slideTo, t + dur);
   gain.gain.setValueAtTime(vol, t);
   gain.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-  osc.connect(gain).connect(ctx.destination);
+  osc.connect(gain).connect(sfxOut ?? ctx.destination);
   osc.start(t);
   osc.stop(t + dur);
 }
@@ -117,8 +138,12 @@ export const sfx = {
 // 녹음된 곡(public/assets/music/<분위기>.mp3)을 분위기에 따라 바꿔 튼다: 낮 · 밤 · 보스전.
 // 곡을 못 받았을 때만, 파일 없이 WebAudio로 연주하는 오르골풍 반복곡(8마디, 5음계)으로 대신한다.
 
-export type MusicMood = 'day' | 'night' | 'boss';
-const TRACK_VOL: Record<MusicMood, number> = { day: 0.34, night: 0.32, boss: 0.36 };
+/** 낮(첫 섬) · 밤 · 보스전 · 섬마다의 낮 곡(isl1~isl9) */
+export type MusicMood = 'day' | 'night' | 'boss' | `isl${number}`;
+const TRACK_VOL: Partial<Record<MusicMood, number>> = { day: 0.34, night: 0.32, boss: 0.36 };
+const trackVol = (m: MusicMood) => TRACK_VOL[m] ?? 0.34;
+/** 못 받은 섬 곡 → 기본 낮 곡으로 대신 */
+const badTracks = new Set<MusicMood>();
 interface Track {
   el: HTMLAudioElement;
   gain: GainNode;
@@ -130,6 +155,7 @@ let fileFailed = false;
 
 function track(m: MusicMood): Track | null {
   if (!ctx) return null;
+  if (badTracks.has(m)) m = 'day';
   let t = tracks.get(m);
   if (!t) {
     const el = new Audio(`${import.meta.env.BASE_URL}assets/music/${m}.mp3`);
@@ -139,13 +165,15 @@ function track(m: MusicMood): Track | null {
     const gain = ctx.createGain();
     gain.gain.value = 0.0001;
     try {
-      ctx.createMediaElementSource(el).connect(gain).connect(ctx.destination);
+      ctx.createMediaElementSource(el).connect(gain).connect(musicOut ?? ctx.destination);
     } catch {
       fileFailed = true;
       return null;
     }
+    const which = m;
     el.addEventListener('error', () => {
-      fileFailed = true;
+      if (which === 'day') fileFailed = true;
+      else badTracks.add(which);
       refreshMusic();
     });
     t = { el, gain };
@@ -161,6 +189,17 @@ export function setMusicMood(m: MusicMood) {
   refreshMusic();
 }
 
+/** 승리 음악 같은 짧은 곡이 나올 때 배경음악을 잠깐 줄인다 */
+let duck = 1;
+export function duckMusic(ms: number) {
+  duck = 0.15;
+  refreshMusic();
+  window.setTimeout(() => {
+    duck = 1;
+    refreshMusic();
+  }, ms);
+}
+
 function playTracks(want: boolean) {
   if (!ctx) return;
   const now = ctx.currentTime;
@@ -168,7 +207,7 @@ function playTracks(want: boolean) {
   tracks.forEach((t, m) => {
     t.gain.gain.cancelScheduledValues(now);
     if (t === cur) {
-      t.gain.gain.setTargetAtTime(TRACK_VOL[m], now, 0.5);
+      t.gain.gain.setTargetAtTime(trackVol(m) * duck, now, 0.5);
       if (t.el.paused) {
         void t.el.play().catch(() => {
           /* 첫 터치 전에는 못 튼다 → 다음 refreshMusic에서 다시 */
@@ -176,7 +215,7 @@ function playTracks(want: boolean) {
       }
     } else {
       t.gain.gain.setTargetAtTime(0.0001, now, 0.25);
-      if (!t.el.paused) window.setTimeout(() => tracks.get(mood) !== t || !settings.music || document.hidden ? t.el.pause() : undefined, 1200);
+      if (!t.el.paused) window.setTimeout(() => track(mood) !== t || !settings.music || document.hidden ? t.el.pause() : undefined, 1200);
     }
   });
 }
@@ -240,7 +279,7 @@ export function refreshMusic() {
   if (want && musicTimer === null) {
     if (!musicGain) {
       musicGain = ctx.createGain();
-      musicGain.connect(ctx.destination);
+      musicGain.connect(musicOut ?? ctx.destination);
     }
     musicGain.gain.cancelScheduledValues(ctx.currentTime);
     musicGain.gain.setValueAtTime(0.0001, ctx.currentTime);
