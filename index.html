@@ -39,10 +39,116 @@
         image-rendering: pixelated;
         image-rendering: crisp-edges;
       }
+      /* 첫 화면: 영상(없으면 그림) 위에 제목과 시작 단추 */
+      #start {
+        position: fixed;
+        inset: 0;
+        z-index: 10;
+        background: #7ec8e3;
+        overflow: hidden;
+        font-family: 'Apple SD Gothic Neo', 'Noto Sans KR', 'Malgun Gothic', sans-serif;
+        transition: opacity 0.45s ease;
+      }
+      #start.gone {
+        opacity: 0;
+        pointer-events: none;
+      }
+      #start .bg {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+      #start video.bg {
+        opacity: 0;
+        transition: opacity 0.6s ease;
+      }
+      #start video.bg.on {
+        opacity: 1;
+      }
+      #start .shade {
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(to bottom, rgba(20, 50, 80, 0.28), rgba(20, 50, 80, 0) 34%, rgba(20, 50, 80, 0) 58%, rgba(20, 50, 80, 0.5));
+      }
+      #start .title {
+        position: absolute;
+        top: calc(7% + env(safe-area-inset-top));
+        left: 0;
+        right: 0;
+        text-align: center;
+        pointer-events: none;
+      }
+      #start h1 {
+        margin: 0;
+        font-size: clamp(40px, 11vmin, 84px);
+        font-weight: 900;
+        letter-spacing: 0.04em;
+        color: #ffd166;
+        -webkit-text-stroke: 0.09em #7a4a22;
+        paint-order: stroke fill;
+        text-shadow: 0 0.07em 0 #5a3416, 0 0.16em 0.22em rgba(0, 0, 0, 0.35);
+      }
+      #start h2 {
+        margin: 0.2em 0 0;
+        font-size: clamp(16px, 4.2vmin, 30px);
+        font-weight: 800;
+        color: #ffffff;
+        -webkit-text-stroke: 0.14em #2f7fb0;
+        paint-order: stroke fill;
+        letter-spacing: 0.3em;
+      }
+      #startBtn {
+        position: absolute;
+        left: 50%;
+        bottom: calc(9% + env(safe-area-inset-bottom));
+        transform: translateX(-50%);
+        min-width: 46vmin;
+        padding: 0.55em 1.6em;
+        border: 0.14em solid #ffffff;
+        border-radius: 999px;
+        background: linear-gradient(#ffb347, #ff8a3c);
+        color: #ffffff;
+        font: inherit;
+        font-size: clamp(20px, 5.6vmin, 36px);
+        font-weight: 900;
+        letter-spacing: 0.12em;
+        white-space: nowrap;
+        text-shadow: 0 0.06em 0 #b3541a;
+        box-shadow: 0 0.2em 0 #c9601f, 0 0.42em 0.7em rgba(0, 0, 0, 0.35);
+        animation: startPulse 1.5s ease-in-out infinite;
+        cursor: pointer;
+      }
+      #startBtn:active {
+        transform: translateX(-50%) translateY(0.12em) scale(0.97);
+        box-shadow: 0 0.08em 0 #c9601f, 0 0.2em 0.4em rgba(0, 0, 0, 0.35);
+      }
+      @keyframes startPulse {
+        50% {
+          filter: brightness(1.12);
+          min-width: 49vmin;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #startBtn {
+          animation: none;
+        }
+      }
     </style>
   </head>
   <body>
     <div id="game"></div>
-    <script type="module" src="/src/main.ts"></script>
+    <div id="start">
+      <img class="bg" src="./assets/story/story_1.jpg" alt="" />
+      <video class="bg" id="startVideo" muted loop playsinline preload="auto" poster="./assets/story/story_1.jpg"></video>
+      <div class="shade"></div>
+      <div class="title">
+        <h1>베어로드</h1>
+        <h2>열 개의 섬</h2>
+      </div>
+      <button id="startBtn" type="button">▶ 시작하기</button>
+    </div>
+    <script type="module" src="/src/start.ts"></script>
   </body>
 </html>
