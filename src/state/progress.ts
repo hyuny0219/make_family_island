@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { ISLANDS } from '../data/islands';
+import { islandLocked } from '../data/weapons';
 import { family } from '../sync/family';
 
 const KEY = 'mfi.v2.progress';
@@ -29,6 +30,8 @@ class Progress extends Phaser.Events.EventEmitter {
     } catch {
       /* noop */
     }
+    // 준비 중이라 잠긴 섬에 있었다면 첫 섬으로 돌아온다
+    if (!this.canVisit(this.data.current)) this.data.current = 0;
   }
 
   get current() {
@@ -84,8 +87,9 @@ class Progress extends Phaser.Events.EventEmitter {
     this.emit('treasure', island);
   }
 
-  /** 갈 수 있는 섬: 0번 + 배를 만든 섬의 다음 섬들 */
+  /** 갈 수 있는 섬: 0번 + 배를 만든 섬의 다음 섬들 (아직 준비 중인 섬은 못 간다) */
   canVisit(island: number) {
+    if (islandLocked(island)) return false;
     return island === 0 || this.hasBoat(island - 1);
   }
 
