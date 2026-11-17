@@ -1619,17 +1619,17 @@ export class HudScene extends Phaser.Scene {
   private comboText?: Phaser.GameObjects.Text;
   private comboTween?: Phaser.Tweens.Tween;
 
-  /** 콤보 숫자: 이어 칠 때마다 커졌다 돌아오고, 잠시 쉬면 사라진다 */
-  private onCombo(n: number, fin: boolean) {
+  /** 연속기 이름: 동작마다 커졌다 돌아오고, 잠시 쉬면 사라진다 */
+  private onCombo(label: string, fin: boolean) {
     const W = this.scale.width;
     if (!this.comboText?.active) {
       this.comboText = this.add.text(0, 0, '', { fontFamily: FONT, fontSize: '20px', color: '#ffe08a', fontStyle: 'bold', stroke: '#b5532f', strokeThickness: 6, align: 'right' }).setOrigin(1, 0.5).setDepth(45);
     }
     const t = this.comboText;
-    t.setPosition(W - 64, HUD_TOP_H + 150).setText(fin ? `${n} 콤보!\n쾅!` : `${n} 콤보`).setColor(fin ? '#ffffff' : '#ffe08a').setAlpha(1);
+    t.setPosition(W - 64, HUD_TOP_H + 150).setText(label).setColor(fin ? '#ffffff' : '#ffe08a').setAlpha(1);
     this.comboTween?.remove();
     this.tweens.add({ targets: t, scale: { from: fin ? 1.7 : 1.3, to: 1 }, duration: 180, ease: 'Back.easeOut' });
-    this.comboTween = this.tweens.add({ targets: t, alpha: 0, delay: 1500, duration: 300 });
+    this.comboTween = this.tweens.add({ targets: t, alpha: 0, delay: 900, duration: 250 });
   }
 
   /** 가족이 보스 던전에 불렀을 때 뜨는 알림 (하던 일을 막지 않는다) */
