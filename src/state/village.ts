@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { ITEMS, type ItemId } from '../data/items';
 import { ORDER_BASIC, ORDER_CRAFTED, RESIDENTS } from '../data/village';
-import { PIECES } from '../data/build';
+import { PIECES, UPPER_POINTS, upperKey } from '../data/build';
 import { family } from '../sync/family';
 import { withJosa } from '../util/korean';
 
@@ -43,6 +43,8 @@ interface Saved {
   nextAt: Record<string, number>;
   /** 주민이 사는 집 (주민 id → 집 안 열쇠) */
   homes: Record<string, string>;
+  /** 2층을 올린 집 (집 안 열쇠) */
+  up: string[];
 }
 
 /**
@@ -50,7 +52,7 @@ interface Saved {
  * 이벤트: 'changed', 'resident-joined'(id)
  */
 class Village extends Phaser.Events.EventEmitter {
-  private d: Saved = { placed: {}, joined: [], hearts: {}, orders: {}, nextAt: {}, homes: {} };
+  private d: Saved = { placed: {}, joined: [], hearts: {}, orders: {}, nextAt: {}, homes: {}, up: [] };
 
   constructor() {
     super();
@@ -70,7 +72,7 @@ class Village extends Phaser.Events.EventEmitter {
   score() {
     let s = 0;
     for (const list of Object.values(this.d.placed)) for (const p of list) s += PIECES[p.id]?.points ?? 0;
-    return s;
+    return s + this.d.up.length * UPPER_POINTS;
   }
 
   place(island: number | string, p: Placed) {
@@ -172,6 +174,32 @@ class Village extends Phaser.Events.EventEmitter {
     this.emit('home-changed');
   }
 
+  // ───────── 2층 ─────────
+
+  hasUpper(key: string) {
+    return this.d.up.includes(key);
+  }
+
+  /** 그 집에 2층을 올린다 */
+  addUpper(key: string) {
+    if (this.hasUpper(key)) return;
+    this.d.up.push(key);
+    family.union('up', key);
+    this.save();
+    this.emit('changed');
+    this.emit('upper', key);
+  }
+
+  /** 집을 치울 때: 2층도 없앤다 (있었으면 true) */
+  removeUpper(key: string) {
+    if (!this.hasUpper(key)) return false;
+    this.d.up = this.d.up.filter((k) => k !== key);
+    family.remove('up', key);
+    this.save();
+    this.emit('changed');
+    return true;
+  }
+
   /** 집이 없어졌다 → 살던 주민은 다시 캠프로 */
   clearHome(key: string) {
     const id = this.residentOf(key);
@@ -180,7 +208,8 @@ class Village extends Phaser.Events.EventEmitter {
 
   /** 집 안의 아늑함 = 그 집에 놓인 가구·장식 점수의 합 */
   comfort(key: string) {
-    return this.placedOn(key).reduce((n, p) => n + (PIECES[p.id]?.points ?? 0), 0);
+    // 2층에 놓은 것도 함께 센다
+    return [...this.placedOn(key), ...this.placedOn(upperKey(key))].reduce((n, p) => n + (PIECES[p.id]?.points ?? 0), 0);
   }
 
 
@@ -234,14 +263,14 @@ class Village extends Phaser.Events.EventEmitter {
   exportDoc() {
     const placed: Record<string, Placed[]> = {};
     for (const [k, v] of Object.entries(this.d.placed)) placed[k] = v.map(wire);
-    return { placed, joined: [...this.d.joined], hearts: { ...this.d.hearts }, orders: { ...this.d.orders }, nextAt: { ...this.d.nextAt } };
+    return { placed, joined: [...this.d.joined], hearts: { ...this.d.hearts }, orders: { ...this.d.orders }, nextAt: { ...this.d.nextAt }, up: [...this.d.up] };
   }
 
   /** 가족 섬의 최신 상태로 맞추기. 달라졌으면 'changed'·'remote', 새 주민은 'resident-joined' */
-  applyRemote(r: { placed?: Record<string, Placed[]>; joined?: string[]; hearts?: Record<string, number>; orders?: Record<string, Order>; nextAt?: Record<string, number>; homes?: Record<string, string> }) {
+  applyRemote(r: { placed?: Record<string, Placed[]>; joined?: string[]; hearts?: Record<string, number>; orders?: Record<string, Order>; nextAt?: Record<string, number>; homes?: Record<string, string>; up?: string[] }) {
     const placed: Record<string, Placed[]> = {};
     for (const [k, v] of Object.entries(r.placed ?? {})) placed[k] = v.filter((p) => p.id in PIECES).map(wire);
-    const next: Saved = { placed, joined: [...(r.joined ?? [])], hearts: { ...(r.hearts ?? {}) }, orders: { ...(r.orders ?? {}) }, nextAt: { ...(r.nextAt ?? {}) }, homes: { ...(r.homes ?? {}) } };
+    const next: Saved = { placed, joined: [...(r.joined ?? [])], hearts: { ...(r.hearts ?? {}) }, orders: { ...(r.orders ?? {}) }, nextAt: { ...(r.nextAt ?? {}) }, homes: { ...(r.homes ?? {}) }, up: [...(r.up ?? [])] };
     if (JSON.stringify(next) === JSON.stringify(this.d)) return;
     const before = new Set(this.d.joined);
     this.d = next;

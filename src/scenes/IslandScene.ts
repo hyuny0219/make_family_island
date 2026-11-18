@@ -27,7 +27,7 @@ import { progress } from '../state/progress';
 import { village, type Placed } from '../state/village';
 import { family, type HitNet, type MobNet, type Presence } from '../sync/family';
 import { RESIDENTS, HOME_ISLAND } from '../data/village';
-import { ENTERABLE, LIGHTS, PIECES, PIECE_LIST, houseKey, roomPlan, type Piece, nextTurn, oriented, turnOf, type Turn } from '../data/build';
+import { ENTERABLE, LIGHTS, PIECES, PIECE_LIST, houseKey, roomPlan, type Piece, nextTurn, oriented, turnOf, type Turn, upperKey, UPPER_COST } from '../data/build';
 import { Bear } from '../objects/Bear';
 import { Slime } from '../objects/Slime';
 import { TREASURES, treasureKey } from '../data/treasures';
@@ -109,7 +109,7 @@ export class IslandScene extends Phaser.Scene {
   private monsters: Monster[] = [];
   private gate?: Phaser.GameObjects.Image;
   /** 들어와 있는 집 안 */
-  private room: null | { key: string; x: number; y: number; w: number; h: number; back: { x: number; y: number }; objs: Phaser.GameObjects.GameObject[]; imgs: Map<string, Phaser.GameObjects.Image>; occ: Map<string, Placed>; blocked: Set<string>; door: number; holes: Set<string> } = null;
+  private room: null | { key: string; x: number; y: number; w: number; h: number; back: { x: number; y: number }; objs: Phaser.GameObjects.GameObject[]; imgs: Map<string, Phaser.GameObjects.Image>; occ: Map<string, Placed>; blocked: Set<string>; door: number; holes: Set<string>; house: Placed; level: 1 | 2; stair: [number, number] | null } = null;
   /** 밤 */
   private nightRect?: Phaser.GameObjects.Rectangle;
   private glows = new Map<Phaser.GameObjects.Image, Phaser.GameObjects.Image>();
@@ -334,6 +334,8 @@ export class IslandScene extends Phaser.Scene {
     player.on('faint', this.onFaint, this);
     village.on('resident-joined', this.onResidentJoined, this);
     village.on('remote', this.bringHome, this);
+    village.on('upper', this.onUpper);
+    village.on('remote', this.onUpper);
     village.on('remote', this.syncPlaced, this);
     village.on('home-changed', this.syncRoomGuest, this);
     village.on('changed', this.rebuildRoads, this);
@@ -362,6 +364,8 @@ export class IslandScene extends Phaser.Scene {
       player.off('faint', this.onFaint, this);
       village.off('resident-joined', this.onResidentJoined, this);
       village.off('remote', this.bringHome, this);
+      village.off('upper', this.onUpper);
+      village.off('remote', this.onUpper);
       village.off('remote', this.syncPlaced, this);
       village.off('home-changed', this.syncRoomGuest, this);
       village.off('changed', this.rebuildRoads, this);
@@ -708,7 +712,7 @@ export class IslandScene extends Phaser.Scene {
       const rm = this.room;
       const wp0 = this.cameras.main.getWorldPoint(p.x, p.y);
       const doorX = rm.x + (rm.door + 0.5) * TILE;
-      if (Math.abs(wp0.x - doorX) < 22 && wp0.y > rm.y + rm.h - 20) return this.walkTo(doorX, rm.y + rm.h - 8, { door: true });
+      if (rm.door >= 0 && Math.abs(wp0.x - doorX) < 22 && wp0.y > rm.y + rm.h - 20) return this.walkTo(doorX, rm.y + rm.h - 8, { door: true });
     }
     // 집 그림을 눌렀거나, 집이 놓인 칸을 눌렀으면 들어간다
     const wpH = this.cameras.main.getWorldPoint(p.x, p.y);
@@ -826,7 +830,7 @@ export class IslandScene extends Phaser.Scene {
     const rm = this.room;
     if (rm) {
       const doorX = rm.x + (rm.door + 0.5) * TILE;
-      add(doorX, rm.y + rm.h - 8, () => go(doorX, rm.y + rm.h - 8, { door: true }), 14);
+      if (rm.door >= 0) add(doorX, rm.y + rm.h - 8, () => go(doorX, rm.y + rm.h - 8, { door: true }), 14);
       rm.imgs.forEach((img) => {
         if ((img as unknown as { placed?: Placed }).placed?.id === 'bed') add(img.x, img.y, () => go(img.x + side(img.x) * 22, img.y - 2, { sleep: true }));
       });
@@ -920,6 +924,7 @@ export class IslandScene extends Phaser.Scene {
     this.updatePad();
     this.updateHold();
     this.updateJump();
+    this.checkStairs(dt);
     // 배경음악: 던전에서는 보스전 곡, 밤에는 밤 곡
     setMusicMood(this.dungeon && this.dungeon.phase !== 'clear' ? 'boss' : this.wasNight ? 'night' : this.islandIdx > 0 ? `isl${this.islandIdx}` : 'day');
     for (const bear of this.bears) {
@@ -3486,9 +3491,15 @@ export class IslandScene extends Phaser.Scene {
   // ───────────────────────── 집 안 ─────────────────────────
 
   /** 집에 들어간다: 방 하나. 꾸미기 탭에서 가구를 놓는다 */
-  private enterHouse(h: Placed) {
+  /**
+   * 집 안으로. level 2는 증축한 집의 2층(계단으로만 오간다). keepBack: 층을 오갈 때 밖으로 나갈 자리를 이어받는다.
+   */
+  private enterHouse(h: Placed, level: 1 | 2 = 1, keepBack?: { x: number; y: number }) {
     const pl = this.player;
     if (!pl || this.room || this.dungeon || this.resting || this.flying) return;
+    const baseKey = houseKey(this.islandIdx, h.tx, h.ty);
+    const upper = village.hasUpper(baseKey);
+    if (level === 2 && !upper) level = 1;
     const RW = 22;
     const RH = 26;
     const [cx, cy] = this.seaCorner(RW, RH);
@@ -3503,7 +3514,14 @@ export class IslandScene extends Phaser.Scene {
     const ry = (cy + 8) * TILE;
     const rw = cols * TILE;
     const rh = rows * TILE;
+    // 2층에는 문이 없다
+    const door = level === 2 ? -1 : plan.door;
     const doorX = rx + (plan.door + 0.5) * TILE;
+    // 계단 자리: 맨 윗줄의 오른쪽 끝 칸 (1층과 2층이 같은 자리)
+    let stair: [number, number] | null = null;
+    if (upper) {
+      for (let y = 0; y < rows && !stair; y++) for (let x = cols - 1; x >= 0; x--) if (floor(x, y)) { stair = [x, y]; break; }
+    }
     this.resting = true;
     this.autoTarget = null;
     pl.target = null;
@@ -3540,11 +3558,35 @@ export class IslandScene extends Phaser.Scene {
         if (!floor(tx - 1, ty) || floor(tx - 1, ty - 1)) g.fillStyle(0x6b4f33).fillRect(px - 2, py - WH, 4, WH);
         if (!floor(tx + 1, ty) || floor(tx + 1, ty - 1)) g.fillStyle(0x6b4f33).fillRect(px + TILE - 2, py - WH, 4, WH);
       }
-      // 문 앞 깔개
-      g.fillStyle(0xd1495b).fillRoundedRect(doorX - 18, ry + rh - 12, 36, 10, 4);
-      const out = this.add.text(doorX, ry + rh + 12, '▼ 나가기', { fontFamily: FONT, fontSize: '9px', color: '#e8d5a9', fontStyle: 'bold' }).setOrigin(0.5).setDepth(-50);
-      this.room = { key: houseKey(this.islandIdx, h.tx, h.ty), x: rx, y: ry, w: rw, h: rh, back: this.registry.get('view') === 'build' ? { x: (h.tx + 1) * TILE, y: (h.ty + 2) * TILE + 12 } : { x: pl.x, y: pl.y + 4 }, objs: [g, out], imgs: new Map(), occ: new Map(), blocked: new Set(), door: plan.door, holes };
-      this.registry.set('roomKey', this.room.key);
+      const objs: Phaser.GameObjects.GameObject[] = [g];
+      if (level === 1) {
+        // 문 앞 깔개
+        g.fillStyle(0xd1495b).fillRoundedRect(doorX - 18, ry + rh - 12, 36, 10, 4);
+        objs.push(this.add.text(doorX, ry + rh + 12, '▼ 나가기', { fontFamily: FONT, fontSize: '9px', color: '#e8d5a9', fontStyle: 'bold' }).setOrigin(0.5).setDepth(-50));
+      } else {
+        objs.push(this.add.text(rx + rw / 2, ry + rh + 12, '🏠 2층', { fontFamily: FONT, fontSize: '9px', color: '#e8d5a9', fontStyle: 'bold' }).setOrigin(0.5).setDepth(-50));
+      }
+      if (stair) {
+        // 계단: 밟으면(꾸미기 중에는 누르면) 층을 오간다
+        const sx = rx + stair[0] * TILE;
+        const sy = ry + stair[1] * TILE;
+        g.fillStyle(0x6b4f33).fillRect(sx + 1, sy + 1, TILE - 2, TILE - 2);
+        for (let k = 0; k < 4; k++) g.fillStyle(k % 2 ? 0xc49560 : 0xe2c497).fillRect(sx + 3, sy + 3 + k * 5, TILE - 6, 4);
+        objs.push(this.add.text(sx + TILE / 2, sy - 8, level === 1 ? '▲ 2층' : '▼ 1층', { fontFamily: FONT, fontSize: '9px', color: '#7a4a2b', fontStyle: 'bold', backgroundColor: '#fff6df', padding: { x: 3, y: 1 } }).setOrigin(0.5).setDepth(-50));
+      } else if (level === 1) {
+        // 아직 1층집: 2층을 올릴 수 있다
+        const up = this.add.text(rx + rw - 4, ry + rh + 12, '🔨 2층 올리기', { fontFamily: FONT, fontSize: '9px', color: '#fff6df', fontStyle: 'bold', backgroundColor: '#c97b4a', padding: { x: 5, y: 3 } }).setOrigin(1, 0.5).setDepth(-50).setInteractive({ useHandCursor: true });
+        up.on('pointerdown', (_p: Phaser.Input.Pointer, _x: number, _y: number, e: Phaser.Types.Input.EventData) => {
+          e.stopPropagation();
+          sfx.tap();
+          this.game.events.emit('ask-upper', baseKey);
+        });
+        objs.push(up);
+      }
+      const backTo = keepBack ?? (this.registry.get('view') === 'build' ? { x: (h.tx + 1) * TILE, y: (h.ty + 2) * TILE + 12 } : { x: pl.x, y: pl.y + 4 });
+      this.room = { key: level === 2 ? upperKey(baseKey) : baseKey, x: rx, y: ry, w: rw, h: rh, back: backTo, objs, imgs: new Map(), occ: new Map(), blocked: new Set(), door, holes, house: h, level, stair };
+      // 주민 초대·아늑함은 층과 상관없이 그 집(1층 열쇠) 기준
+      this.registry.set('roomKey', baseKey);
       this.zoneChanged();
       // 꾸미기 중에는 카메라가 곰을 따라가지 않으니, 방이 화면 위쪽에 오도록 직접 맞춘다 (아래는 꾸미기 창이 가린다)
       if (this.registry.get('view') === 'build') {
@@ -3556,7 +3598,8 @@ export class IslandScene extends Phaser.Scene {
       for (const p of [...village.placedOn(this.room.key)]) {
         const piece = PIECES[p.id];
         if (!piece) continue;
-        const fits = this.footprint(piece, p.tx, p.ty, p).every(([fx, fy]) => floor(fx, fy) && (piece.floor || !(fy === rows - 1 && fx === plan.door)));
+        // 문 앞과 계단 칸에는 둘 수 없다 (증축해서 계단이 생긴 자리의 가구도 돌려보낸다)
+        const fits = this.footprint(piece, p.tx, p.ty, p).every(([fx, fy]) => floor(fx, fy) && !(stair && fx === stair[0] && fy === stair[1]) && (piece.floor || !(fy === rows - 1 && fx === door)));
         if (fits) {
           this.addRoomPiece(p, false);
           continue;
@@ -3568,11 +3611,18 @@ export class IslandScene extends Phaser.Scene {
       if (back) this.toast(`🏠 방 모양이 바뀌어서 가구 ${back}개를 창고로 돌려놨어요`);
       pl.x = doorX;
       pl.y = ry + rh - 22;
+      if (keepBack && stair) {
+        // 계단으로 왔으면 계단 옆(아래 칸, 없으면 왼쪽 칸)에 선다
+        const [nx, ny] = floor(stair[0], stair[1] + 1) ? [stair[0], stair[1] + 1] : [stair[0] - 1, stair[1]];
+        pl.x = rx + (nx + 0.5) * TILE;
+        pl.y = ry + (ny + 1) * TILE - 5;
+      }
+      this.stairWait = 0.6;
       cam.setBounds(cx * TILE, cy * TILE, RW * TILE, RH * TILE);
       cam.fadeIn(400, 40, 30, 20);
       this.resting = false;
       this.syncRoomGuest();
-      if (village.placedOn(this.room.key).length === 0) this.toast('🏠 꾸미기 탭에서 가구를 놓아 보세요');
+      if (village.placedOn(this.room.key).length === 0 && !keepBack) this.toast('🏠 꾸미기 탭에서 가구를 놓아 보세요');
     });
   }
 
@@ -3696,7 +3746,8 @@ export class IslandScene extends Phaser.Scene {
     const rows = rm.h / TILE;
     return this.footprint(piece, tx, ty, t).every(([cx, cy]) => {
       if (cx < 0 || cy < 0 || cx >= cols || cy >= rows || rm.holes.has(`${cx},${cy}`)) return false;
-      // 문 앞 한 칸은 비워 둔다
+      // 계단 칸과 문 앞 한 칸은 비워 둔다
+      if (rm.stair && cx === rm.stair[0] && cy === rm.stair[1]) return false;
       if (!piece.floor && cy === rows - 1 && cx === rm.door) return false;
       if (piece.floor) return !this.roomFloorAt(cx, cy, skip);
       const at = rm.occ.get(`${cx},${cy}`);
@@ -3722,6 +3773,12 @@ export class IslandScene extends Phaser.Scene {
     const tool = (this.registry.get('buildTool') as string) ?? '';
     if (!rm) return false;
     const wp = this.cameras.main.getWorldPoint(p.x, p.y);
+    // 꾸미기 중에 계단을 누르면 다른 층으로
+    if (rm.stair && Math.floor((wp.x - rm.x) / TILE) === rm.stair[0] && Math.floor((wp.y - rm.y) / TILE) === rm.stair[1]) {
+      this.closeRoomMenu();
+      this.switchFloor();
+      return true;
+    }
     // 가구 단추(돌리기·옮기기·넣기)가 떠 있으면 그것부터
     if (this.roomSel) {
       const z = this.cameras.main.zoom;
@@ -4132,6 +4189,52 @@ export class IslandScene extends Phaser.Scene {
     this.npcTimers.set(b, 1 + Math.random() * 3);
     this.roomGuest = b;
     this.fx.heart.explode(4, x, y - 30);
+  }
+
+  /** 계단을 막 지나온 뒤 잠깐은 다시 타지 않는다 */
+  private stairWait = 0;
+
+  /** 방 안에서 곰이 계단 칸을 밟으면 다른 층으로 */
+  private checkStairs(dt: number) {
+    const rm = this.room;
+    const pl = this.player;
+    if (this.stairWait > 0) this.stairWait -= dt;
+    if (!rm?.stair || !pl || this.resting || this.stairWait > 0 || this.registry.get('view') === 'build') return;
+    if (Math.floor((pl.x - rm.x) / TILE) === rm.stair[0] && Math.floor((pl.y - 3 - rm.y) / TILE) === rm.stair[1]) this.switchFloor();
+  }
+
+  /** 1층 ↔ 2층 (또는 증축한 뒤 방을 다시 그린다: same = true) */
+  private switchFloor(same = false) {
+    const rm = this.room;
+    if (!rm || this.resting) return;
+    const { house, back } = rm;
+    const to: 1 | 2 = same ? rm.level : rm.level === 1 ? 2 : 1;
+    this.leaveRoom();
+    this.registry.set('room', true);
+    if (!same) sfx.pop();
+    this.enterHouse(house, to, back);
+  }
+
+  /** 집에 2층이 올라갔다 (내가 올렸거나 가족이 올렸거나): 바깥 모습을 바꾸고, 그 집 안에 있으면 계단을 낸다 */
+  private onUpper = () => {
+    for (const p of village.placedOn(this.islandIdx)) {
+      if (!ENTERABLE.has(p.id)) continue;
+      const img = this.placedObjs.get(this.placedKey(p));
+      const want = this.houseTex(p);
+      if (img && img.texture.key !== want) {
+        this.dropPlaced(p, false);
+        this.addPlaced(p, true);
+      }
+    }
+    const rm = this.room;
+    if (rm && rm.level === 1 && !rm.stair && village.hasUpper(rm.key)) this.switchFloor(true);
+  };
+
+  /** 집 그림: 2층을 올렸으면 2층집 그림 */
+  private houseTex(p: Placed) {
+    const piece = PIECES[p.id];
+    const tall = `${piece.tex}_2f`;
+    return ENTERABLE.has(p.id) && village.hasUpper(houseKey(this.islandIdx, p.tx, p.ty)) && this.textures.exists(tall) ? tall : piece.tex;
   }
 
   private leaveRoom() {
@@ -5098,7 +5201,7 @@ export class IslandScene extends Phaser.Scene {
     if (piece.floor) {
       img = this.add.image(x, p.ty * TILE + TILE / 2, piece.tex).setDepth(-850);
     } else {
-      img = this.add.image(x, p.ty * TILE + TILE - 1, piece.tex).setOrigin(0.5, 1);
+      img = this.add.image(x, p.ty * TILE + TILE - 1, this.houseTex(p)).setOrigin(0.5, 1);
       img.setDepth(img.y);
       for (const [cx, cy] of this.footprint(piece, p.tx, p.ty)) {
         this.placedOcc.set(`${cx},${cy}`, p);
@@ -5218,8 +5321,11 @@ export class IslandScene extends Phaser.Scene {
       const target = this.placedOcc.get(key) ?? (this.placedObjs.get(`f${key}`) as unknown as { placed: Placed } | undefined)?.placed;
       if (!target) return void this.toast(tool === 'erase' ? '치울 것이 없어요' : '옮길 것을 눌러요');
       const piece = PIECES[target.id];
-      if (ENTERABLE.has(target.id) && village.placedOn(houseKey(this.islandIdx, target.tx, target.ty)).length > 0) return void this.toast('🏠 집 안의 가구를 먼저 치워요');
+      const hk = houseKey(this.islandIdx, target.tx, target.ty);
+      if (ENTERABLE.has(target.id) && village.placedOn(hk).length + village.placedOn(upperKey(hk)).length > 0) return void this.toast('🏠 집 안의 가구를 먼저 치워요 (2층도요)');
       village.remove(this.islandIdx, target.tx, target.ty, target.id);
+      // 올렸던 2층의 재료도 돌려준다
+      if (ENTERABLE.has(target.id) && village.removeUpper(hk)) for (const [id, n] of Object.entries(UPPER_COST) as [ItemId, number][]) inventory.add(id, n);
       // 집을 치우거나 옮기면 살던 주민은 캠프로 돌아간다
       if (ENTERABLE.has(target.id)) village.clearHome(houseKey(this.islandIdx, target.tx, target.ty));
       this.dropPlaced(target, true);
