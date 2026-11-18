@@ -1856,6 +1856,29 @@ export class HudScene extends Phaser.Scene {
     return c;
   }
 
+  /** 가로 화면에서 늘 보이는 단추 (만들기 · 꾸미기 · 지도) */
+  private quickBtns: Phaser.GameObjects.Container[] = [];
+
+  /** 그림과 이름이 함께 있는 큰 둥근 단추 */
+  private quickButton(x: number, y: number, emoji: string, label: string, color: number, onTap: () => void) {
+    const c = this.add.container(x, y).setDepth(6);
+    const g = this.add.graphics();
+    g.fillStyle(0x000000, 0.18).fillCircle(0, 3, 21);
+    g.fillStyle(color).fillCircle(0, 0, 21);
+    g.lineStyle(2.5, 0xffffff, 0.95).strokeCircle(0, 0, 21);
+    const name = this.add.text(0, 17, label, { fontFamily: FONT, fontSize: '9px', color: '#ffffff', fontStyle: 'bold', stroke: '#6b5a45', strokeThickness: 3 }).setOrigin(0.5);
+    c.add([g, this.add.text(0, -4, emoji, { fontSize: '19px' }).setOrigin(0.5), name]);
+    c.setSize(48, 50).setInteractive({ useHandCursor: true });
+    c.on('pointerdown', () => {
+      if (this.registry.get('modal')) return;
+      sfx.tap();
+      buzz(8);
+      this.tweens.add({ targets: c, scale: { from: 0.85, to: 1 }, duration: 240, ease: 'Back.easeOut' });
+      onTap();
+    });
+    return c;
+  }
+
   private pad?: Phaser.GameObjects.Container;
   private padRelease?: () => void;
 
@@ -2010,6 +2033,7 @@ export class HudScene extends Phaser.Scene {
     });
     this.emoteRow?.setVisible(false);
     this.refreshFeedBtn();
+    this.quickBtns.forEach((b) => b.setVisible(this.view === 'explore'));
     if (this.menuBtn) {
       this.menuBtn.setVisible(this.view === 'explore');
       (this.menuBtn.list[1] as Phaser.GameObjects.Text).setText(open ? '✕' : '☰');
@@ -2029,25 +2053,6 @@ export class HudScene extends Phaser.Scene {
   }
 
   private backBtn?: Phaser.GameObjects.Container;
-
-  /** 글자가 있는 알약 단추 (가로 화면의 화면 전환) */
-  private pillButton(x: number, y: number, label: string, w: number, color: number, onTap: () => void) {
-    const c = this.add.container(x, y);
-    const g = this.add.graphics();
-    g.fillStyle(0x000000, 0.15).fillRoundedRect(-w / 2, -18 + 3, w, 36, 18);
-    g.fillStyle(color).fillRoundedRect(-w / 2, -18, w, 36, 18);
-    g.lineStyle(2, 0xffffff, 0.9).strokeRoundedRect(-w / 2, -18, w, 36, 18);
-    c.add([g, this.add.text(0, 0, label, { fontFamily: FONT, fontSize: '13px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0.5)]);
-    c.setSize(w + 4, 40).setInteractive({ useHandCursor: true });
-    c.on('pointerdown', () => {
-      if (this.registry.get('modal')) return;
-      sfx.tap();
-      buzz(8);
-      this.tweens.add({ targets: c, scale: { from: 0.88, to: 1 }, duration: 240, ease: 'Back.easeOut' });
-      onTap();
-    });
-    return c;
-  }
 
   private makeSideButtons(W: number) {
     this.sideBtns = [];
@@ -2115,16 +2120,24 @@ export class HudScene extends Phaser.Scene {
     mb.add(this.menuDot);
     this.menuBtn = mb;
     this.backBtn = undefined;
+    this.quickBtns = [];
     if (this.wide) {
       // 가로 화면: 메뉴 단추 오른쪽으로 두 줄에 펼친다 → 아래의 조이스틱·행동 단추와 겹치지 않는다
       const y1 = HUD_TOP_H + 26;
       const y2 = y1 + 44;
-      const make = this.pillButton(30 + 26 + 44, y1, '🔨 만들기', 84, 0xffd166, () => this.setView('merge'));
-      const deco = this.pillButton(30 + 26 + 44 + 92, y1, '🏝️ 꾸미기', 84, 0xb9e3a1, () => this.setView('build'));
-      this.sideBtns.push(make, deco);
-      // 첫 줄은 짧게 (가운데 위의 퀘스트 알림과 겹치지 않게), 나머지는 둘째 줄
-      emoteBtn.setPosition(30 + 26 + 44 + 92 + 42 + 26, y1);
-      [homeBtn, setBtn, abBtn, mapBtn, this.giftBtn, trBtn, qb, this.feedBtn].forEach((b, i) => b.setPosition(30 + 44 * i, y2));
+      // 자주 쓰는 만들기 · 꾸미기 · 지도는 메뉴와 따로, 오른쪽 위에 늘 보인다 (메뉴를 접어도 그대로)
+      const qx = W - 32;
+      const qy = HUD_TOP_H + 30;
+      this.quickBtns = [
+        this.quickButton(qx, qy, '🔨', '만들기', 0xffd166, () => this.setView('merge')),
+        this.quickButton(qx, qy + 54, '🏡', '꾸미기', 0xb9e3a1, () => this.setView('build')),
+        this.quickButton(qx, qy + 108, '🗺️', '지도', 0xa9d8f0, () => this.openMap()),
+      ];
+      mapBtn.destroy();
+      this.sideBtns = this.sideBtns.filter((b) => b !== mapBtn);
+      // 메뉴(☰): 첫 줄은 짧게 (가운데 위의 퀘스트 알림과 겹치지 않게), 나머지는 둘째 줄
+      [emoteBtn, homeBtn, setBtn].forEach((b, i) => b.setPosition(30 + 44 * (i + 1), y1));
+      [abBtn, this.giftBtn, trBtn, qb, this.feedBtn].forEach((b, i) => b.setPosition(30 + 44 * i, y2));
       row.setPosition(30 + 26, y2 + 44);
       // 만들기·꾸미기 화면에서는 같은 자리에 돌아가는 단추
       // 만들기·꾸미기는 창처럼 뜨니, 창의 오른쪽 위에 닫기(✕) 단추를 둔다
