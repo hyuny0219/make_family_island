@@ -1859,15 +1859,15 @@ export class HudScene extends Phaser.Scene {
   /** 가로 화면에서 늘 보이는 단추 (만들기 · 꾸미기 · 지도) */
   private quickBtns: Phaser.GameObjects.Container[] = [];
 
-  /** 그림과 이름이 함께 있는 큰 둥근 단추 */
+  /** 행동 단추처럼 생긴 둥근 단추: 색 바탕에 그림과 이름 */
   private quickButton(x: number, y: number, emoji: string, label: string, color: number, onTap: () => void) {
-    const c = this.add.container(x, y).setDepth(6);
+    const c = this.add.container(x, y).setDepth(41);
     const g = this.add.graphics();
-    g.fillStyle(0x000000, 0.18).fillCircle(0, 3, 21);
-    g.fillStyle(color).fillCircle(0, 0, 21);
-    g.lineStyle(2.5, 0xffffff, 0.95).strokeCircle(0, 0, 21);
-    const name = this.add.text(0, 17, label, { fontFamily: FONT, fontSize: '9px', color: '#ffffff', fontStyle: 'bold', stroke: '#6b5a45', strokeThickness: 3 }).setOrigin(0.5);
-    c.add([g, this.add.text(0, -4, emoji, { fontSize: '19px' }).setOrigin(0.5), name]);
+    g.fillStyle(0x000000, 0.16).fillCircle(0, 3, 23);
+    g.fillStyle(color).fillCircle(0, 0, 23);
+    g.lineStyle(3, 0xffffff, 0.95).strokeCircle(0, 0, 23);
+    const name = this.add.text(0, 12, label, { fontFamily: FONT, fontSize: '8px', color: '#ffffff', fontStyle: 'bold' }).setOrigin(0.5);
+    c.add([g, this.add.text(0, -5, emoji, { fontSize: '17px' }).setOrigin(0.5), name]);
     c.setSize(48, 50).setInteractive({ useHandCursor: true });
     c.on('pointerdown', () => {
       if (this.registry.get('modal')) return;
@@ -2126,12 +2126,12 @@ export class HudScene extends Phaser.Scene {
       const y1 = HUD_TOP_H + 26;
       const y2 = y1 + 44;
       // 자주 쓰는 만들기 · 꾸미기 · 지도는 메뉴와 따로, 오른쪽 위에 늘 보인다 (메뉴를 접어도 그대로)
-      const qx = W - 32;
-      const qy = HUD_TOP_H + 30;
+      // 만들기 · 꾸미기는 행동 단추 오른쪽에 같은 모양으로, 지도는 오른쪽 위에
+      const ay = this.scale.height - HUD_BOTTOM_H - 46 - 16; // 행동 단추와 같은 높이 (조이스틱 반지름 46)
       this.quickBtns = [
-        this.quickButton(qx, qy, '🔨', '만들기', 0xffd166, () => this.setView('merge')),
-        this.quickButton(qx, qy + 54, '🏡', '꾸미기', 0xb9e3a1, () => this.setView('build')),
-        this.quickButton(qx, qy + 108, '🗺️', '지도', 0xa9d8f0, () => this.openMap()),
+        this.quickButton(W - 44, ay - 36, '🔨', '만들기', 0xf2a93b, () => this.setView('merge')),
+        this.quickButton(W - 44, ay + 18, '🏡', '꾸미기', 0x6fbf5f, () => this.setView('build')),
+        this.quickButton(W - 32, HUD_TOP_H + 30, '🗺️', '지도', 0x5aa9d6, () => this.openMap()),
       ];
       mapBtn.destroy();
       this.sideBtns = this.sideBtns.filter((b) => b !== mapBtn);
