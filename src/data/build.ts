@@ -15,7 +15,7 @@ export const BUILD_CATS: { id: BuildCat; label: string; inside?: boolean }[] = [
 ];
 
 /** 들어가서 안을 꾸밀 수 있는 집 */
-export const ENTERABLE = new Set(['house_red', 'house_blue', 'cabin']);
+export const ENTERABLE = new Set(['house_red', 'house_blue', 'cabin', 'house_leaf', 'house_flower', 'house_tree', 'house_shell', 'house_rock', 'house_mushroom', 'house_igloo', 'house_tent', 'house_forge', 'house_cloud']);
 /** 밤에 주변을 밝히는 것 (그 둘레에는 몬스터가 나타나지 않는다) */
 export const LIGHTS = new Set(['torch', 'lamp', 'lantern', 'jelly_lamp']);
 export const houseKey = (island: number, tx: number, ty: number) => `h${island}_${tx}_${ty}`;
@@ -62,6 +62,17 @@ export const PIECE_LIST: Piece[] = [
   P('path_wood', '나무 데크', 'path', 1, 1, 0, false, true),
   // 집·건물
   P('house_red', '빨간 지붕 집', 'house', 2, 2, 8, true),
+  // 섬 특산 집 (섬 번호 순)
+  P('house_leaf', '풀잎 오두막', 'house', 2, 2, 12, true),
+  P('house_flower', '꽃 지붕 집', 'house', 2, 2, 12, true),
+  P('house_tree', '그루터기 집', 'house', 2, 2, 12, true),
+  P('house_shell', '소라 집', 'house', 2, 2, 12, true),
+  P('house_rock', '바위 굴 집', 'house', 2, 2, 12, true),
+  P('house_mushroom', '버섯 집', 'house', 2, 2, 12, true),
+  P('house_igloo', '이글루', 'house', 2, 2, 12, true),
+  P('house_tent', '사막 천막', 'house', 2, 2, 12, true),
+  P('house_forge', '용암 대장간', 'house', 2, 2, 12, true),
+  P('house_cloud', '구름 집', 'house', 2, 2, 12, true),
   P('house_blue', '파란 지붕 집', 'house', 2, 2, 9, true),
   P('cabin', '통나무집', 'house', 2, 2, 8, true),
   P('stall', '과일 가게', 'house', 2, 1, 5, true),
@@ -96,6 +107,17 @@ export const PIECE_LIST: Piece[] = [
   I('table', '탁자', 'furniture'),
   I('bed', '침대', 'furniture'),
   I('sofa', '소파', 'furniture'),
+  // 섬 특산 가구 (섬 번호 순)
+  F('herb_shelf', '약초 선반', 'furniture', 1, 1, 6, true),
+  F('petal_sofa', '꽃잎 소파', 'furniture', 2, 1, 6, true),
+  F('stump_table', '그루터기 찻상', 'furniture', 1, 1, 6, true),
+  F('shell_bed', '조개 침대', 'furniture', 1, 1, 6, true),
+  F('salt_lamp', '돌소금 등', 'furniture', 1, 1, 6, true),
+  F('mushroom_table', '버섯 탁자', 'furniture', 1, 1, 6, true),
+  F('ice_bed', '얼음 침대', 'furniture', 1, 1, 6, true),
+  F('hourglass', '모래시계', 'furniture', 1, 1, 6, true),
+  F('lava_stove', '용암 화덕', 'furniture', 1, 1, 6, true),
+  F('cloud_bed', '구름 침대', 'furniture', 1, 1, 6, true),
   F('bookshelf', '책장', 'furniture', 1, 1, 4, true),
   F('wardrobe', '옷장', 'furniture', 1, 1, 4, true),
   F('stove', '부엌 화덕', 'furniture', 1, 1, 4, true),
@@ -170,8 +192,11 @@ const ROOM_PLANS: Record<string, RoomPlan[]> = {
   ],
 };
 
+/** 섬 특산 집의 방은 기본 집 셋 가운데 하나의 생김새를 빌린다 */
+const ROOM_LIKE: Record<string, string> = { house_leaf: 'house_red', house_flower: 'house_blue', house_tree: 'cabin', house_shell: 'house_red', house_rock: 'cabin', house_mushroom: 'house_red', house_igloo: 'house_red', house_tent: 'house_blue', house_forge: 'cabin', house_cloud: 'house_blue' };
+
 export function roomPlan(id: string, tx: number, ty: number): RoomPlan {
-  const list = ROOM_PLANS[id] ?? ROOM_PLANS.house_red;
+  const list = ROOM_PLANS[id] ?? ROOM_PLANS[ROOM_LIKE[id]] ?? ROOM_PLANS.house_red;
   return list[(tx * 7 + ty * 13) % list.length];
 }
 
@@ -184,6 +209,7 @@ export const ROTATABLE = new Set<string>([
   'desk', 'tv', 'armchair', 'dresser', 'longsofa',
   'washer', 'washstand', 'toilet', 'vanity', 'clock', 'aquarium',
   'chair', 'bed',
+  'herb_shelf', 'petal_sofa', 'stump_table', 'shell_bed', 'salt_lamp', 'mushroom_table', 'ice_bed', 'hourglass', 'lava_stove', 'cloud_bed',
 ]);
 /** 돌린 가구 그림 (옆 _s · 뒤 _b) */
 export const TURN_TEXTURES = () => [...ROTATABLE].flatMap((id) => [`${PIECES[id].tex}_s`, `${PIECES[id].tex}_b`]);
