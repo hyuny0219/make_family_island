@@ -3,7 +3,7 @@ import { abilities } from '../state/abilities';
 import { BEAR_SKINS, COMBO_MOVES, COSTUME, SKIN_FRAMES, WEAPONS, islandLocked, skinNames, weaponTex, type Weapon } from '../data/weapons';
 import { Costume } from '../objects/Costume';
 import { Monster } from '../objects/Monster';
-import { BIOME_MONSTER, MONSTERS, SKIN_MONSTER } from '../data/monsters';
+import { MONSTERS, islandMonster, ISLAND_MONSTERS } from '../data/monsters';
 import { FOODS, foodText } from '../data/food';
 import { player } from '../state/player';
 import { quests } from '../state/quests';
@@ -1748,7 +1748,8 @@ export class IslandScene extends Phaser.Scene {
       if (reg.depth < (night ? 1 : 2) || Math.hypot(x - this.campPx.x, y - this.campPx.y) < 260) continue;
       // 불빛 둘레에는 나타나지 않는다
       if ([...this.glows.keys()].some((l) => Math.hypot(l.x - x, l.y - y) < 130)) continue;
-      const kind = Math.random() < 0.07 ? 'goblin' : SKIN_MONSTER[ISLANDS[this.islandIdx].skin ?? ''] ?? BIOME_MONSTER[reg.biome] ?? 'bee';
+      // 섬마다 그 섬에만 사는 세 종이 나온다 (보물 도깨비는 어느 섬에나 가끔)
+      const kind = Math.random() < 0.07 ? 'goblin' : islandMonster(this.islandIdx);
       // 밤에는 순한 몬스터도 사나워진다
       this.spawnMonster(kind, x, y, night && kind !== 'goblin' ? 1 : 0);
       this.fx.puff.explode(4, x, y - 6);
@@ -3463,8 +3464,7 @@ export class IslandScene extends Phaser.Scene {
   }
 
   private themeMonster() {
-    const skin = ISLANDS[this.islandIdx].skin ?? '';
-    return MONSTERS[SKIN_MONSTER[skin] ?? ['bee', 'bee', 'shroom', 'crab', 'bat'][this.islandIdx] ?? 'bee'];
+    return MONSTERS[(ISLAND_MONSTERS[this.islandIdx] ?? ISLAND_MONSTERS[0])[0]];
   }
 
   /** 바다뿐인 지도 구석 (던전·집 안을 지어 두는 곳) */
