@@ -24,6 +24,27 @@ export const isPlaceable = (id: ItemId) => id in DECOR_POINTS;
 /** 지나갈 수 없는 장식 */
 export const DECOR_BLOCKING: ReadonlySet<ItemId> = new Set<ItemId>(['wall', 'fence', 'fountain']);
 
+/** 우리 마을이 있는 섬 — 집·가구·주민은 모두 이 섬에만 둔다 (다른 섬은 모험하는 곳) */
+export const HOME_ISLAND = 0;
+
+/** 마을 점수를 채우면 받는 선물 (한 번씩) */
+export const DECO_REWARDS: { score: number; give: Partial<Record<ItemId, number>> }[] = [
+  { score: 10, give: { plank: 3 } },
+  { score: 25, give: { brick: 3 } },
+  { score: 45, give: { crystal: 2 } },
+  { score: 70, give: { coal: 5, crystal: 2 } },
+  { score: 100, give: { boss_token: 1 } },
+  { score: 140, give: { crystal: 4 } },
+  { score: 190, give: { pearl: 2, plank: 5 } },
+  { score: 250, give: { trophy: 1 } },
+  { score: 320, give: { boss_token: 2 } },
+  { score: 400, give: { crystal: 6 } },
+  { score: 500, give: { jelly_lamp: 2, brick: 5 } },
+  { score: 620, give: { boss_token: 3 } },
+  { score: 760, give: { trophy: 1, crystal: 5 } },
+  { score: 900, give: { crystal: 10, boss_token: 3 } },
+];
+
 export interface Resident {
   id: string;
   name: string;

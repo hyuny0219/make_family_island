@@ -24,7 +24,7 @@ import { TREASURES, treasureKey } from '../data/treasures';
 import { village } from '../state/village';
 import { family, type FeedItem, type SyncStatus } from '../sync/family';
 import { localDoc } from '../sync/bridge';
-import { ORDER_GIFTS, RESIDENTS, TROPHY_HEARTS } from '../data/village';
+import { DECO_REWARDS, HOME_ISLAND, ORDER_GIFTS, RESIDENTS, TROPHY_HEARTS } from '../data/village';
 import { COMBOS, MERGE_NEXT, USABLE } from '../data/merge';
 import { BUILD_CATS, PIECES, PIECE_LIST, type BuildCat, type Piece } from '../data/build';
 import type { IslandScene } from './IslandScene';
@@ -186,12 +186,17 @@ export class HudScene extends Phaser.Scene {
     const onDg = () => this.registry.get('dungeon') && this.queueTalk('dungeon');
     progress.on('boat-built', onBoat);
     village.on('resident-joined', onFriend);
+    this.decoBusy = false;
+    const onDeco = () => this.checkDecoRewards();
+    village.on('changed', onDeco);
+    this.time.delayedCall(2500, onDeco);
     this.registry.events.on('changedata-night', onNight);
     this.registry.events.on('changedata-dungeon', onDg);
     const talkTick = this.time.addEvent({ delay: 600, loop: true, callback: () => this.pumpTalk() });
     this.events.once('shutdown', () => {
       progress.off('boat-built', onBoat);
       village.off('resident-joined', onFriend);
+      village.off('changed', onDeco);
       this.registry.events.off('changedata-night', onNight);
       this.registry.events.off('changedata-dungeon', onDg);
       talkTick.remove();
@@ -658,6 +663,87 @@ export class HudScene extends Phaser.Scene {
   }
 
   /** 큰 축하 (지역 해금, 배 완성) */
+  // ───────────────────────── 우리 마을 · 마을 점수 선물 ─────────────────────────
+
+  /** 다른 섬에서 꾸미기를 눌렀다: 꾸미는 곳은 우리 마을뿐이니 돌아갈지 묻는다 */
+  private askGoHome() {
+    if (this.registry.get('modal')) return;
+    const PW = 280;
+    const PH = 190;
+    const { box, close } = this.modal(PW, PH);
+    const top = -PH / 2;
+    box.add(this.add.text(0, top + 30, '🏡 우리 마을', { fontFamily: FONT, fontSize: '18px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0.5));
+    box.add(this.add.text(0, top + 82, `집과 가구는 우리 마을(${ISLANDS[HOME_ISLAND].name})에\n모아서 꾸며요. 이 섬에서 모은 재료로\n특산 집과 가구를 만들어 가져가요!`, { fontFamily: FONT, fontSize: '12px', color: '#6b5a45', fontStyle: 'bold', align: 'center', lineSpacing: 4 }).setOrigin(0.5));
+    const go = this.button('⛵ 우리 마을로 가기', true, () => {
+      close();
+      this.game.events.emit('travel', HOME_ISLAND);
+    }, 200);
+    go.setPosition(0, PH / 2 - 36);
+    box.add(go);
+  }
+
+  /** 받은 마을 점수 선물의 개수 (이 기기에 저장 — 가족이 저마다 받는다) */
+  private decoClaimed() {
+    try {
+      return Math.max(0, Math.min(DECO_REWARDS.length, Number(localStorage.getItem('mfi.v1.decoRewards') ?? 0) || 0));
+    } catch {
+      return 0;
+    }
+  }
+
+  private decoBusy = false;
+
+  /** 마을 점수가 다음 선물 점수를 넘었으면 준다 (한 번에 하나씩) */
+  private checkDecoRewards() {
+    // 축하가 겹치지 않게 한 번에 하나씩
+    if (this.decoBusy) return;
+    const n = this.decoClaimed();
+    const r = DECO_REWARDS[n];
+    if (!r || village.score() < r.score || !this.registry.get('bear')) return;
+    this.decoBusy = true;
+    try {
+      localStorage.setItem('mfi.v1.decoRewards', String(n + 1));
+    } catch {
+      /* noop */
+    }
+    const got: string[] = [];
+    for (const [id, c] of Object.entries(r.give) as [ItemId, number][]) {
+      inventory.add(id, c);
+      got.push(`${ITEMS[id].name} ×${c}`);
+    }
+    sfx.fanfare();
+    this.celebrate(`🎁 마을 점수 ${r.score}점 달성!\n${got.join(' · ')}`);
+    // 한꺼번에 여러 단계를 넘었으면 이어서
+    this.time.delayedCall(2800, () => {
+      this.decoBusy = false;
+      this.checkDecoRewards();
+    });
+  }
+
+  /** 마을 점수 선물 목록 */
+  private openDecoRewards() {
+    if (this.registry.get('modal')) return;
+    const PW = 300;
+    const rowH = 21;
+    const PH = 84 + DECO_REWARDS.length * rowH;
+    const { box } = this.modal(PW, PH);
+    const top = -PH / 2;
+    const score = village.score();
+    const n = this.decoClaimed();
+    box.add(this.add.text(0, top + 26, `🎁 마을 점수 선물  ⭐ ${score}`, { fontFamily: FONT, fontSize: '16px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0.5));
+    box.add(this.add.text(0, top + 48, '우리 마을을 꾸며 점수를 채우면 선물을 받아요', { fontFamily: FONT, fontSize: '10px', color: '#a08a6a' }).setOrigin(0.5));
+    DECO_REWARDS.forEach((r, i) => {
+      const y = top + 72 + i * rowH;
+      const done = i < n;
+      const g = this.add.graphics();
+      g.fillStyle(done ? 0xdff1d2 : i === n ? 0xffe9a8 : 0xfff3d6).fillRoundedRect(-PW / 2 + 14, y - 9, PW - 28, 18, 7);
+      box.add(g);
+      box.add(this.add.text(-PW / 2 + 24, y, `${done ? '✅' : i === n ? '👉' : '🔒'} ${r.score}점`, { fontFamily: FONT, fontSize: '11px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0, 0.5));
+      const txt = (Object.entries(r.give) as [ItemId, number][]).map(([id, c]) => `${ITEMS[id].name} ×${c}`).join(' · ');
+      box.add(this.add.text(PW / 2 - 24, y, txt, { fontFamily: FONT, fontSize: '11px', color: done ? '#7a9a6a' : '#8a6d4b', fontStyle: 'bold' }).setOrigin(1, 0.5));
+    });
+  }
+
   private celebrate(msg: string) {
     const W = this.scale.width;
     const H = this.scale.height;
@@ -994,6 +1080,8 @@ export class HudScene extends Phaser.Scene {
   private setView(v: View) {
     if (v === this.view || this.registry.get('modal') || !this.registry.get('bear')) return;
     if (this.registry.get('dungeon')) return void this.toast('던전에서는 먼저 나가야 해요');
+    // 꾸미기는 우리 마을 섬에서만
+    if (v === 'build' && progress.current !== HOME_ISLAND) return void this.askGoHome();
     const was = this.view;
     this.view = v;
     this.registry.set('view', v);
@@ -1053,7 +1141,15 @@ export class HudScene extends Phaser.Scene {
     // 1) 마을 점수
     const score = village.score();
     const next = RESIDENTS.filter((r) => !village.isJoined(r.id) && progress.canVisit(r.island)).sort((a, b) => a.score - b.score)[0] ?? null;
-    tray.add(this.add.text(22, top + 15, `⭐ 마을 점수 ${score}`, { fontFamily: FONT, fontSize: '13px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0, 0.5));
+    // 누르면 점수 선물 목록
+    const nextGift = DECO_REWARDS[this.decoClaimed()];
+    const st = this.add.text(22, top + 15, `⭐ 마을 점수 ${score}${nextGift ? `  🎁 ${nextGift.score}점` : ''}`, { fontFamily: FONT, fontSize: '13px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0, 0.5).setInteractive({ useHandCursor: true });
+    st.on('pointerdown', (_p: Phaser.Input.Pointer, _x: number, _y: number, e: Phaser.Types.Input.EventData) => {
+      e.stopPropagation();
+      sfx.tap();
+      this.openDecoRewards();
+    });
+    tray.add(st);
     tray.add(
       this.add
         .text(W - 22, top + 15, next ? (score >= next.score ? `🏠 ${next.name}: 이사 올 준비 됐어요` : `🏠 ${next.name}까지 ${next.score - score}점`) : '🏠 친구가 모두 모였어요!', { fontFamily: FONT, fontSize: '11px', color: '#e07a5f', fontStyle: 'bold' })

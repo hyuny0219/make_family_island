@@ -26,7 +26,7 @@ import { inventory } from '../state/inventory';
 import { progress } from '../state/progress';
 import { village, type Placed } from '../state/village';
 import { family, type HitNet, type MobNet, type Presence } from '../sync/family';
-import { RESIDENTS } from '../data/village';
+import { RESIDENTS, HOME_ISLAND } from '../data/village';
 import { ENTERABLE, LIGHTS, PIECES, PIECE_LIST, houseKey, roomPlan, type Piece, nextTurn, oriented, turnOf, type Turn } from '../data/build';
 import { Bear } from '../objects/Bear';
 import { Slime } from '../objects/Slime';
@@ -242,6 +242,8 @@ export class IslandScene extends Phaser.Scene {
     this.buildDrag = null;
     for (const d of W.decor) this.occupied.add(`${d.tx},${d.ty}`);
     for (let oy = 0; oy <= 2; oy++) for (let ox = -1; ox <= 2; ox++) this.occupied.add(`${W.dock.tx + ox},${W.dock.ty + oy}`);
+    // 꾸미는 곳은 우리 마을 섬 하나뿐 — 예전에 다른 섬에 지어 둔 것은 창고로 돌려준다
+    this.bringHome();
     for (const p of village.placedOn(this.islandIdx)) this.addPlaced(p, false);
 
     // 선착장 + 배
@@ -266,7 +268,8 @@ export class IslandScene extends Phaser.Scene {
       this.npcTimers.set(bear, 1 + Math.random() * 3);
     });
     this.campPx = camp;
-    village.joined().forEach((r) => this.spawnResident(r.id, false));
+    // 이사 온 친구들은 우리 마을 섬에서 산다
+    if (this.islandIdx === HOME_ISLAND) village.joined().forEach((r) => this.spawnResident(r.id, false));
     this.placeFriend();
 
     const cam = this.cameras.main;
@@ -330,6 +333,7 @@ export class IslandScene extends Phaser.Scene {
     this.padKeys?.J.on('down', () => this.jump());
     player.on('faint', this.onFaint, this);
     village.on('resident-joined', this.onResidentJoined, this);
+    village.on('remote', this.bringHome, this);
     village.on('remote', this.syncPlaced, this);
     village.on('home-changed', this.syncRoomGuest, this);
     village.on('changed', this.rebuildRoads, this);
@@ -357,6 +361,7 @@ export class IslandScene extends Phaser.Scene {
       ge.off('exit-dungeon', this.exitDungeon, this);
       player.off('faint', this.onFaint, this);
       village.off('resident-joined', this.onResidentJoined, this);
+      village.off('remote', this.bringHome, this);
       village.off('remote', this.syncPlaced, this);
       village.off('home-changed', this.syncRoomGuest, this);
       village.off('changed', this.rebuildRoads, this);
@@ -5303,6 +5308,20 @@ export class IslandScene extends Phaser.Scene {
     return b;
   }
 
+  /** 우리 마을 섬 밖에 지어 둔 것을 걷어서 창고에 넣는다 (가족이 지어 둔 것이 뒤늦게 내려와도 다시 걷는다) */
+  private bringHome() {
+    // 가족 섬에 들어가 있으면 연결된 뒤에 걷는다 (연결 전에 걷으면 내려받은 것이 되살아나 두 번 돌려받게 된다)
+    if (family.code && family.status !== 'online') return;
+    const out = village.evictOutside(HOME_ISLAND);
+    if (!out.length) return;
+    for (const p of out) {
+      const piece = PIECES[p.id];
+      if (!piece) continue;
+      for (const [id, n] of Object.entries(piece.cost) as [ItemId, number][]) inventory.add(id, n);
+    }
+    this.time.delayedCall(1800, () => this.toast(`🏡 다른 섬에 지었던 것 ${out.length}개를 창고에 넣어 두었어요 · ${ISLANDS[HOME_ISLAND].name}에서 다시 놓아요`));
+  }
+
   private onResidentJoined(id: string) {
     const r = RESIDENTS.find((v) => v.id === id);
     if (!r) return;
@@ -5316,8 +5335,12 @@ export class IslandScene extends Phaser.Scene {
       wild.wild = false;
       wild.destroy();
     }
-    this.spawnResident(id, true);
     sfx.fanfare();
+    if (this.islandIdx !== HOME_ISLAND) {
+      // 다른 섬에서 만난 친구는 우리 마을(곰돌이 섬)로 떠난다
+      return void this.game.events.emit('celebrate', `🏠 ${withJosa(r.name, '이', '가')} 우리 마을로 이사 갔어요!\n${ISLANDS[HOME_ISLAND].name}에서 만나 봐요`);
+    }
+    this.spawnResident(id, true);
     this.game.events.emit('celebrate', `🏠 ${withJosa(r.name, '이', '가')} 우리 마을로 이사 왔어요!\n캠프에서 만나 봐요`);
   }
 

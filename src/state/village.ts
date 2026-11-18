@@ -89,6 +89,33 @@ class Village extends Phaser.Events.EventEmitter {
     return p;
   }
 
+  /**
+   * 우리 마을 섬 밖에 지어 둔 것(예전에는 섬마다 따로 꾸몄다)을 모두 걷어 낸다. 걷어 낸 것을 돌려준다 → 부른 쪽이 창고에 넣는다.
+   * 그 집에 살던 주민은 캠프로 돌아간다.
+   */
+  evictOutside(home: number): Placed[] {
+    const out: Placed[] = [];
+    for (const key of Object.keys(this.d.placed)) {
+      const m = /^h(\d+)_/.exec(key);
+      const island = m ? +m[1] : /^\d+$/.test(key) ? +key : home;
+      if (island === home) continue;
+      for (const p of this.d.placed[key]) {
+        out.push(p);
+        family.remove(`placed.${key}`, wire(p));
+      }
+      delete this.d.placed[key];
+    }
+    for (const [id, key] of Object.entries(this.d.homes)) {
+      const m = /^h(\d+)_/.exec(key);
+      if (m && +m[1] !== home) {
+        delete this.d.homes[id];
+        family.del(`homes.${id}`);
+      }
+    }
+    if (out.length) this.afterChange();
+    return out;
+  }
+
   private afterChange() {
     this.save();
     this.emit('changed');
