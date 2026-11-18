@@ -19,6 +19,11 @@ export const ENTERABLE = new Set(['house_red', 'house_blue', 'cabin', 'house_lea
 /** 밤에 주변을 밝히는 것 (그 둘레에는 몬스터가 나타나지 않는다) */
 export const LIGHTS = new Set(['torch', 'lamp', 'lantern', 'jelly_lamp']);
 export const houseKey = (island: number, tx: number, ty: number) => `h${island}_${tx}_${ty}`;
+/** 2층 방의 열쇠 (1층 열쇠에 _2) */
+export const upperKey = (key: string) => `${key}_2`;
+/** 집에 2층을 올리는 데 드는 재료와 올리면 오르는 마을 점수 */
+export const UPPER_COST: Partial<Record<ItemId, number>> = { plank: 6, brick: 4, crystal: 1 };
+export const UPPER_POINTS = 6;
 
 /** 섬에 지을 수 있는 것 하나 */
 export interface Piece {

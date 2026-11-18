@@ -26,7 +26,7 @@ import { family, type FeedItem, type SyncStatus } from '../sync/family';
 import { localDoc } from '../sync/bridge';
 import { DECO_REWARDS, HOME_ISLAND, ORDER_GIFTS, RESIDENTS, TROPHY_HEARTS } from '../data/village';
 import { COMBOS, MERGE_NEXT, USABLE } from '../data/merge';
-import { BUILD_CATS, PIECES, PIECE_LIST, type BuildCat, type Piece } from '../data/build';
+import { BUILD_CATS, PIECES, PIECE_LIST, UPPER_COST, UPPER_POINTS, type BuildCat, type Piece } from '../data/build';
 import type { IslandScene } from './IslandScene';
 
 // 위쪽 줄(섬 이름·창고 단추) 높이. 예전에는 그 아래에 가진 재료가 한 줄로 늘어서 있었다(96)
@@ -120,6 +120,7 @@ export class HudScene extends Phaser.Scene {
       ['open-combos', this.openCombos],
       ['open-sleep', this.openSleep],
       ['open-dungeon', this.openDungeon],
+      ['ask-upper', this.askUpper],
       ['dungeon-invited', this.onDungeonInvited],
       ['lobby', this.onLobby],
       ['combo', this.onCombo],
@@ -186,7 +187,6 @@ export class HudScene extends Phaser.Scene {
     const onDg = () => this.registry.get('dungeon') && this.queueTalk('dungeon');
     progress.on('boat-built', onBoat);
     village.on('resident-joined', onFriend);
-    this.decoBusy = false;
     const onDeco = () => this.checkDecoRewards();
     village.on('changed', onDeco);
     this.time.delayedCall(2500, onDeco);
@@ -691,16 +691,29 @@ export class HudScene extends Phaser.Scene {
     }
   }
 
-  private decoBusy = false;
+  /** 마지막으로 '받을 수 있어요'를 알린 단계 */
+  private decoTold = -1;
 
-  /** 마을 점수가 다음 선물 점수를 넘었으면 준다 (한 번에 하나씩) */
+  /** 지금 받을 수 있는 선물이 있는가 */
+  private decoReady() {
+    const r = DECO_REWARDS[this.decoClaimed()];
+    return !!r && village.score() >= r.score;
+  }
+
+  /** 받을 선물이 생겼으면 한 번 알려 준다 (받는 것은 목록에서 직접) */
   private checkDecoRewards() {
-    // 축하가 겹치지 않게 한 번에 하나씩
-    if (this.decoBusy) return;
+    const n = this.decoClaimed();
+    if (!this.decoReady() || this.decoTold === n || !this.registry.get('bear')) return;
+    this.decoTold = n;
+    this.toast('🎁 마을 점수 선물을 받을 수 있어요 · 꾸미기의 ⭐ 마을 점수를 눌러요');
+    if (this.view === 'build') this.rebuildBuildTray();
+  }
+
+  /** 다음 선물 하나를 받는다 */
+  private claimDecoReward() {
     const n = this.decoClaimed();
     const r = DECO_REWARDS[n];
-    if (!r || village.score() < r.score || !this.registry.get('bear')) return;
-    this.decoBusy = true;
+    if (!r || village.score() < r.score) return;
     try {
       localStorage.setItem('mfi.v1.decoRewards', String(n + 1));
     } catch {
@@ -712,36 +725,77 @@ export class HudScene extends Phaser.Scene {
       got.push(`${ITEMS[id].name} ×${c}`);
     }
     sfx.fanfare();
-    this.celebrate(`🎁 마을 점수 ${r.score}점 달성!\n${got.join(' · ')}`);
-    // 한꺼번에 여러 단계를 넘었으면 이어서
-    this.time.delayedCall(2800, () => {
-      this.decoBusy = false;
-      this.checkDecoRewards();
-    });
+    this.celebrate(`🎁 마을 점수 ${r.score}점 선물!\n${got.join(' · ')}`);
   }
 
-  /** 마을 점수 선물 목록 */
+  /** 마을 점수 선물 목록 (받을 수 있는 줄에는 '받기' 단추) */
   private openDecoRewards() {
     if (this.registry.get('modal')) return;
-    const PW = 300;
+    const PW = 320;
     const rowH = 21;
     const PH = 84 + DECO_REWARDS.length * rowH;
-    const { box } = this.modal(PW, PH);
+    const { box, close } = this.modal(PW, PH);
     const top = -PH / 2;
     const score = village.score();
     const n = this.decoClaimed();
     box.add(this.add.text(0, top + 26, `🎁 마을 점수 선물  ⭐ ${score}`, { fontFamily: FONT, fontSize: '16px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0.5));
-    box.add(this.add.text(0, top + 48, '우리 마을을 꾸며 점수를 채우면 선물을 받아요', { fontFamily: FONT, fontSize: '10px', color: '#a08a6a' }).setOrigin(0.5));
+    box.add(this.add.text(0, top + 48, '우리 마을을 꾸며 점수를 채우고, 받기를 눌러 선물을 받아요', { fontFamily: FONT, fontSize: '10px', color: '#a08a6a' }).setOrigin(0.5));
     DECO_REWARDS.forEach((r, i) => {
       const y = top + 72 + i * rowH;
       const done = i < n;
+      const ready = i === n && score >= r.score;
       const g = this.add.graphics();
       g.fillStyle(done ? 0xdff1d2 : i === n ? 0xffe9a8 : 0xfff3d6).fillRoundedRect(-PW / 2 + 14, y - 9, PW - 28, 18, 7);
       box.add(g);
       box.add(this.add.text(-PW / 2 + 24, y, `${done ? '✅' : i === n ? '👉' : '🔒'} ${r.score}점`, { fontFamily: FONT, fontSize: '11px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0, 0.5));
       const txt = (Object.entries(r.give) as [ItemId, number][]).map(([id, c]) => `${ITEMS[id].name} ×${c}`).join(' · ');
-      box.add(this.add.text(PW / 2 - 24, y, txt, { fontFamily: FONT, fontSize: '11px', color: done ? '#7a9a6a' : '#8a6d4b', fontStyle: 'bold' }).setOrigin(1, 0.5));
+      box.add(this.add.text(PW / 2 - (ready ? 70 : 24), y, txt, { fontFamily: FONT, fontSize: '11px', color: done ? '#7a9a6a' : '#8a6d4b', fontStyle: 'bold' }).setOrigin(1, 0.5));
+      if (ready) {
+        const btn = this.add.text(PW / 2 - 20, y, '받기', { fontFamily: FONT, fontSize: '11px', color: '#ffffff', fontStyle: 'bold', backgroundColor: '#e07a5f', padding: { x: 9, y: 3 } }).setOrigin(1, 0.5).setInteractive({ useHandCursor: true });
+        btn.on('pointerdown', (_p: Phaser.Input.Pointer, _x: number, _y: number, e: Phaser.Types.Input.EventData) => {
+          e.stopPropagation();
+          this.claimDecoReward();
+          close();
+          // 이어서 받을 것이 있으면 목록을 다시 연다
+          this.time.delayedCall(320, () => {
+            if (this.view === 'build') this.rebuildBuildTray();
+            if (this.decoReady()) this.openDecoRewards();
+          });
+        });
+        box.add(btn);
+      }
     });
+  }
+
+  /** 집에 2층을 올릴지 묻는다 (재료를 보여 주고, 모자라면 알려 준다) */
+  private askUpper(key: string) {
+    if (this.registry.get('modal') || village.hasUpper(key)) return;
+    const PW = 280;
+    const PH = 210;
+    const { box, close } = this.modal(PW, PH);
+    const top = -PH / 2;
+    box.add(this.add.text(0, top + 30, '🔨 2층 올리기', { fontFamily: FONT, fontSize: '18px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0.5));
+    box.add(this.add.text(0, top + 66, `집 안에 계단이 생기고 2층을 따로 꾸밀 수 있어요\n마을 점수 +${UPPER_POINTS}`, { fontFamily: FONT, fontSize: '11px', color: '#6b5a45', fontStyle: 'bold', align: 'center', lineSpacing: 4 }).setOrigin(0.5));
+    const cost = Object.entries(UPPER_COST) as [ItemId, number][];
+    let ok = true;
+    cost.forEach(([id, c], i) => {
+      const x = (i - (cost.length - 1) / 2) * 76;
+      const have = inventory.get(id);
+      if (have < c) ok = false;
+      box.add(this.add.image(x - 18, top + 112, itemKey(id)).setScale(1.3));
+      box.add(this.add.text(x - 4, top + 112, `${have}/${c}`, { fontFamily: FONT, fontSize: '12px', color: have >= c ? '#4f8f43' : '#d1495b', fontStyle: 'bold' }).setOrigin(0, 0.5));
+      box.add(this.add.text(x, top + 132, ITEMS[id].name, { fontFamily: FONT, fontSize: '9px', color: '#a08a6a', fontStyle: 'bold' }).setOrigin(0.5));
+    });
+    const go = this.button(ok ? '2층 올리기' : '재료가 모자라요', ok, () => {
+      if (!ok) return;
+      for (const [id, c] of cost) inventory.add(id, -c);
+      close();
+      village.addUpper(key);
+      sfx.fanfare();
+      this.celebrate('🏠 2층이 생겼어요!\n계단으로 올라가 보세요');
+    }, 200);
+    go.setPosition(0, PH / 2 - 34);
+    box.add(go);
   }
 
   private celebrate(msg: string) {
@@ -1143,7 +1197,7 @@ export class HudScene extends Phaser.Scene {
     const next = RESIDENTS.filter((r) => !village.isJoined(r.id) && progress.canVisit(r.island)).sort((a, b) => a.score - b.score)[0] ?? null;
     // 누르면 점수 선물 목록
     const nextGift = DECO_REWARDS[this.decoClaimed()];
-    const st = this.add.text(22, top + 15, `⭐ 마을 점수 ${score}${nextGift ? `  🎁 ${nextGift.score}점` : ''}`, { fontFamily: FONT, fontSize: '13px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0, 0.5).setInteractive({ useHandCursor: true });
+    const st = this.add.text(22, top + 15, `⭐ 마을 점수 ${score}${nextGift ? (score >= nextGift.score ? '  🎁 선물 받기!' : `  🎁 ${nextGift.score}점`) : ''}`, { fontFamily: FONT, fontSize: '13px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0, 0.5).setInteractive({ useHandCursor: true });
     st.on('pointerdown', (_p: Phaser.Input.Pointer, _x: number, _y: number, e: Phaser.Types.Input.EventData) => {
       e.stopPropagation();
       sfx.tap();

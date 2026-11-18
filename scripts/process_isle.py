@@ -3,6 +3,7 @@
 art/source/isle/house_a·b.png        → public/assets/build_<집>.png
 art/source/isle/furn_a·b.png         → public/assets/build_<가구>.png (앞)
 art/source/isle/furn_a·b_s.png / _b  → build_<가구>_s.png (옆, 앞이 왼쪽) / _b.png (뒤)
+art/source/isle/house2_*.png         → build_<집>_2f.png (2층을 올린 모습)
 작업대·창고에 보이는 아이콘 item_<id>.png 도 함께 만든다.
 
 사용법: python3 scripts/process_isle.py
@@ -28,8 +29,16 @@ FURN = {
 }
 
 
-def cut(im: Image.Image, c: int, r: int):
-    cw, ch = im.width / 3, im.height / 2
+# 2층집(증축한 모습): 시트 → (가로 칸, 세로 칸, 이름들). 너비를 1층집과 같게 맞춘다
+TALL = {
+    "house2_base.png": (3, 1, ["house_red", "house_blue", "cabin"]),
+    "house2_a.png": (3, 2, ["house_leaf", "house_flower", "house_tree", "house_shell", "house_rock", "house_mushroom"]),
+    "house2_b.png": (3, 2, ["house_igloo", "house_tent", "house_forge", "house_cloud"]),
+}
+
+
+def cut(im: Image.Image, c: int, r: int, cols: int = 3, rows: int = 2):
+    cw, ch = im.width / cols, im.height / rows
     cell = im.crop((int(c * cw), int(r * ch), int((c + 1) * cw), int((r + 1) * ch)))
     a = np.array(cell.getchannel("A")) >= ALPHA_CUT
     if not a.any():
@@ -43,8 +52,8 @@ def cut(im: Image.Image, c: int, r: int):
     return Image.fromarray(arr).crop((xs.min(), ys.min(), xs.max() + 1, ys.max() + 1))
 
 
-def save(cell: Image.Image, name: str, long: int | None = None, height: int | None = None):
-    f = (height / cell.height) if height else (long / max(cell.width, cell.height))
+def save(cell: Image.Image, name: str, long: int | None = None, height: int | None = None, width: int | None = None):
+    f = (width / cell.width) if width else (height / cell.height) if height else (long / max(cell.width, cell.height))
     w, h = max(1, round(cell.width * f)), max(1, round(cell.height * f))
     arr = np.array(cell.resize((w, h), Image.BOX))
     arr[..., 3] = np.where(arr[..., 3] >= ALPHA_CUT, 255, 0)
@@ -65,6 +74,11 @@ def main():
         for i, name in enumerate(names):
             save(cut(im, i % 3, i // 3), f"build_{name}", long=58)
             icon(name)
+    for sheet, (cols, rows, names) in TALL.items():
+        im = Image.open(SRC / sheet).convert("RGBA")
+        for i, name in enumerate(names):
+            one = Image.open(OUT / f"build_{name}.png")
+            save(cut(im, i % cols, i // cols, cols, rows), f"build_{name}_2f", width=one.width)
     for sheet, names in FURN.items():
         front = Image.open(SRC / f"{sheet}.png").convert("RGBA")
         side = Image.open(SRC / f"{sheet}_s.png").convert("RGBA")
