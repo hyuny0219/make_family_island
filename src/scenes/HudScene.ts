@@ -1573,7 +1573,8 @@ export class HudScene extends Phaser.Scene {
     if (sk) {
       const W = this.scale.width;
       const left = Math.max(0, ((this.registry.get('skillReady') as number) ?? 0) - this.game.scene.getScene('Island').time.now);
-      const sb = this.add.container(W - 12 - 12 - 26, -12);
+      // 가로 화면: 오른쪽 끝에는 만들기·꾸미기 단추가 있으니, 행동 단추의 왼쪽 위(점프 단추 위)에 둔다
+      const sb = this.wide ? this.add.container(W - 200 - 12, -76) : this.add.container(W - 12 - 12 - 26, -12);
       const sg = this.add.graphics();
       sg.fillStyle(0x000000, 0.16).fillCircle(0, 3, 26);
       sg.fillStyle(left > 0 ? 0xb8b0a0 : 0xff8a5c).fillCircle(0, 0, 26);
@@ -2346,8 +2347,26 @@ export class HudScene extends Phaser.Scene {
       this.arrow.setVisible(false);
       return;
     }
-    const cx = Phaser.Math.Clamp(g.x, l, r - 44); // 오른쪽 버튼 줄을 피해서
-    const cy = Phaser.Math.Clamp(g.y, t, b);
+    let cx = Phaser.Math.Clamp(g.x, l, r - 44); // 오른쪽 버튼 줄을 피해서
+    let cy = Phaser.Math.Clamp(g.y, t, b);
+    // 가로 화면: 단추가 모여 있는 네 귀퉁이를 피해서 띄운다 (겹치면 가장 가까운 바깥으로 민다)
+    if (this.wide) {
+      const zones: [number, number, number, number][] = [
+        this.menuOpen ? [0, HUD_TOP_H, 222, 104] : [0, HUD_TOP_H, 60, 58], // 메뉴
+        [W - 64, HUD_TOP_H, 64, 64], // 지도
+        [0, H - 150, 196, 150], // 조이스틱 · 도시락
+        [W - 246, H - 146, 246, 146], // 행동 · 점프 · 기술 · 만들기 · 꾸미기
+      ];
+      const pad = 16;
+      for (const [zx, zy, zw, zh] of zones) {
+        if (cx < zx - pad || cx > zx + zw + pad || cy < zy - pad || cy > zy + zh + pad) continue;
+        // 화면 안쪽으로 난 두 변 가운데 가까운 쪽으로
+        const toX = zx === 0 ? zx + zw + pad : zx - pad;
+        const toY = zy <= HUD_TOP_H ? zy + zh + pad : zy - pad;
+        if (Math.abs(toX - cx) <= Math.abs(toY - cy)) cx = toX;
+        else cy = toY;
+      }
+    }
     this.arrow.setVisible(true).setPosition(cx, cy);
     this.arrowTip.setRotation(Math.atan2(g.y - cy, g.x - cx));
     this.arrowIcon.setText(g.kind === 'dock' ? '⛵' : '❗');
