@@ -49,39 +49,6 @@
         font-family: 'Apple SD Gothic Neo', 'Noto Sans KR', 'Malgun Gothic', sans-serif;
         transition: opacity 0.45s ease;
       }
-      /* 가로로 하는 게임: 폰을 세로로 들고 있어도 첫 화면은 가로로 눕혀서 보여 준다 */
-      @media (orientation: portrait) {
-        #start.land {
-          inset: auto;
-          top: 0;
-          left: 100vw;
-          width: 100vh;
-          height: 100vw;
-          transform: rotate(90deg);
-          transform-origin: top left;
-        }
-        #start.land .turn {
-          display: block;
-        }
-      }
-      /* 세로로 든 폰에서만 보이는 '가로 화면으로 전환' 단추 */
-      #start .turn {
-        display: none;
-        position: absolute;
-        right: 3%;
-        top: calc(5% + env(safe-area-inset-top));
-        padding: 0.5em 1em;
-        border: 0.12em solid #ffffff;
-        border-radius: 999px;
-        background: rgba(47, 127, 176, 0.92);
-        color: #ffffff;
-        font: inherit;
-        font-size: clamp(12px, 3.6vmin, 18px);
-        font-weight: 800;
-        white-space: nowrap;
-        box-shadow: 0 0.2em 0.5em rgba(0, 0, 0, 0.35);
-        cursor: pointer;
-      }
       #start.gone {
         opacity: 0;
         pointer-events: none;
@@ -181,7 +148,6 @@
         <h2>열 개의 섬</h2>
       </div>
       <button id="startBtn" type="button">▶ 시작하기</button>
-      <button id="turnBtn" class="turn" type="button">🔄 가로 화면으로 전환</button>
     </div>
     </div>
     <script type="module" src="/src/start.ts"></script>

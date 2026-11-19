@@ -16,11 +16,9 @@ try {
 }
 const landscape = saved.landscape !== false;
 const fullscreen = saved.fullscreen !== false;
-// 가로로 하는 게임이면 첫 화면부터 가로로 (세로로 든 폰에서는 눕혀서 보여 준다)
-if (landscape) root.classList.add('land');
 
 /** 손가락이 닿은 이 순간에만 할 수 있는 것: 전체 화면으로 바꾸고 화면을 가로로 돌려 잠근다 (안드로이드. 아이폰은 지원하지 않는다) */
-async function goLandscape(force = false): Promise<boolean> {
+async function goLandscape(): Promise<boolean> {
   const lock = async () => {
     const o = screen.orientation as (ScreenOrientation & { lock?: (dir: string) => Promise<void> }) | undefined;
     if (!o?.lock) return false;
@@ -32,8 +30,8 @@ async function goLandscape(force = false): Promise<boolean> {
     }
   };
   const el = document.getElementById('game')!;
-  // 화면을 돌려 잠그려면 전체 화면이어야 한다 (전환 단추를 눌렀을 때는 전체 화면 설정이 꺼져 있어도 켠다)
-  if ((fullscreen || force) && el.requestFullscreen && !document.fullscreenElement) {
+  // 화면을 돌려 잠그려면 전체 화면이어야 한다
+  if (fullscreen && el.requestFullscreen && !document.fullscreenElement) {
     try {
       await el.requestFullscreen();
     } catch {
@@ -43,18 +41,9 @@ async function goLandscape(force = false): Promise<boolean> {
   return lock();
 }
 
-// '가로 화면으로 전환' 단추 (세로로 든 폰에서만 보인다)
-const turnBtn = document.getElementById('turnBtn') as HTMLButtonElement | null;
-turnBtn?.addEventListener('click', () => {
-  void goLandscape(true).then((ok) => {
-    // 못 돌리는 기기(아이폰 등)는 직접 돌려 달라고 알려 준다
-    if (!ok && turnBtn) turnBtn.textContent = '📱 폰을 가로로 돌려 주세요';
-  });
-});
-
 // 영상: 파일이 있으면 소리 없이 되풀이해서 튼다 (없거나 못 틀면 그림이 그대로 보인다)
-const wide = landscape || window.innerWidth > window.innerHeight;
-video.src = `${import.meta.env.BASE_URL}assets/title/${wide ? 'title_wide' : 'title_tall'}.mp4`;
+// 첫 화면은 폰을 든 그대로 보여 준다. 시작하기를 누르면 그때 전체 화면 + 가로로 바뀐다. (영상은 가로용 하나 — 세로에서는 가운데만 보인다)
+video.src = `${import.meta.env.BASE_URL}assets/title/title_wide.mp4`;
 video.addEventListener('playing', () => video.classList.add('on'));
 video.addEventListener('error', () => video.remove());
 void video.play().catch(() => {

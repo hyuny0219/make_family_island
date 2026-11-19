@@ -1515,7 +1515,7 @@ export class HudScene extends Phaser.Scene {
     const top = -PH / 2;
     const made = COMBOS.filter((c) => inventory.discovered(c.out)).length;
     box.add(this.add.text(0, top + 26, `📖 조합 수첩  ${made}/${COMBOS.length}`, { fontFamily: FONT, fontSize: '19px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0.5));
-    box.add(this.add.text(0, top + 50, '만들기 → 합치기 보드에서 서로 다른 두 가지를 겹쳐요 · 밀어서 더 보기', { fontFamily: FONT, fontSize: '10px', color: '#a08a6a' }).setOrigin(0.5));
+    box.add(this.add.text(0, top + 50, '만들기 → 합치기에서 서로 다른 두 가지를 겹쳐요', { fontFamily: FONT, fontSize: '10px', color: '#a08a6a' }).setOrigin(0.5));
     const list = this.scrollList(box, PW, PH, top + 68, viewH, contentH, () => {});
     COMBOS.forEach((c, i) => {
       const y = i * rowH;
@@ -1828,8 +1828,8 @@ export class HudScene extends Phaser.Scene {
   private openAbilities() {
     if (this.registry.get('modal') || !this.registry.get('bear')) return;
     const H = this.scale.height;
-    const PW = Math.min(330, this.scale.width - 20);
-    const rowH = 84;
+    const PW = Math.min(360, this.scale.width - 20);
+    const rowH = 118; // 글씨를 키우면서 설명 줄이 늘어도 겹치지 않게 넉넉히
     const contentH = ABILITIES.length * rowH;
     const PH = Math.min(H - 70, 88 + contentH);
     const viewH = PH - 88;
@@ -1884,11 +1884,14 @@ export class HudScene extends Phaser.Scene {
       }
       list.add(this.add.text(x + 54, y + 8, `${ab.emoji} ${ab.names[lv - 1]}  ${'★'.repeat(lv)} ${lv}단계${worn ? ' · 변신 중' : ''}`, { fontFamily: FONT, fontSize: '13px', color: COLORS.uiText, fontStyle: 'bold' }));
       list.add(this.add.text(x + 54, y + 26, ab.desc.replace('{n}', String(ab.n[lv - 1])), { fontFamily: FONT, fontSize: '9px', color: '#8a6d4b' }));
-      list.add(this.add.text(x + 54, y + 39, `⚡ ${ab.skill.name}: ${ab.skill.desc.replace('{n}', String(ab.skill.n[lv - 1]))}`, { fontFamily: FONT, fontSize: '8px', color: '#e07a5f', fontStyle: 'bold', wordWrap: { width: PW - 30 - 54 - 76 } }));
+      // 설명 줄은 길이에 따라 한두 줄이 되니, 위 줄의 높이만큼 아래로 이어 쌓는다
+      const skT = this.add.text(x + 54, y + 42, `⚡ ${ab.skill.name}: ${ab.skill.desc.replace('{n}', String(ab.skill.n[lv - 1]))}`, { fontFamily: FONT, fontSize: '8px', color: '#e07a5f', fontStyle: 'bold', wordWrap: { width: PW - 30 - 54 - 80, useAdvancedWrap: true } });
+      list.add(skT);
       const wpn = WEAPONS[ab.id];
       if (wpn) {
-        list.add(this.add.image(x + 60, y + 67, weaponTex(this.textures, ab.id, lv)).setScale(0.6));
-        list.add(this.add.text(x + 70, y + 62, `${wpn.names[lv - 1]}: ${wpn.desc}`, { fontFamily: FONT, fontSize: '8px', color: '#3d7ea6', fontStyle: 'bold', wordWrap: { width: PW - 30 - 150, useAdvancedWrap: true } }));
+        const wy = skT.y + skT.height + 3;
+        list.add(this.add.image(x + 60, wy + 7, weaponTex(this.textures, ab.id, lv)).setScale(0.6));
+        list.add(this.add.text(x + 70, wy, `${wpn.names[lv - 1]}: ${wpn.desc}`, { fontFamily: FONT, fontSize: '8px', color: '#3d7ea6', fontStyle: 'bold', wordWrap: { width: PW - 30 - 70 - 80, useAdvancedWrap: true } }));
       }
       if (lv < 3) {
         const cost = UPGRADE_COST[lv - 1];

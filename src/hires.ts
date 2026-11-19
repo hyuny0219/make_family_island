@@ -6,14 +6,25 @@
  * WebGL에서만 동작하고, 설정의 '선명한 화면'을 끄면 예전처럼 그린다.
  */
 import Phaser from 'phaser';
-import { settings } from './state/settings';
+import { settings, setSetting } from './state/settings';
+
+// 예전 버그(캔버스를 장면마다 새로 만들어 몹시 버벅였다) 때문에 '선명한 화면'을 껐을 수 있다 → 고친 뒤 한 번만 다시 켠다
+try {
+  if (!localStorage.getItem('mfi.v1.sharpFix1')) {
+    localStorage.setItem('mfi.v1.sharpFix1', '1');
+    if (!settings.sharp) setSetting('sharp', true);
+  }
+} catch {
+  /* noop */
+}
 
 
 /**
  * 배율의 위쪽 끝. 처음에는 2배(3배는 폰에 따라 너무 무겁다).
  * 그래도 느리면(아래 감시) 한 단계씩 내리고, 내린 값은 이 기기에 기억해 둔다.
  */
-const CAP_KEY = 'mfi.v1.hiresCap';
+// (열쇠 이름의 2: 캔버스를 장면마다 새로 만들던 버그 때문에 잘못 낮춰진 예전 값을 버린다)
+const CAP_KEY = 'mfi.v1.hiresCap2';
 let cap = 2;
 try {
   const saved = Number(localStorage.getItem(CAP_KEY));
@@ -32,11 +43,17 @@ function pick(game: Phaser.Game) {
   return Math.max(1, Math.min(cap, k || 1));
 }
 
+/** 작은 글씨 키우기: 8 → 10.5, 9 → 11, 10 → 11.5, 11 → 12, 12 → 12.5 (13 이상은 그대로) */
+const bigger = (px: number) => (px <= 8 ? 10.5 : px <= 12 ? 11 + (px - 9) * 0.5 : px);
+
 export function installHiRes(game: Phaser.Game) {
   // 글자: 만들 때마다 지금 배율로
   const F = Phaser.GameObjects.GameObjectFactory.prototype as unknown as { text: (x: number, y: number, text: string | string[], style?: Phaser.Types.GameObjects.Text.TextStyle) => Phaser.GameObjects.Text };
   F.text = function (this: Phaser.GameObjects.GameObjectFactory, x, y, text, style) {
-    const s = RES > 1 && !(style && style.resolution) ? { ...(style ?? {}), resolution: RES } : style;
+    let s = RES > 1 && !(style && style.resolution) ? { ...(style ?? {}), resolution: RES } : style;
+    // 작은 글씨는 읽기 어렵다 → 한꺼번에 키운다 (큰 글씨는 그대로)
+    const px = s ? parseFloat(String(s.fontSize ?? '')) : NaN;
+    if (px > 0 && px < 13) s = { ...s, fontSize: `${bigger(px)}px` };
     return this.displayList.add(new Phaser.GameObjects.Text(this.scene, x, y, text, s ?? {})) as Phaser.GameObjects.Text;
   };
 
@@ -63,10 +80,14 @@ export function installHiRes(game: Phaser.Game) {
     const ensure = () => {
       const k = pick(game);
       const c = game.canvas;
-      if (k === RES && c.width === R.width * k && c.height === R.height * k) return;
+      // 게임 너비는 소수일 수 있다(예: 739.22). 캔버스 화소 수는 정수라서, 정수로 맞춰 견줘야 한다.
+      // (소수 그대로 견주면 늘 '다르다'가 되어 장면마다 캔버스를 새로 만들게 되고, 그러면 몹시 버벅인다)
+      const w = Math.floor(R.width) * k;
+      const h = Math.floor(R.height) * k;
+      if (k === RES && c.width === w && c.height === h) return;
       RES = k;
-      c.width = R.width * k;
-      c.height = R.height * k;
+      if (c.width !== w) c.width = w;
+      if (c.height !== h) c.height = h;
       dbh = R.height;
       gl.viewport(0, 0, R.width, R.height);
       gl.scissor(0, 0, R.width, R.height);
