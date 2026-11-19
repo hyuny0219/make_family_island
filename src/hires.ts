@@ -8,14 +8,28 @@
 import Phaser from 'phaser';
 import { settings } from './state/settings';
 
+
+/**
+ * 배율의 위쪽 끝. 처음에는 2배(3배는 폰에 따라 너무 무겁다).
+ * 그래도 느리면(아래 감시) 한 단계씩 내리고, 내린 값은 이 기기에 기억해 둔다.
+ */
+const CAP_KEY = 'mfi.v1.hiresCap';
+let cap = 2;
+try {
+  const saved = Number(localStorage.getItem(CAP_KEY));
+  if (saved === 1 || saved === 2) cap = saved;
+} catch {
+  /* noop */
+}
+
 /** 지금의 배율 (글자를 이 해상도로 그린다). 렌더러가 준비되기 전에는 화면 크기로 어림한다 */
-let RES = settings.sharp ? Math.max(1, Math.min(3, Math.round(((window.devicePixelRatio || 1) * Math.min(window.innerWidth, window.innerHeight)) / 360))) : 1;
+let RES = settings.sharp ? Math.max(1, Math.min(cap, Math.round(((window.devicePixelRatio || 1) * Math.min(window.innerWidth, window.innerHeight)) / 360))) : 1;
 
 function pick(game: Phaser.Game) {
   if (!settings.sharp) return 1;
   const css = game.scale.displaySize.width;
   const k = Math.round(((window.devicePixelRatio || 1) * css) / game.scale.width);
-  return Math.max(1, Math.min(3, k || 1));
+  return Math.max(1, Math.min(cap, k || 1));
 }
 
 export function installHiRes(game: Phaser.Game) {
@@ -59,6 +73,25 @@ export function installHiRes(game: Phaser.Game) {
     };
     game.events.on(Phaser.Core.Events.PRE_RENDER, ensure);
     ensure();
+    // 느린 기기 감시: 3초 동안 평균이 초당 40장에 못 미치면 배율을 한 단계 내린다 (탭을 가렸다 돌아온 직후는 세지 않는다)
+    let slowSince = 0;
+    window.setInterval(() => {
+      if (RES <= 1 || document.hidden) return void (slowSince = 0);
+      const fps = game.loop.actualFps;
+      if (fps > 0 && fps < 40) {
+        if (!slowSince) slowSince = performance.now();
+        else if (performance.now() - slowSince >= 3000) {
+          cap = Math.max(1, RES - 1);
+          slowSince = 0;
+          try {
+            localStorage.setItem(CAP_KEY, String(cap));
+          } catch {
+            /* noop */
+          }
+        }
+      } else slowSince = 0;
+    }, 1000);
+    document.addEventListener('visibilitychange', () => (slowSince = 0));
   });
 }
 
