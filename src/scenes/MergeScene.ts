@@ -8,6 +8,7 @@ import { BOARD_COLS, BOARD_ROWS, loadBoard, saveBoard, type Cell } from '../stat
 import { inventory } from '../state/inventory';
 import { sfx, buzz } from '../sfx';
 import { HUD_BOTTOM_H, HUD_TOP_H } from './HudScene';
+import { bakeSceneGraphics } from '../util/bake';
 
 const FONT = '"Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif';
 // 보드 한 칸 크기와 아이콘 배율 — 화면 높이에 맞춰 create()에서 정한다 (아래 창고 줄이 두 줄 들어가게)
@@ -74,6 +75,7 @@ export class MergeScene extends Phaser.Scene {
   }
 
   create() {
+    bakeSceneGraphics(this); // 바뀌지 않는 단추·판 그림은 구워서 가볍게 그린다
     const W = this.scale.width;
     const H = this.scale.height;
     this.busy = false;

@@ -28,6 +28,7 @@ import { DECO_REWARDS, HOME_ISLAND, ORDER_GIFTS, RESIDENTS, TROPHY_HEARTS } from
 import { COMBOS, MERGE_NEXT, USABLE } from '../data/merge';
 import { BUILD_CATS, PIECES, PIECE_LIST, UPPER_COST, UPPER_POINTS, type BuildCat, type Piece } from '../data/build';
 import type { IslandScene } from './IslandScene';
+import { bakeSceneGraphics } from '../util/bake';
 
 // 위쪽 줄(섬 이름·창고 단추) 높이. 예전에는 그 아래에 가진 재료가 한 줄로 늘어서 있었다(96)
 export const HUD_TOP_H = 58;
@@ -90,6 +91,7 @@ export class HudScene extends Phaser.Scene {
   private laidH = 0;
 
   create() {
+    bakeSceneGraphics(this); // 바뀌지 않는 단추·판 그림은 구워서 가볍게 그린다
     const W = this.scale.width;
     const H = this.scale.height;
     this.laidW = W;
@@ -471,7 +473,28 @@ export class HudScene extends Phaser.Scene {
       this.tweens.add({ targets: [box, dim], alpha: 0, duration: 180, onComplete: () => { box.destroy(); dim.destroy(); this.registry.set('modal', false); } });
     };
     this.time.delayedCall(150, () => dim.once('pointerdown', () => { sfx.tap(); close(); }));
-    return { box, close };
+    /** 움직임 없이 바로 치운다 (같은 창을 다른 탭으로 곧바로 다시 열 때) */
+    const kill = () => {
+      if (closed) return;
+      closed = true;
+      box.destroy();
+      dim.destroy();
+      this.registry.set('modal', false);
+    };
+    return { box, close, kill };
+  }
+
+  /** 둥근 네모 그림 (같은 크기·색은 한 번만 만든다). 두 배 크기로 구워 두니 0.5배로 쓴다 */
+  private cellTex(w: number, h: number, r: number, color: number) {
+    const key = `cell_${Math.round(w * 2)}_${Math.round(h * 2)}_${r}_${color.toString(16)}`;
+    if (!this.textures.exists(key)) {
+      const g = this.make.graphics({}, false);
+      g.fillStyle(color).fillRoundedRect(0, 0, Math.round(w * 2), Math.round(h * 2), r * 2);
+      g.generateTexture(key, Math.round(w * 2), Math.round(h * 2));
+      g.destroy();
+      this.textures.get(key).setFilter(Phaser.Textures.FilterMode.LINEAR);
+    }
+    return key;
   }
 
   private button(label: string, enabled: boolean, onTap: () => void, w = 170) {
@@ -958,7 +981,8 @@ export class HudScene extends Phaser.Scene {
   }
 
   /** 가족 창고 + 도감: 못 찾은 것은 그림자로 보인다 */
-  private openStorage() {
+  /** 창고: 재료와 꾸미기 물건(만들기에서 만든 가구·건축물)을 탭으로 나눠 보여 준다 */
+  private openStorage(tab: 'mat' | 'deco' = 'mat', swap = false) {
     if (this.registry.get('modal')) return;
     const W = this.scale.width;
     const H = this.scale.height;
@@ -968,23 +992,43 @@ export class HudScene extends Phaser.Scene {
     const rowH = cell + 12;
     // 가진 것 → 찾아 본 것 → 아직 못 찾은 것 순서
     const rank = (id: ItemId) => (inventory.get(id) > 0 ? 0 : inventory.discovered(id) ? 1 : 2);
-    const ids = [...ITEM_IDS].sort((x, y) => rank(x) - rank(y));
+    const isDeco = (id: ItemId) => !!PIECES[id];
+    const ids = ITEM_IDS.filter((id) => isDeco(id) === (tab === 'deco')).sort((x, y) => rank(x) - rank(y));
     const rows = Math.ceil(ids.length / cols);
     const contentH = rows * rowH;
-    const headH = 64;
+    const headH = 80;
     const footH = 40;
     const PH = Math.min(H - 70, headH + contentH + footH);
     const viewH = PH - headH - footH;
-    const { box, close: closeStorage } = this.modal(PW, PH);
+    const { box, close: closeStorage, kill: killStorage } = this.modal(PW, PH);
+    if (swap) this.tweens.killTweensOf(box), box.setScale(Math.min(1, (H - 24) / PH, (W - 12) / PW)).setAlpha(1);
     let useBtn: Phaser.GameObjects.Container | undefined;
     const fit = Math.min(1, (H - 24) / PH, (W - 12) / PW);
     const top = -PH / 2;
-    const found = ITEM_IDS.filter((id) => inventory.discovered(id)).length;
-    const kinds = ITEM_IDS.filter((id) => inventory.get(id) > 0).length;
-    box.add(this.add.text(0, top + 24, '🧺 가족 창고', { fontFamily: FONT, fontSize: '20px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0.5));
-    box.add(this.add.text(0, top + 48, `가진 것 ${kinds}종 · 📖 도감 ${found}/${ITEM_IDS.length}`, { fontFamily: FONT, fontSize: '12px', color: '#e07a5f', fontStyle: 'bold' }).setOrigin(0.5));
+    const found = ids.filter((id) => inventory.discovered(id)).length;
+    box.add(this.add.text(0, top + 22, `🧺 가족 창고  📖 ${found}/${ids.length}`, { fontFamily: FONT, fontSize: '18px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0.5));
+    // 탭: 재료 / 꾸미기 물건
+    const tabW = Math.min(132, (PW - 40) / 2);
+    ([['mat', '🪵 재료'], ['deco', '🏡 꾸미기']] as const).forEach(([key, label], i) => {
+      const on = key === tab;
+      const kinds = ITEM_IDS.filter((id) => isDeco(id) === (key === 'deco') && inventory.get(id) > 0).length;
+      const tx = (i - 0.5) * (tabW + 8);
+      const tg = this.add.graphics();
+      tg.fillStyle(on ? 0xf2c14e : 0xf3ecdb).fillRoundedRect(tx - tabW / 2, top + 42, tabW, 28, 14);
+      const tt = this.add.text(tx, top + 56, `${label} ${kinds}`, { fontFamily: FONT, fontSize: '13px', color: on ? '#5a4632' : '#9a8c75', fontStyle: 'bold' }).setOrigin(0.5);
+      const tz = this.add.zone(tx, top + 56, tabW, 32).setInteractive();
+      tz.on('pointerdown', (_p: Phaser.Input.Pointer, _x: number, _y: number, e: Phaser.Types.Input.EventData) => {
+        e.stopPropagation();
+        if (on) return;
+        sfx.tap();
+        // 창을 닫지 않고 그 자리에서 바로 다른 탭으로 바꾼다
+        killStorage();
+        this.openStorage(key, true);
+      });
+      box.add([tg, tt, tz]);
+    });
     const maxScroll = Math.max(0, contentH - viewH);
-    const info = this.add.text(0, PH / 2 - 20, maxScroll > 0 ? '위아래로 밀어서 더 봐요 · 눌러서 개수 확인' : '눌러서 개수를 확인해요', { fontFamily: FONT, fontSize: '12px', color: '#8a6d4b', fontStyle: 'bold' }).setOrigin(0.5);
+    const info = this.add.text(0, PH / 2 - 20, ids.every((id) => inventory.get(id) === 0) && tab === 'deco' ? '만들기에서 만든 가구·건축물이 여기 모여요' : maxScroll > 0 ? '위아래로 밀어서 더 봐요 · 눌러서 개수 확인' : '눌러서 개수를 확인해요', { fontFamily: FONT, fontSize: '12px', color: '#8a6d4b', fontStyle: 'bold' }).setOrigin(0.5);
     box.add(info);
 
     // 스크롤되는 목록
@@ -997,8 +1041,8 @@ export class HudScene extends Phaser.Scene {
       const cy = rowH * Math.floor(i / cols) + rowH / 2;
       const known = inventory.discovered(id);
       const count = inventory.get(id);
-      const sg = this.add.graphics();
-      sg.fillStyle(count > 0 ? 0xfde8b0 : 0xf3ecdb).fillRoundedRect(cx - cell / 2 + 3, cy - rowH / 2 + 3, cell - 6, rowH - 6, 10);
+      // 칸 바탕은 미리 구운 그림 한 장을 같이 쓴다 (칸마다 Graphics로 그리면 장면마다 수백 개를 다시 쪼개어 그린다)
+      const sg = this.add.image(cx, cy, this.cellTex(cell - 6, rowH - 6, 10, count > 0 ? 0xfde8b0 : 0xf3ecdb)).setScale(0.5);
       const ic = this.add.image(cx, cy - 9, itemKey(id)).setScale(1.6);
       if (!known) ic.setTintFill(0xd5ccb8);
       else if (count === 0) ic.setAlpha(0.5);
