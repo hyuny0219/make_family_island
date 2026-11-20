@@ -10,8 +10,8 @@ import { settings, setSetting } from './state/settings';
 
 // 예전 버그(캔버스를 장면마다 새로 만들어 몹시 버벅였다) 때문에 '선명한 화면'을 껐을 수 있다 → 고친 뒤 한 번만 다시 켠다
 try {
-  if (!localStorage.getItem('mfi.v1.sharpFix1')) {
-    localStorage.setItem('mfi.v1.sharpFix1', '1');
+  if (!localStorage.getItem('mfi.v1.sharpFix2')) {
+    localStorage.setItem('mfi.v1.sharpFix2', '1');
     if (!settings.sharp) setSetting('sharp', true);
   }
 } catch {
@@ -23,8 +23,9 @@ try {
  * 배율의 위쪽 끝. 처음에는 2배(3배는 폰에 따라 너무 무겁다).
  * 그래도 느리면(아래 감시) 한 단계씩 내리고, 내린 값은 이 기기에 기억해 둔다.
  */
-// (열쇠 이름의 2: 캔버스를 장면마다 새로 만들던 버그 때문에 잘못 낮춰진 예전 값을 버린다)
-const CAP_KEY = 'mfi.v1.hiresCap2';
+// (열쇠 이름의 숫자: 예전 버그들(캔버스를 장면마다 새로 만듦, HUD 단추를 장면마다 다시 쪼개어 그림) 때문에
+//  게임이 느려서 잘못 낮춰진 값을 버린다. 낮춰진 채로 두면 글자가 계단처럼 깨져 보인다)
+const CAP_KEY = 'mfi.v1.hiresCap3';
 let cap = 2;
 try {
   const saved = Number(localStorage.getItem(CAP_KEY));
@@ -62,12 +63,37 @@ export function installHiRes(game: Phaser.Game) {
     if (r.type !== Phaser.WEBGL) return;
     const R = r as Phaser.Renderer.WebGL.WebGLRenderer;
     const gl = R.gl;
-    const onScreen = () => !R.currentFramebuffer;
-    // 화면에 바로 그릴 때만 K배 (다른 그림판에 그릴 때는 그대로)
+    // 화면에 바로 그릴 때만 K배 (다른 그림판(텍스처)에 그릴 때는 그대로).
+    // Phaser는 '뷰포트를 정하고 → 그림판을 바꾸는' 순서와 그 반대 순서를 섞어 쓴다. 그래서 정하는 순간의 그림판만 보면
+    // 틀릴 때가 있다(텍스처에 2배로 그려져 그림이 4분의 1만 보인다). 마지막으로 요청받은 값을 기억해 두었다가,
+    // 그림판이 화면 ↔ 텍스처로 바뀔 때마다 그 그림판에 맞는 배율로 다시 정한다.
     const viewport = gl.viewport.bind(gl);
     const scissor = gl.scissor.bind(gl);
-    gl.viewport = (x, y, w, h) => (onScreen() ? viewport(x * RES, y * RES, w * RES, h * RES) : viewport(x, y, w, h));
-    gl.scissor = (x, y, w, h) => (onScreen() ? scissor(x * RES, y * RES, w * RES, h * RES) : scissor(x, y, w, h));
+    const bindFb = gl.bindFramebuffer.bind(gl);
+    let bound: WebGLFramebuffer | null = null;
+    let lastV: [number, number, number, number] | null = null;
+    let lastS: [number, number, number, number] | null = null;
+    const k = () => (bound ? 1 : RES);
+    const applyV = () => lastV && viewport(lastV[0] * k(), lastV[1] * k(), lastV[2] * k(), lastV[3] * k());
+    const applyS = () => lastS && scissor(lastS[0] * k(), lastS[1] * k(), lastS[2] * k(), lastS[3] * k());
+    gl.viewport = (x, y, w, h) => {
+      lastV = [x, y, w, h];
+      applyV();
+    };
+    gl.scissor = (x, y, w, h) => {
+      lastS = [x, y, w, h];
+      applyS();
+    };
+    gl.bindFramebuffer = (target, fb) => {
+      bindFb(target, fb);
+      if (target !== gl.FRAMEBUFFER) return;
+      const was = !bound;
+      bound = fb;
+      if (was !== !bound && RES > 1) {
+        applyV();
+        applyS();
+      }
+    };
     // Phaser가 가위질 좌표를 뒤집을 때 쓰는 높이: 화면은 논리 높이로 계산하게 한다
     let dbh = R.height;
     Object.defineProperty(R, 'drawingBufferHeight', {
@@ -94,14 +120,16 @@ export function installHiRes(game: Phaser.Game) {
     };
     game.events.on(Phaser.Core.Events.PRE_RENDER, ensure);
     ensure();
-    // 느린 기기 감시: 3초 동안 평균이 초당 40장에 못 미치면 배율을 한 단계 내린다 (탭을 가렸다 돌아온 직후는 세지 않는다)
+    // 느린 기기 감시: 6초 내내 초당 30장에 못 미치면 배율을 한 단계 내린다
+    // (불러오는 중이라 느린 처음 15초와, 탭을 가렸다 돌아온 직후는 세지 않는다 — 한 번 내리면 글자가 깨져 보이니 신중하게)
     let slowSince = 0;
+    const born = performance.now();
     window.setInterval(() => {
-      if (RES <= 1 || document.hidden) return void (slowSince = 0);
+      if (RES <= 1 || document.hidden || performance.now() - born < 15000) return void (slowSince = 0);
       const fps = game.loop.actualFps;
-      if (fps > 0 && fps < 40) {
+      if (fps > 0 && fps < 30) {
         if (!slowSince) slowSince = performance.now();
-        else if (performance.now() - slowSince >= 3000) {
+        else if (performance.now() - slowSince >= 6000) {
           cap = Math.max(1, RES - 1);
           slowSince = 0;
           try {
