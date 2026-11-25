@@ -7,6 +7,8 @@ import { MONSTERS, islandMonster, ISLAND_MONSTERS } from '../data/monsters';
 import { FOODS, foodText } from '../data/food';
 import { player } from '../state/player';
 import { quests } from '../state/quests';
+import { npcQuests } from '../state/npcQuests';
+import { npcsOn, npcById, statBoss, statFish, statForm, statMon, type NpcDef } from '../data/npcs';
 import Phaser from 'phaser';
 import { PLAYER_SPEED, TILE, WORLD_ZOOM, COLORS } from '../config';
 
@@ -58,7 +60,7 @@ const ISLAND_PLAY: Record<number, { kind: PlayKind; tex: string; tip: string; lo
 const ICE_FISH: [ItemId, number][] = [['fish_big', 5], ['fish', 3], ['fish_gold', 1]];
 type PlaySpot = { kind: PlayKind; img: Phaser.GameObjects.Image; tx: number; ty: number; region: number; hp: number; ready: boolean };
 
-type Hit = { house?: Placed; door?: boolean; gate?: boolean; monster?: Monster; sleep?: boolean; play?: PlaySpot; bear?: Bear; decor?: DecorObj; sign?: number; spot?: SpotObj; dock?: boolean; slime?: Slime; treasure?: boolean; pedestal?: boolean };
+type Hit = { dig?: string; house?: Placed; door?: boolean; gate?: boolean; monster?: Monster; sleep?: boolean; play?: PlaySpot; bear?: Bear; decor?: DecorObj; sign?: number; spot?: SpotObj; dock?: boolean; slime?: Slime; treasure?: boolean; pedestal?: boolean };
 
 /** 지역 분위기별 슬라임 색 (초록이 기본) */
 const SLIME_KIND: Record<string, '' | '_pink' | '_blue'> = { orchard: '', forest: '', rocky: '_blue', meadow: '_pink', beach: '_blue' };
@@ -271,6 +273,7 @@ export class IslandScene extends Phaser.Scene {
     // 이사 온 친구들은 우리 마을 섬에서 산다
     if (this.islandIdx === HOME_ISLAND) village.joined().forEach((r) => this.spawnResident(r.id, false));
     this.placeFriend();
+    this.placeNpcs();
 
     const cam = this.cameras.main;
     cam.setZoom(WORLD_ZOOM);
@@ -669,7 +672,7 @@ export class IslandScene extends Phaser.Scene {
     }
 
     const pl = this.player;
-    type Tagged = { gate?: boolean; monster?: Monster; placed?: Placed; play?: PlaySpot; treasure?: boolean; pedestal?: boolean; slime?: Slime; bear?: Bear; decor?: Decor; signRegion?: number; spot?: FishingSpot; isDock?: boolean };
+    type Tagged = { qdig?: string; gate?: boolean; monster?: Monster; placed?: Placed; play?: PlaySpot; treasure?: boolean; pedestal?: boolean; slime?: Slime; bear?: Bear; decor?: Decor; signRegion?: number; spot?: FishingSpot; isDock?: boolean };
     const tagged = over as unknown as (Phaser.GameObjects.GameObject & Tagged)[];
 
     const sign = tagged.find((o) => o.signRegion !== undefined);
@@ -694,6 +697,7 @@ export class IslandScene extends Phaser.Scene {
     }
 
     const bearHit = tagged.map((o) => o.bear).find((b) => b && b !== pl);
+    const digHit = tagged.find((o) => o.qdig && (o as unknown as Phaser.GameObjects.Image).visible) as unknown as (Phaser.GameObjects.Image & { qdig: string }) | undefined;
     const spotHit = tagged.find((o) => o.spot && (o as unknown as SpotObj).active) as unknown as SpotObj | undefined;
     const decorHit = tagged.find((o) => o.decor && !(o as unknown as DecorObj).gone && (o as unknown as DecorObj).visible) as unknown as DecorObj | undefined;
 
@@ -747,6 +751,9 @@ export class IslandScene extends Phaser.Scene {
     } else if (slimeHit) {
       const side = pl.x <= slimeHit.x ? -1 : 1;
       this.walkTo(slimeHit.x + side * 18, slimeHit.y, { slime: slimeHit });
+    } else if (digHit) {
+      const side = pl.x <= digHit.x ? -1 : 1;
+      this.walkTo(digHit.x + side * 18, digHit.y, { dig: digHit.qdig });
     } else if (bearHit) {
       const side = pl.x <= bearHit.x ? -1 : 1;
       this.walkTo(bearHit.x + side * 22, bearHit.y, { bear: bearHit });
@@ -863,6 +870,7 @@ export class IslandScene extends Phaser.Scene {
       if (ch?.visible) add(ch.x, ch.y, () => go(ch.x + side(ch.x) * 24, ch.y - 1, { treasure: true }), -8);
       const pd = this.pedestal;
       if (pd?.visible) add(pd.x, pd.y, () => go(pd.x + side(pd.x) * 20, pd.y - 1, { pedestal: true }));
+      for (const [id, sp] of this.digSpots) if (sp.visible) add(sp.x, sp.y, () => go(sp.x + side(sp.x) * 18, sp.y, { dig: id }), -8);
       for (const b of this.bears) {
         if (b === pl || !b.sprite.visible || !(b.resident || b.wild || b.remote)) continue;
         add(b.x, b.y, () => go(b.x + side(b.x) * 22, b.y, { bear: b }), 8);
@@ -1157,6 +1165,7 @@ export class IslandScene extends Phaser.Scene {
     if (hit.spot) return this.startFishing(hit.spot);
     if (hit.play) return this.usePlay(hit.play);
     if (hit.pedestal) return this.game.events.emit('open-treasures');
+    if (hit.dig) return this.digQuest(hit.dig);
     buzz(15);
     if (hit.treasure) return this.openTreasure();
     if (hit.slime) return this.bopSlime(hit.slime);
@@ -1170,6 +1179,13 @@ export class IslandScene extends Phaser.Scene {
       other.target = null;
       other.face('side', other.x > pl.x);
       pl.face('side', pl.x > other.x);
+      if (other.npc) {
+        // 섬 주민: 부탁 듣기
+        other.jump(90);
+        sfx.pop();
+        this.game.events.emit('open-npc', other.npc);
+        return;
+      }
       if (other.wild) {
         other.jump(90);
         sfx.pop();
@@ -3069,6 +3085,11 @@ export class IslandScene extends Phaser.Scene {
         this.time.delayedCall(i * 90, () => this.spawnDrop(item, m.x, m.y - 10, m.y));
       }
       quests.bump('monster');
+      // 섬 주민의 퇴치 부탁 (가족이 함께 센다)
+      if (!m.def.boss) {
+        npcQuests.bump(statMon(m.def.id));
+        if (abilities.equipped) npcQuests.bump(statForm(abilities.equipped));
+      }
     }
     this.fx.sparkle.explode(8, m.x, m.y - 8);
     sfx.pop();
@@ -3459,7 +3480,7 @@ export class IslandScene extends Phaser.Scene {
     this.wasNight = false;
     const W = this.world;
     const maxDepth = Math.max(...W.regions.map((g) => g.depth));
-    const friend = this.bears.find((b) => b.wild);
+    const friend = this.bears.find((b) => b.wild && !b.npc);
     const friendRegion = friend ? this.regionAt(friend.x, friend.y) : -1;
     const ok = (g: { idx: number }) => g.idx !== this.chestRegion && g.idx !== friendRegion;
     const home = W.regions.find((g) => g.depth === Math.max(2, maxDepth - 1) && ok(g)) ?? W.regions.find((g) => g.depth >= 2 && ok(g));
@@ -4143,7 +4164,10 @@ export class IslandScene extends Phaser.Scene {
     for (const p of village.placedOn(this.islandIdx)) if (ENTERABLE.has(p.id)) marks.push({ tx: p.tx + 1, ty: p.ty + 0.5, icon: '🏠' });
     if (this.chest && this.chestRegion >= 0 && this.unlocked(this.chestRegion)) marks.push({ tx: px(this.chest.x), ty: px(this.chest.y) - 0.5, icon: '💎' });
     if (this.gate && this.gate.visible) marks.push({ tx: px(this.gate.x), ty: px(this.gate.y) - 0.5, icon: '⚔️' });
-    for (const b of this.bears) if (b.wild && b.sprite.visible) marks.push({ tx: px(b.x), ty: px(b.y) - 0.5, icon: '🐾' });
+    for (const b of this.bears) if (b.wild && !b.npc && b.sprite.visible) marks.push({ tx: px(b.x), ty: px(b.y) - 0.5, icon: '🐾' });
+    // 섬 주민과 보물찾기 자리 (수수께끼 보물은 지도에 표시하지 않는다)
+    for (const v of this.npcs) if (v.bear.sprite.visible) marks.push({ tx: px(v.bear.x), ty: px(v.bear.y) - 0.5, icon: v.mark.text || '🙂' });
+    for (const [id, sp] of this.digSpots) if (!npcQuests.digging(id)?.riddle) marks.push({ tx: px(sp.x), ty: px(sp.y) - 0.5, icon: '❌' });
     // 가족: 던전·집 안에 있으면 들어간 자리에 표시한다
     for (const [, p] of Object.entries(family.others)) {
       if (p.island !== this.islandIdx || !BEARS.some((b) => b.id === p.bear)) continue;
@@ -4619,6 +4643,7 @@ export class IslandScene extends Phaser.Scene {
     const tokens = first ? 3 : 2;
     inventory.add('boss_token', tokens);
     quests.bump('boss');
+    npcQuests.bump(statBoss(island));
     this.time.delayedCall(900, () => {
       if (first) {
         this.game.events.emit('celebrate', `🎉 ${boss.def.name}을(를) 물리쳤어요!\n${ab.emoji} 변신 '${ab.names[0]}'을(를) 얻었어요`);
@@ -4826,6 +4851,291 @@ export class IslandScene extends Phaser.Scene {
         if (Math.hypot(pl.x - b.x, pl.y - b.y) < 260) b.emote('❗');
       },
     });
+  }
+
+  // ───────────────────────── 섬 주민 (부탁) ─────────────────────────
+
+  private npcs: { def: NpcDef; bear: Bear; region: number; mark: Phaser.GameObjects.Text; decor: Phaser.GameObjects.Image[] }[] = [];
+  /** 보물찾기 자리 (부탁을 준 주민 id → 땅의 표시) */
+  private digSpots = new Map<string, Phaser.GameObjects.Image & { qdig: string; hits: number }>();
+  /** 밤에만 나오는 것 */
+  private nightBits: (Phaser.GameObjects.Image & { npc: string })[] = [];
+  private npcBusy = false;
+  private warmAt = 0;
+
+  /** (cx, cy)에서 가장 가까운, 그 지역의 빈 땅 (사방이 같은 지역의 땅). avoid = 피할 칸 */
+  private tileNear(region: number, cx: number, cy: number, avoid: Set<string>, minFrom?: { tx: number; ty: number; d: number }): { tx: number; ty: number } | null {
+    const W = this.world;
+    const taken = new Set(W.decor.map((d) => `${d.tx},${d.ty}`));
+    for (const r of W.regions) taken.add(`${r.signX},${r.signY}`);
+    for (const f of W.fishing) taken.add(`${f.tx},${f.ty}`);
+    const inside = (x: number, y: number) => x >= 0 && y >= 0 && x < W.w && y < W.h && W.region[y * W.w + x] === region && W.terrain[y][x] !== T_SEA;
+    const free = (x: number, y: number) => inside(x, y) && !taken.has(`${x},${y}`) && !this.blocked.has(`${x},${y}`) && !this.placedOcc.has(`${x},${y}`) && !avoid.has(`${x},${y}`);
+    let best: { tx: number; ty: number } | null = null;
+    let bestD = Infinity;
+    for (let y = 1; y < W.h - 1; y++) {
+      for (let x = 1; x < W.w - 1; x++) {
+        if (!free(x, y) || !inside(x - 1, y) || !inside(x + 1, y) || !inside(x, y + 1) || !inside(x, y - 1)) continue;
+        if (minFrom && Math.hypot(x - minFrom.tx, y - minFrom.ty) < minFrom.d) continue;
+        const d = Math.hypot(x - cx, y - cy);
+        if (d < bestD) {
+          bestD = d;
+          best = { tx: x, ty: y };
+        }
+      }
+    }
+    return best;
+  }
+
+  /** 섬 주민 네 명을 세운다 (섬마다 늘 같은 자리): 이장은 캠프 곁, 나머지는 섬 안쪽 지역에 한 명씩 */
+  private placeNpcs() {
+    this.npcs = [];
+    this.digSpots.clear();
+    this.nightBits = [];
+    const W = this.world;
+    const maxDepth = Math.max(...W.regions.map((g) => g.depth));
+    const friend = this.bears.find((b) => b.wild && !b.npc);
+    const usedReg = new Set<number>([this.chestRegion, friend ? this.regionAt(friend.x, friend.y) : -1, this.gate ? this.regionAt(this.gate.x, this.gate.y) : -1]);
+    const usedTile = new Set<string>();
+    const byDepth = (want: number, water = false) =>
+      [...W.regions]
+        .filter((g) => g.idx !== 0 && !usedReg.has(g.idx) && (!water || g.hasWater))
+        .sort((a, b) => Math.abs(a.depth - want) - Math.abs(b.depth - want) || a.idx - b.idx)[0];
+    for (const def of npcsOn(this.islandIdx)) {
+      let region = 0;
+      let t: { tx: number; ty: number } | null = null;
+      if (def.role === 'chief') {
+        // 캠프(텐트·모닥불·가족 곰) 바로 옆은 피해서 조금 떨어진 곳에
+        // (허수아비 둘레도 피한다)
+        const dm = this.monsters.find((m) => m.kind === 'dummy');
+        if (dm) for (let ox = -2; ox <= 2; ox++) for (let oy = -2; oy <= 2; oy++) usedTile.add(`${Math.floor(dm.x / TILE) + ox},${Math.floor(dm.y / TILE) + oy}`);
+        t = this.tileNear(0, W.camp.tx - 5, W.camp.ty + 4, usedTile, { tx: W.camp.tx, ty: W.camp.ty, d: 4 });
+      } else {
+        const want = def.role === 'guard' ? Math.max(1, Math.round(maxDepth * 0.35)) : def.role === 'explorer' ? Math.max(1, Math.round(maxDepth * 0.7)) : Math.max(1, Math.round(maxDepth * 0.5));
+        const reg = (def.role === 'fisher' ? byDepth(want, true) : undefined) ?? byDepth(want);
+        if (!reg) continue;
+        region = reg.idx;
+        usedReg.add(region);
+        const spot = def.role === 'fisher' ? W.fishing.find((f) => f.region === region) : undefined;
+        t = this.tileNear(region, spot?.tx ?? reg.sx, spot?.ty ?? reg.sy, usedTile);
+      }
+      if (!t) continue;
+      usedTile.add(`${t.tx},${t.ty}`);
+      const x = t.tx * TILE + TILE / 2;
+      const y = t.ty * TILE + TILE - 4;
+      const b = new Bear(this, def.look, x, y, 38);
+      b.wild = true; // 제자리에 서 있고, 따라오지 않는다
+      b.npc = def.id;
+      b.label = this.add.text(x, y, def.name, { fontFamily: 'sans-serif', fontSize: '9px', color: '#ffffff', fontStyle: 'bold', stroke: '#5a4632', strokeThickness: 3 }).setOrigin(0.5, 1);
+      this.bears.push(b);
+      const mark = this.add.text(x, y - b.sprite.height - 18, '', { fontSize: '15px' }).setOrigin(0.5, 1).setDepth(99980);
+      this.tweens.add({ targets: mark, y: mark.y - 4, duration: 600, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+      this.npcs.push({ def, bear: b, region, mark, decor: [] });
+    }
+    if (!this.textures.exists('nglow')) {
+      const tex = this.textures.createCanvas('nglow', 48, 48)!;
+      const ctx = tex.getContext();
+      const gr = ctx.createRadialGradient(24, 24, 1, 24, 24, 24);
+      gr.addColorStop(0, 'rgba(255,255,255,1)');
+      gr.addColorStop(0.35, 'rgba(255,255,255,0.55)');
+      gr.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = gr;
+      ctx.fillRect(0, 0, 48, 48);
+      tex.refresh();
+    }
+    npcQuests.on('changed', this.refreshNpcs, this);
+    inventory.on('changed', this.refreshNpcs, this);
+    this.events.once('shutdown', () => {
+      npcQuests.off('changed', this.refreshNpcs, this);
+      inventory.off('changed', this.refreshNpcs, this);
+    });
+    this.time.addEvent({ delay: 1500, loop: true, callback: () => this.refreshNpcs() });
+    this.time.addEvent({ delay: 130, loop: true, callback: () => this.npcNear() });
+    this.refreshNpcs();
+  }
+
+  /** 탐험 부탁: 아직 열지 않은 지역 수 */
+  regionsLeft() {
+    return this.world.regions.length - progress.unlockedCount(this.islandIdx);
+  }
+
+  /** 수수께끼 보물의 힌트 (자리가 아직 안 정해졌으면 빈 글) */
+  riddleHint(id: string) {
+    const dg = npcQuests.digging(id);
+    if (!dg?.riddle || dg.tx === undefined || dg.ty === undefined) return '';
+    const W = this.world;
+    const dx = dg.tx - W.camp.tx;
+    const dy = dg.ty - W.camp.ty;
+    const far = Math.hypot(dx, dy);
+    const ew = Math.abs(dx) < 4 ? '' : dx > 0 ? '오른쪽' : '왼쪽';
+    const ns = Math.abs(dy) < 4 ? '' : dy > 0 ? '아래' : '위';
+    const dir = [ew, ns].filter(Boolean).join(' ') || '바로 근처';
+    const reg = W.regions[W.region[dg.ty * W.w + dg.tx]];
+    return `"캠프에서 ${dir}로 ${far < 12 ? '조금만' : far < 24 ? '한참' : '아주 멀리'} 가면\n「${reg?.name ?? '어딘가'}」에 닿으리. 그 한가운데를 파 보라."`;
+  }
+
+  /** 주민 머리 위 표시 · 보물찾기 자리 · 꾸며 준 가구를 지금 상태에 맞춘다 */
+  private refreshNpcs() {
+    if (this.npcBusy || !this.npcs.length) return;
+    this.npcBusy = true;
+    const W = this.world;
+    for (const v of this.npcs) {
+      const id = v.def.id;
+      const vis = this.unlocked(v.region);
+      v.bear.sprite.setVisible(vis);
+      const st = npcQuests.status(id);
+      const icon = npcQuests.deliveriesTo(id).length ? '📦' : st === 'new' ? '❗' : st === 'ready' ? '✅' : st === 'active' ? '💬' : '';
+      if (v.mark.text !== icon) v.mark.setText(icon);
+      v.mark.setVisible(vis && !!icon);
+      // 집 꾸며 주기를 끝냈으면 받은 가구를 곁에 놓아 둔다
+      const got = npcQuests.decorDone(id);
+      if (got && !v.decor.length) {
+        const ids = (Object.entries(got) as [ItemId, number][]).flatMap(([it, c]) => Array.from({ length: c }, () => it));
+        ids.forEach((it, k) => {
+          const side = k % 2 === 0 ? -1 : 1;
+          const ox = side * (22 + Math.floor(k / 2) * 20);
+          const tex = this.textures.exists(`build_${it}`) ? `build_${it}` : itemKey(it);
+          const img = this.add.image(v.bear.x + ox, v.bear.y + 2, tex).setOrigin(0.5, 1);
+          img.setDepth(img.y - 1);
+          v.decor.push(img);
+        });
+      }
+      v.decor.forEach((img) => img.setVisible(vis));
+
+      // 보물찾기 자리
+      let dg = npcQuests.digging(id);
+      const have = this.digSpots.get(id);
+      if (!dg) {
+        if (have) {
+          have.destroy();
+          this.digSpots.delete(id);
+        }
+        continue;
+      }
+      if (dg.tx === undefined || dg.ty === undefined) {
+        // 이미 연 지역 가운데 한 곳 (캠프는 빼고, 없으면 캠프). 수수께끼는 지역 한가운데, 보통 보물은 아무 데나
+        const open = W.regions.filter((g) => g.idx !== 0 && this.unlocked(g.idx) && g.idx !== v.region);
+        const reg = open.length ? Phaser.Utils.Array.GetRandom(open) : W.regions[0];
+        const jit = dg.riddle ? 0 : 4;
+        const avoid = new Set(this.npcs.map((n) => `${Math.floor(n.bear.x / TILE)},${Math.floor(n.bear.y / TILE)}`));
+        const t = this.tileNear(reg.idx, reg.sx + Phaser.Math.Between(-jit, jit), reg.sy + Phaser.Math.Between(-jit, jit), avoid, reg.idx === 0 ? { tx: W.camp.tx, ty: W.camp.ty, d: 5 } : undefined);
+        if (t) npcQuests.setSpot(id, t.tx, t.ty);
+        dg = npcQuests.digging(id);
+        if (!dg || dg.tx === undefined || dg.ty === undefined) continue;
+      }
+      const sx = dg.tx * TILE + TILE / 2;
+      const sy = dg.ty * TILE + TILE - 3;
+      if (have && (have.x !== sx || have.y !== sy)) {
+        have.destroy();
+        this.digSpots.delete(id);
+      }
+      if (!this.digSpots.has(id)) {
+        const img = this.add.image(sx, sy, this.textures.exists('play_dig') ? 'play_dig' : 'sparkle').setOrigin(0.5, 1) as Phaser.GameObjects.Image & { qdig: string; hits: number };
+        img.setDepth(sy - 2).setInteractive({ useHandCursor: true });
+        img.qdig = id;
+        img.hits = 3;
+        // 수수께끼 보물은 가까이 가야 보인다
+        if (dg.riddle) img.setVisible(false);
+        this.digSpots.set(id, img);
+      }
+    }
+    this.npcBusy = false;
+  }
+
+  /** 곰 둘레의 일: 수수께끼 보물 드러내기, 밤에만 나오는 것 띄우기·줍기 */
+  private npcNear() {
+    const pl = this.player;
+    if (!pl || !this.npcs.length || this.room || this.dungeon) return;
+    const now = this.time.now;
+    for (const [id, sp] of this.digSpots) {
+      const d = Math.hypot(sp.x - pl.x, sp.y - pl.y);
+      if (sp.visible) {
+        if (Math.random() < 0.06) this.fx.sparkle.explode(1, sp.x + Phaser.Math.Between(-8, 8), sp.y - Phaser.Math.Between(4, 14));
+        continue;
+      }
+      if (d < 64) {
+        sp.setVisible(true);
+        sfx.pop();
+        this.fx.sparkle.explode(14, sp.x, sp.y - 8);
+        this.toast('✨ 땅이 반짝여요! 여기를 파 봐요');
+      } else if (d < 200 && now - this.warmAt > 3500) {
+        this.warmAt = now;
+        this.fx.sparkle.explode(3, pl.x, pl.y - 34);
+        this.toast(`🔎 가까워졌어요! ${npcById(id)?.name ?? ''}의 보물이 근처에 있어요`);
+      }
+    }
+    // 밤에만 나오는 것: 밤이고, 모으는 부탁이 있을 때만 곰 둘레에 떠다닌다
+    const want = this.npcs.map((v) => ({ id: v.def.id, q: npcQuests.nightQuest(v.def.id) })).find((v) => v.q && v.q.left > 0);
+    const night = this.dark > 0.5;
+    if (!want?.q || !night) {
+      if (this.nightBits.length) {
+        this.nightBits.forEach((b) => this.tweens.add({ targets: b, alpha: 0, duration: 500, onComplete: () => b.destroy() }));
+        this.nightBits = [];
+      }
+      return;
+    }
+    const q = want.q;
+    this.nightBits = this.nightBits.filter((b) => {
+      if (Math.hypot(b.x - pl.x, b.y - (pl.y - 14)) > 22) {
+        if (Math.hypot(b.x - pl.x, b.y - pl.y) < 420) return true;
+        b.destroy(); // 멀어지면 치우고 가까이에 다시 띄운다
+        return false;
+      }
+      // 주웠다
+      this.fx.sparkle.explode(8, b.x, b.y);
+      sfx.pop();
+      buzz(12);
+      this.tweens.killTweensOf(b);
+      b.destroy();
+      npcQuests.collectNight(want.id);
+      const left = npcQuests.nightQuest(want.id)?.left ?? 0;
+      this.toast(left > 0 ? `✨ ${withJosa(q.thing, '을', '를')} 모았어요! (${left}개 더)` : `✨ ${withJosa(q.thing, '을', '를')} 다 모았어요! ${npcById(want.id)?.name ?? ''}에게 돌아가요`);
+      return false;
+    });
+    if (this.nightBits.length < Math.min(3, q.left)) {
+      // 곰에서 조금 떨어진, 열린 지역의 땅
+      for (let k = 0; k < 8; k++) {
+        const a = Math.random() * Math.PI * 2;
+        const r = Phaser.Math.Between(90, 230);
+        const x = pl.x + Math.cos(a) * r;
+        const y = pl.y + Math.sin(a) * r;
+        const reg = this.regionAt(x, y);
+        if (reg < 0 || !this.unlocked(reg)) continue;
+        const b = this.add.image(x, y - 16, 'nglow').setBlendMode(Phaser.BlendModes.ADD).setTint(q.color).setDepth(99976).setScale(0.55).setAlpha(0) as Phaser.GameObjects.Image & { npc: string };
+        b.npc = want.id;
+        this.tweens.add({ targets: b, alpha: 0.95, duration: 500 });
+        this.tweens.add({ targets: b, y: b.y - 7, scale: 0.7, duration: 900 + Math.random() * 500, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+        this.nightBits.push(b);
+        break;
+      }
+    }
+  }
+
+  /** 보물찾기 자리 파기: 세 번 톡톡 */
+  private digQuest(id: string) {
+    const pl = this.player!;
+    const sp = this.digSpots.get(id);
+    const dg = npcQuests.digging(id);
+    if (!sp || !dg) return;
+    pl.face('side', sp.x < pl.x);
+    const now = this.time.now;
+    if (now - this.lastHit < 200) return;
+    this.lastHit = now;
+    sp.hits -= 1;
+    pl.jump(60);
+    buzz(15);
+    sfx.rustle();
+    this.fx.dust.explode(5, sp.x, sp.y - 4);
+    this.tweens.add({ targets: sp, scaleX: { from: 1.2, to: 1 }, scaleY: { from: 0.8, to: 1 }, duration: 160 });
+    if (sp.hits > 0) return;
+    sfx.fanfare();
+    buzz(40);
+    this.fx.sparkle.explode(18, sp.x, sp.y - 10);
+    const icon = this.add.text(sp.x, sp.y - 12, '🎁', { fontSize: '20px' }).setOrigin(0.5, 1).setDepth(99990).setScale(0);
+    this.tweens.add({ targets: icon, y: sp.y - 44, scale: 1.3, duration: 500, ease: 'Back.easeOut' });
+    this.tweens.add({ targets: icon, alpha: 0, delay: 1800, duration: 400, onComplete: () => icon.destroy() });
+    this.toast(`🎁 ${withJosa(dg.what, '을', '를')} 찾았어요! ${npcById(id)?.name ?? '주민'}에게 가져가요`);
+    npcQuests.setDug(id); // (표시는 상태가 바뀌면서 치워진다)
   }
 
   /** 찾았는지에 맞춰 상자와 전시대 모습을 바꾼다 */
@@ -5433,7 +5743,7 @@ export class IslandScene extends Phaser.Scene {
     if (!r) return;
     if (this.bears.some((b) => b.resident && b.id === id)) return;
     // 이 섬에 서 있던 친구라면 짐을 싸서 캠프로 간다
-    const wild = this.bears.find((b) => b.wild && b.id === id);
+    const wild = this.bears.find((b) => b.wild && !b.npc && b.id === id);
     if (wild) {
       this.fx.heart.explode(8, wild.x, wild.y - 30);
       this.fx.puff.explode(8, wild.x, wild.y - 14);
@@ -5566,6 +5876,7 @@ export class IslandScene extends Phaser.Scene {
     this.fishing = null;
     this.sendPresence();
     if (caught) quests.bump('fish');
+    if (caught) npcQuests.bump(statFish(this.islandIdx));
     if (caught) sfx.play('fish_catch', 0.6);
     this.game.events.emit('fishing', false);
     f.mark?.destroy();

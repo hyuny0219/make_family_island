@@ -60,6 +60,7 @@ export const DAILY_POOL: QuestDef[] = [
   { id: 'd_monster', text: '몬스터 5마리 잡기', goal: { count: 'monster', n: 5 }, reward: ['jam', 1] },
   { id: 'd_eat', text: '요리 2번 먹기', goal: { count: 'eat', n: 2 }, reward: ['fruit', 8] },
   { id: 'd_build', text: '마을에 5개 짓기', goal: { count: 'build', n: 5 }, reward: ['flower', 6] },
+  { id: 'd_npc', text: '섬 주민의 부탁 1개 들어주기', goal: { count: 'npc', n: 1 }, reward: ['crystal', 1] },
 ];
 export const DAILY_BONUS: [ItemId, number] = ['crystal', 2];
 
