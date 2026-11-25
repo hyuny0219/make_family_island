@@ -29,6 +29,8 @@ import { COMBOS, MERGE_NEXT, USABLE } from '../data/merge';
 import { BUILD_CATS, PIECES, PIECE_LIST, UPPER_COST, UPPER_POINTS, type BuildCat, type Piece } from '../data/build';
 import type { IslandScene } from './IslandScene';
 import { bakeSceneGraphics } from '../util/bake';
+import { npcQuests } from '../state/npcQuests';
+import { CHAIN_LEN, npcById, npcsOn, type NpcDef, type NpcQuest } from '../data/npcs';
 
 // 위쪽 줄(섬 이름·창고 단추) 높이. 예전에는 그 아래에 가진 재료가 한 줄로 늘어서 있었다(96)
 export const HUD_TOP_H = 58;
@@ -119,6 +121,7 @@ export class HudScene extends Phaser.Scene {
       ['treasure-found', this.onTreasureFound],
       ['sailing', this.onSailing],
       ['open-order', this.openOrder],
+      ['open-npc', this.openNpc],
       ['open-combos', this.openCombos],
       ['open-sleep', this.openSleep],
       ['open-dungeon', this.openDungeon],
@@ -155,6 +158,7 @@ export class HudScene extends Phaser.Scene {
       inventory.off('changed', this.onInventoryChanged, this);
     });
     quests.on('changed', this.refreshQuestPill, this);
+    npcQuests.on('changed', this.refreshQuestPill, this);
     player.on('changed', this.refreshStatus, this);
     player.on('hurt', this.onHurt, this);
     abilities.on('changed', this.refreshStatus, this);
@@ -206,6 +210,7 @@ export class HudScene extends Phaser.Scene {
     this.queueTalk(`island_${progress.current}`);
     this.events.once('shutdown', () => {
       quests.off('changed', this.refreshQuestPill, this);
+      npcQuests.off('changed', this.refreshQuestPill, this);
       player.off('changed', this.refreshStatus, this);
       player.off('hurt', this.onHurt, this);
       abilities.off('changed', this.refreshStatus, this);
@@ -259,7 +264,7 @@ export class HudScene extends Phaser.Scene {
     this.questPill = undefined;
     this.homePill?.destroy();
     this.homePill = undefined;
-    this.questDot?.setVisible(quests.claimable);
+    this.questDot?.setVisible(quests.claimable || npcQuests.anyReady(progress.current));
     if (!this.registry.get('bear') || this.view !== 'explore') return;
     if (this.registry.get('dungeon') || this.registry.get('room')) {
       const inRoom = !!this.registry.get('room');
@@ -333,7 +338,7 @@ export class HudScene extends Phaser.Scene {
     if (this.registry.get('modal') || !this.registry.get('bear')) return;
     const PW = Math.min(330, this.scale.width - 20);
     const PH = 452;
-    const { box, close } = this.modal(PW, PH);
+    const { box, close, kill } = this.modal(PW, PH);
     const top = -PH / 2;
     const reopen = () => {
       close();
@@ -378,7 +383,15 @@ export class HudScene extends Phaser.Scene {
         box.add(this.add.text(rx + 6, y + 41, `×${q.def.reward[1]}`, { fontFamily: FONT, fontSize: '11px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0, 0.5));
       }
     };
-    box.add(this.add.text(0, top + 28, '📜 퀘스트 수첩', { fontFamily: FONT, fontSize: '20px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0.5));
+    box.add(this.add.text(-PW / 2 + 18, top + 28, '📜 퀘스트 수첩', { fontFamily: FONT, fontSize: '18px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0, 0.5));
+    // 섬 주민의 부탁은 따로 모아 보여 준다
+    const nb = this.button(`🏝 섬 주민 ${npcQuests.islandDone(progress.current)}/${npcQuests.islandTotal(progress.current)}`, true, () => {
+      kill();
+      this.openNpcBook();
+    }, 150);
+    nb.setPosition(PW / 2 - 70, top + 28).setScale(0.72);
+    box.add(nb);
+    if (npcQuests.anyReady(progress.current)) box.add(this.add.circle(PW / 2 - 18, top + 16, 5, 0xe05a4a));
 
     // 모험 퀘스트
     const st = quests.story();
@@ -2024,6 +2037,192 @@ export class HudScene extends Phaser.Scene {
     box.add(btn);
   }
 
+  // ───────────────────────── 섬 주민의 부탁 ─────────────────────────
+
+  /** 부탁 한 줄 요약 (수첩용) */
+  private npcGoal(def: NpcDef, q: NpcQuest): string {
+    if (q.kind === 'fetch') return (Object.entries(q.need) as [ItemId, number][]).map(([it, c]) => `${ITEMS[it].name} ${c}개`).join(', ') + ' 가져다주기';
+    if (q.kind === 'deliver') return `${npcById(q.to)?.name ?? '주민'}에게 ${q.what} 전해 주기`;
+    if (q.kind === 'count') return q.goal;
+    if (q.kind === 'explore') return '새 지역 열기';
+    if (q.kind === 'dig') return q.riddle ? '수수께끼를 풀어 보물 찾기' : '지도의 ❌ 자리 파기';
+    if (q.kind === 'night') return `밤에 ${q.thing} 모으기`;
+    return `${def.name}의 퀴즈 풀기`;
+  }
+
+  /** 보상 그림 한 줄 */
+  private rewardRow(box: Phaser.GameObjects.Container, reward: [ItemId, number][], y: number, label = '🎁 보상') {
+    const w = reward.length * 52;
+    box.add(this.add.text(-w / 2 - 8, y, label, { fontFamily: FONT, fontSize: '11px', color: '#a08a6a', fontStyle: 'bold' }).setOrigin(1, 0.5));
+    reward.forEach(([it, c], k) => {
+      const x = -w / 2 + 14 + k * 52;
+      box.add(this.add.image(x, y, itemKey(it)).setScale(1.1));
+      box.add(this.add.text(x + 13, y + 1, `×${c}`, { fontFamily: FONT, fontSize: '12px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0, 0.5));
+    });
+  }
+
+  /** 부탁을 끝냈다: 보상을 알리고, 다음 부탁이 있으면 이어서 보여 준다 */
+  private npcDone(id: string, close: () => void) {
+    const def = npcById(id);
+    const r = npcQuests.complete(id);
+    if (!r || !def) return;
+    close();
+    sfx.fanfare();
+    buzz(40);
+    this.toast(`🎁 ${r.reward.map(([it, c]) => `${ITEMS[it].name} ×${c}`).join(', ')}`);
+    family.post(`🏝 ${def.name}의 부탁을 들어줬어요`);
+    if (r.hero) {
+      const isle = ISLANDS[def.island];
+      this.time.delayedCall(500, () => this.celebrate(`🏅 ${isle.name}의 영웅!\n주민들의 부탁을 모두 들어줬어요\n${r.hero!.map(([it, c]) => `${ITEMS[it].name} ×${c}`).join(' · ')}`));
+      family.post(`🏅 ${isle.name}의 영웅이 됐어요`);
+    } else if (npcQuests.status(id) === 'new') {
+      this.time.delayedCall(420, () => this.openNpc(id));
+    }
+  }
+
+  /** 섬 주민과 이야기하기: 부탁을 받거나, 다 한 부탁을 끝낸다 */
+  private openNpc(id: string) {
+    if (this.registry.get('modal')) return;
+    const def = npcById(id);
+    if (!def) return;
+    const PW = Math.min(340, this.scale.width - 24);
+    const PH = 344;
+    const { box, close } = this.modal(PW, PH);
+    const top = -PH / 2;
+    const isle = this.scene.get('Island') as IslandScene;
+    box.add(this.add.image(-PW / 2 + 44, top + 46, `${def.look}_front`).setScale(2));
+    box.add(this.add.text(-PW / 2 + 84, top + 28, def.name, { fontFamily: FONT, fontSize: '20px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0, 0.5));
+    box.add(this.add.text(-PW / 2 + 84, top + 52, def.job, { fontFamily: FONT, fontSize: '12px', color: '#e07a5f', fontStyle: 'bold' }).setOrigin(0, 0.5));
+    box.add(this.add.text(PW / 2 - 16, top + 28, `🏝 ${npcQuests.islandDone(def.island)}/${npcQuests.islandTotal(def.island)}`, { fontFamily: FONT, fontSize: '12px', color: '#8a6d4b', fontStyle: 'bold' }).setOrigin(1, 0.5));
+    const say = (text: string, y = top + 104) => box.add(this.add.text(0, y, text, { fontFamily: FONT, fontSize: '13px', color: '#8a6d4b', align: 'center', wordWrap: { width: PW - 36, useAdvancedWrap: true } }).setOrigin(0.5));
+    const bottom = (label: string, on: boolean, tap: () => void, w = 200) => {
+      const b = this.button(label, on, tap, w);
+      b.setPosition(0, PH / 2 - 34);
+      box.add(b);
+    };
+    const bar = (have: number, need: number, y: number, label: string) => {
+      const bw = PW - 120;
+      const g = this.add.graphics();
+      g.fillStyle(0xe8d5a9).fillRoundedRect(-bw / 2 - 20, y, bw, 10, 5);
+      if (have > 0) g.fillStyle(have >= need ? 0x8bd17c : 0xf2a93b).fillRoundedRect(-bw / 2 - 20, y, Math.max(10, (bw * have) / Math.max(1, need)), 10, 5);
+      box.add(g);
+      box.add(this.add.text(bw / 2 - 12, y + 5, `${have}/${need}`, { fontFamily: FONT, fontSize: '12px', color: '#8a6d4b', fontStyle: 'bold' }).setOrigin(0, 0.5));
+      box.add(this.add.text(0, y - 16, label, { fontFamily: FONT, fontSize: '13px', color: COLORS.uiText, fontStyle: 'bold', align: 'center', wordWrap: { width: PW - 40, useAdvancedWrap: true } }).setOrigin(0.5));
+    };
+
+    // 1) 다른 주민이 맡긴 배달을 받는다
+    const from = npcQuests.deliveriesTo(id)[0];
+    const fq = from ? npcQuests.quest(from) : null;
+    if (from && fq?.kind === 'deliver') {
+      say(`"어머, ${withJosa(npcById(from)?.name ?? '누군가', '이', '가')} 보낸 ${withJosa(fq.what, '이네요', '네요')}!\n여기까지 가져다줘서 정말 고마워요."`);
+      box.add(this.add.text(0, top + 168, `📦 ${fq.what}`, { fontFamily: FONT, fontSize: '16px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0.5));
+      this.rewardRow(box, fq.reward, top + 214);
+      return bottom('📦 전해 주기', true, () => this.npcDone(from, close));
+    }
+
+    const q = npcQuests.quest(id);
+    const st = npcQuests.status(id);
+    if (!q) {
+      say(`"${def.hello}"\n\n"오늘 부탁은 다 들어줬어요. 내일 또 놀러 와요!"`, top + 150);
+      return bottom('안녕!', true, close, 140);
+    }
+    box.add(this.add.text(-PW / 2 + 84, top + 72, npcQuests.step(id) >= CHAIN_LEN ? `☀️ ${q.title}` : `부탁 ${npcQuests.step(id) + 1}/${CHAIN_LEN} · ${q.title}`, { fontFamily: FONT, fontSize: '11px', color: '#5fae52', fontStyle: 'bold' }).setOrigin(0, 0.5));
+    const p = npcQuests.progress(id);
+    const mid = top + 180;
+
+    if (q.kind === 'quiz') {
+      // 퀴즈: 그 자리에서 답을 고른다 (틀려도 다시 고를 수 있다)
+      say(`"${q.ask}"`, top + 108);
+      box.add(this.add.text(0, top + 146, `❓ ${q.q}`, { fontFamily: FONT, fontSize: '14px', color: COLORS.uiText, fontStyle: 'bold', align: 'center', wordWrap: { width: PW - 36, useAdvancedWrap: true } }).setOrigin(0.5));
+      q.choices.forEach((c, k) => {
+        const b = this.button(c, true, () => {
+          if (k !== q.answer) {
+            sfx.knock();
+            this.tweens.add({ targets: b, x: '+=5', duration: 50, yoyo: true, repeat: 3 });
+            this.toast('🤔 다시 생각해 봐요!');
+            return;
+          }
+          npcQuests.accept(id);
+          this.npcDone(id, close);
+        }, PW - 60);
+        b.setPosition(0, top + 190 + k * 42).setScale(0.86);
+        box.add(b);
+      });
+      this.rewardRow(box, q.reward, PH / 2 - 22);
+      return;
+    }
+
+    say(`"${st === 'ready' ? '우와, 벌써 다 했어요? 정말 고마워요!' : q.ask}"`, top + 112);
+    if (q.kind === 'fetch') {
+      this.needList(box, q.need, mid + 6, PW);
+    } else if (q.kind === 'deliver') {
+      const to = npcById(q.to);
+      box.add(this.add.text(0, mid - 6, `📦 ${q.what}`, { fontFamily: FONT, fontSize: '16px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0.5));
+      box.add(this.add.text(0, mid + 20, `→ ${to?.name ?? ''} (${to?.job ?? ''})에게 가져가요\n지도에서 📦 표시를 찾아요`, { fontFamily: FONT, fontSize: '12px', color: '#8a6d4b', align: 'center' }).setOrigin(0.5));
+    } else if (q.kind === 'dig') {
+      const hint = q.riddle ? isle.riddleHint(id) : '';
+      box.add(this.add.text(0, mid + 4, st === 'ready' ? `🎁 ${withJosa(q.what, '을', '를')} 찾았어요!` : q.riddle ? hint || '📜 부탁을 받으면 수수께끼를 알려 줄게요' : `🗺️ 지도에서 ❌ 표시를 찾아가요\n거기서 땅을 세 번 톡톡!`, { fontFamily: FONT, fontSize: q.riddle && st !== 'ready' ? '13px' : '14px', color: COLORS.uiText, fontStyle: 'bold', align: 'center', wordWrap: { width: PW - 36, useAdvancedWrap: true } }).setOrigin(0.5));
+    } else {
+      const need = q.kind === 'explore' ? (st === 'new' ? Math.min(q.n, isle.regionsLeft()) : p.need) : q.n;
+      const label = q.kind === 'count' ? q.goal : q.kind === 'explore' ? '안개를 걷어 새 지역 열기' : `🌙 밤에 ${q.thing} 모으기`;
+      bar(st === 'new' ? 0 : p.have, Math.max(1, need), mid + 6, label);
+      if (q.kind === 'night' && st !== 'ready') box.add(this.add.text(0, mid + 32, this.registry.get('night') ? '지금 밤이에요! 불빛을 찾아 다녀요' : '밤이 될 때까지 기다려요 (낮에는 안 보여요)', { fontFamily: FONT, fontSize: '11px', color: '#a08a6a' }).setOrigin(0.5));
+    }
+    this.rewardRow(box, q.reward, PH / 2 - 74);
+    if (st === 'new') bottom('🤝 부탁 들어주기', true, () => {
+      npcQuests.accept(id, isle.regionsLeft());
+      close();
+      sfx.pop();
+      const more = q.kind === 'dig' && q.riddle ? ' 주민에게 다시 말을 걸면 수수께끼를 볼 수 있어요' : '';
+      this.toast(`🤝 ${def.name}의 부탁을 받았어요!${more}`);
+      family.post(`🤝 ${def.name}의 부탁을 받았어요: ${this.npcGoal(def, q)}`);
+    });
+    else if (st === 'ready') bottom('✅ 완료하기', true, () => this.npcDone(id, close));
+    else bottom(q.kind === 'deliver' ? '배달하는 중이에요' : '하는 중이에요', false, () => undefined);
+  }
+
+  /** 수첩: 지금 있는 섬 주민들의 부탁 */
+  private openNpcBook() {
+    if (this.registry.get('modal')) return;
+    const island = progress.current;
+    const list = npcsOn(island);
+    const PW = Math.min(340, this.scale.width - 20);
+    const PH = 96 + list.length * 72 + 44;
+    const { box, kill } = this.modal(PW, PH);
+    const top = -PH / 2;
+    box.add(this.add.text(-PW / 2 + 18, top + 28, `🏝 ${ISLANDS[island].name} 주민`, { fontFamily: FONT, fontSize: '18px', color: COLORS.uiText, fontStyle: 'bold' }).setOrigin(0, 0.5));
+    const back = this.button('📜 퀘스트', true, () => {
+      kill();
+      this.openQuestBook();
+    }, 120);
+    back.setPosition(PW / 2 - 58, top + 28).setScale(0.72);
+    box.add(back);
+    const done = npcQuests.islandDone(island);
+    const total = npcQuests.islandTotal(island);
+    box.add(this.add.text(-PW / 2 + 18, top + 58, `들어준 부탁 ${done}/${total} · 가족이 함께 해요`, { fontFamily: FONT, fontSize: '12px', color: '#8a6d4b', fontStyle: 'bold' }).setOrigin(0, 0.5));
+    list.forEach((def, k) => {
+      const y = top + 76 + k * 72;
+      const x = -PW / 2 + 14;
+      const w = PW - 28;
+      const st = npcQuests.status(def.id);
+      const q = npcQuests.quest(def.id);
+      const p = npcQuests.progress(def.id);
+      const g = this.add.graphics();
+      g.fillStyle(st === 'ready' ? 0xe3f4d7 : st === 'rest' ? 0xe9e3d3 : 0xfff6df).fillRoundedRect(x, y, w, 64, 14);
+      if (st === 'ready') g.lineStyle(2, 0x8bd17c).strokeRoundedRect(x, y, w, 64, 14);
+      box.add(g);
+      box.add(this.add.image(x + 26, y + 34, `${def.look}_front`).setScale(1.2));
+      box.add(this.add.text(x + 52, y + 14, `${def.name} · ${def.job}`, { fontFamily: FONT, fontSize: '11px', color: '#e07a5f', fontStyle: 'bold' }).setOrigin(0, 0.5));
+      const line = !q ? '오늘 부탁은 다 들어줬어요' : st === 'new' ? `❗ 새 부탁이 있어요: ${q.title}` : this.npcGoal(def, q);
+      box.add(this.add.text(x + 52, y + 33, line, { fontFamily: FONT, fontSize: '13px', color: COLORS.uiText, fontStyle: 'bold', wordWrap: { width: w - 110, useAdvancedWrap: true } }).setOrigin(0, 0.5).setAlpha(q ? 1 : 0.55));
+      const steps = npcQuests.step(def.id);
+      box.add(this.add.text(x + 52, y + 52, '●'.repeat(steps) + '○'.repeat(CHAIN_LEN - steps), { fontFamily: FONT, fontSize: '10px', color: '#f2a93b' }).setOrigin(0, 0.5));
+      const tag = st === 'ready' ? '✅ 돌아가요' : st === 'active' && q && q.kind !== 'deliver' && q.kind !== 'quiz' ? `${p.have}/${p.need}` : st === 'active' ? '하는 중' : '';
+      if (tag) box.add(this.add.text(x + w - 12, y + 33, tag, { fontFamily: FONT, fontSize: '12px', color: st === 'ready' ? '#3f8f3a' : '#8a6d4b', fontStyle: 'bold' }).setOrigin(1, 0.5));
+    });
+    box.add(this.add.text(0, PH / 2 - 24, done >= total ? '🏅 이 섬의 영웅이에요! 날마다 작은 부탁이 하나씩 생겨요' : '주민은 지도에서 ❗ 표시로 찾아요 · 모두 끝내면 영웅 선물!', { fontFamily: FONT, fontSize: '11px', color: '#a08a6a' }).setOrigin(0.5));
+  }
+
   /** 화면 좌표에 글자가 떠오르기 */
   private onFloat(msg: string, sx: number, sy: number) {
     const t = this.add
@@ -2242,7 +2441,7 @@ export class HudScene extends Phaser.Scene {
       this.backBtn.setPosition(this.scale.width - 30, this.view === 'build' ? this.scale.height - HUD_BOTTOM_H - 176 - 20 : HUD_TOP_H + 16);
     }
     // 접혀 있어도 받을 선물이나 끝낸 퀘스트가 있으면 점으로 알려 준다
-    this.menuDot?.setVisible(!open && (daily.ready || quests.claimable));
+    this.menuDot?.setVisible(!open && (daily.ready || quests.claimable || npcQuests.anyReady(progress.current)));
   }
 
   /** 가로 화면인가 (아래 메뉴 줄 대신 왼쪽 위 메뉴 단추를 쓴다) */

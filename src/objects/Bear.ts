@@ -13,6 +13,8 @@ export class Bear {
   resident = false;
   /** 아직 친구가 되지 않은 섬 친구 (자기 지역에 서 있다) */
   wild = false;
+  /** 섬 주민이면 주민 id (제자리에 서서 부탁을 한다) */
+  npc?: string;
   /** 누워서 자는 중 */
   lying = false;
   /** 다른 가족의 곰이 쓰고 있는 변신 모자 (이름, 진화 단계, 그림) */

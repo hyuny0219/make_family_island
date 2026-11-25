@@ -28,6 +28,10 @@ export interface FamilyDoc {
   nextAt: Record<string, number>;
   feed: FeedItem[];
   createdAt?: number;
+  /** 섬 주민의 부탁: 주민별 상태 · 가족이 함께 세는 횟수 · 섬 영웅 선물을 받은 섬 */
+  nq?: Record<string, import('../state/npcQuests').NpcEntry>;
+  nqs?: Record<string, number>;
+  nqh?: number[];
 }
 
 /** 다른 가족의 곰 위치 (Realtime Database presence/{code}/{device}) */
