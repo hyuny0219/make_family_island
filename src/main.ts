@@ -30,7 +30,7 @@ setHudWide(baseW > baseH);
 
 const game = new Phaser.Game({
   type: Phaser.AUTO,
-  parent: 'game',
+  parent: 'stage', // #game의 안쪽 여백(카메라 구멍 자리)을 뺀 칸
   width: baseW,
   height: baseH,
   backgroundColor: COLORS.sea,
@@ -63,6 +63,9 @@ const applyBase = () => {
   game.scale.refresh();
 };
 window.addEventListener('resize', applyBase);
+// 전체 화면이 되면서 카메라 구멍 자리만큼 여백이 생기면, 창 크기는 그대로인 채 게임 칸만 줄어든다 → 칸의 크기를 직접 지켜본다
+const stage = document.getElementById('stage');
+if (stage && 'ResizeObserver' in window) new ResizeObserver(() => game.scale.refresh()).observe(stage);
 // 자판이 내려간 뒤 한 번 더 맞춘다
 window.addEventListener('focusout', () => window.setTimeout(applyBase, 350));
 window.addEventListener('orientationchange', () => window.setTimeout(applyBase, 200));

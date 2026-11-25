@@ -35,6 +35,14 @@
         padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
           env(safe-area-inset-left);
       }
+      /* 게임 그림판이 들어가는 칸. #game의 안쪽 여백(카메라 구멍·둥근 모서리 자리)을 뺀 크기다.
+         Phaser는 부모의 겉 크기로 화면을 맞추므로, 여백이 있는 #game에 바로 넣으면 여백만큼 밖으로 밀려 잘린다 */
+      #stage {
+        position: relative;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+      }
       canvas {
         image-rendering: pixelated;
         image-rendering: crisp-edges;
@@ -139,6 +147,7 @@
   </head>
   <body>
     <div id="game">
+    <div id="stage"></div>
     <div id="start">
       <img class="bg" src="./assets/story/story_1.jpg" alt="" />
       <video class="bg" id="startVideo" muted loop playsinline preload="auto" poster="./assets/story/story_1.jpg"></video>
